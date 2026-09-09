@@ -9,7 +9,31 @@ ScopeCI is a premium landing and waitlist site for commercial CI/CD built for so
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- Required env: `DATABASE_URL` — Postgres connection string (see `.env.example`)
+
+## Database (Supabase)
+
+Supabase is plain Postgres, so it is used through the existing `pg` + Drizzle
+setup rather than `@supabase/supabase-js`. One-time setup:
+
+1. Supabase → Project → **Connect** → **ORMs** (or Session pooler). Copy the URI
+   and replace `[YOUR-PASSWORD]`. Put it in `.env` as `DATABASE_URL`.
+   Use the **session pooler (5432)** or the direct connection — the transaction
+   pooler (6543) drops prepared statements between queries, which breaks the
+   node-postgres driver.
+2. `pnpm --filter @workspace/db run push` — creates `waitlist_signups`.
+3. Run `lib/db/sql/001_waitlist_rls.sql` in the Supabase SQL editor. This is not
+   optional: `drizzle-kit push` creates tables with row level security **off**,
+   and Supabase serves every `public` table through PostgREST using the anon key
+   that ships in client code. Without it the whole waitlist is world-readable.
+
+Reading the signups: Supabase → Table Editor → `waitlist_signups`, or SQL editor:
+
+```sql
+select email, agency, created_at
+from public.waitlist_signups
+order by created_at desc;
+```
 
 ## Stack
 
@@ -25,6 +49,9 @@ ScopeCI is a premium landing and waitlist site for commercial CI/CD built for so
 - `artifacts/scopeci/src/App.tsx` — the landing experience, the `/privacy` page, and the interactive product surfaces
 - `artifacts/scopeci/src/index.css` — ScopeCI visual tokens, responsive layout, and motion rules
 - `artifacts/api-server/src/routes/waitlist.ts` — waitlist endpoint (`POST /api/waitlist`)
+- `lib/db/src/index.ts` — pool and TLS resolution
+- `lib/db/src/schema/index.ts` — `waitlist_signups` table
+- `lib/db/sql/001_waitlist_rls.sql` — Supabase row level security, run once
 - `artifacts/scopeci/brand/` — the supplied logo files at original resolution (source of truth, not served)
 - `artifacts/scopeci/public/assets/` — the same marks resized for the web; regenerate from `brand/`, never redraw
 - `artifacts/scopeci/public/favicons/` — supplied favicon set, wired up in `index.html`
@@ -54,6 +81,12 @@ The site explains how ScopeCI connects signed scope, project issues, and GitHub 
 - The supplied wordmark is dark-on-transparent, so it only goes on light surfaces — this is why the masthead and footer are light.
 - Verify the page through the managed `artifacts/scopeci: web` workflow rather than a root-level dev command.
 - `vite.config.ts` requires `PORT` and `BASE_PATH`; running vite directly without them fails.
+- TLS is enabled automatically for any non-local `DATABASE_URL` host, because a
+  pasted Supabase URI carries no TLS settings and managed Postgres refuses
+  unencrypted connections. `sslmode` in the URL always wins; `verify-full` (with
+  `DATABASE_CA_CERT`) additionally verifies the chain.
+- `.env` is gitignored and the repo is public — keep the connection string out of
+  committed files.
 - In-page links use absolute hrefs (`/#waitlist`, built from `BASE_URL`) so they also work from `/privacy`. `Home` re-runs the hash jump on mount, because the browser resolves the hash before React has rendered those sections.
 
 ## Pointers
