@@ -1,0 +1,1216 @@
+Build the complete production-ready **ScopeCI** landing + waitlist website.
+
+ScopeCI is an early-stage developer infrastructure company building **Commercial CI/CD for software agencies**.
+
+The website must look like a serious, premium, technically credible startup that could realistically become a **YC-backed $100M+ developer infrastructure company**.
+
+It must feel:
+
+**clean · technical · premium · restrained · confident · original · engineering-first**
+
+It must NOT feel:
+
+**AI-generated · AI-slop · generic SaaS · template-like · over-marketed · flashy · futuristic**
+
+Use the attached **ScopeCI logo assets exactly as provided**. I am attaching multiple variants, including the icon-only transparent version, full logo/wordmark transparent version, and wordmark-only version. Use the appropriate asset in every context. Never recreate, redraw, approximate, recolor, distort, or replace the supplied logo.
+
+---
+
+## PRODUCT
+
+### ScopeCI
+
+**Commercial CI/CD for software agencies**
+
+ScopeCI connects:
+
+**Contract / SOW → project work → GitHub → commercial approval → shipping**
+
+It determines whether engineering work is commercially authorized and helps agencies prevent unapproved client work from becoming unpaid engineering work.
+
+Core positioning:
+
+> **Ship only work your client approved.**
+
+Secondary positioning:
+
+> **Connect the contract to the code.**
+
+Deeper positioning:
+
+> **A contract-aware authorization layer for software engineering.**
+
+Do not position ScopeCI as an AI product.
+
+Do not make AI the headline or visual identity.
+
+The product should feel like infrastructure.
+
+---
+
+# DESIGN DIRECTION
+
+Create an original visual language inspired by the quality bar of premium developer companies such as:
+
+* Linear
+* Vercel
+* Stripe
+* Resend
+* Raycast
+* Clerk
+* Railway
+* Supabase
+
+Do not copy their layouts, branding, wording, animations, or visual components.
+
+Only match their level of:
+
+* typography
+* spacing
+* polish
+* responsiveness
+* interaction quality
+* clarity
+* technical credibility
+
+The website should feel like a small team of exceptionally good designers and engineers made it.
+
+---
+
+# BRAND
+
+Use the supplied ScopeCI logo colors as the foundation.
+
+Visual palette:
+
+* warm white / ivory background
+* deep charcoal
+* near-black
+* muted natural green
+* deep forest green
+* subtle mint / teal highlights
+* restrained neutral gray
+
+Use green intentionally.
+
+Green should primarily communicate:
+
+* approved
+* authorized
+* active
+* connected
+* successful
+
+Avoid turning the entire website green.
+
+Do not use purple/blue “AI startup” gradients.
+
+Do not use neon.
+
+Do not use glowing blobs.
+
+Do not use glassmorphism everywhere.
+
+Do not use giant gradient text.
+
+---
+
+# TYPOGRAPHY
+
+Use a premium modern sans-serif.
+
+Preferred:
+
+**Geist**
+
+Fallback:
+
+**Inter**
+
+For technical/code UI:
+
+**Geist Mono** or **JetBrains Mono**
+
+Typography should feel premium through:
+
+* weight
+* spacing
+* line-height
+* hierarchy
+* optical alignment
+
+Do not use futuristic display fonts.
+
+Do not use overly rounded “AI startup” fonts.
+
+Do not use decorative fonts.
+
+---
+
+# LOGO USAGE
+
+Use the attached logo files directly.
+
+### Desktop navbar
+
+Use the complete ScopeCI wordmark/logo.
+
+### Mobile navbar
+
+Use the supplied icon-only logo where appropriate.
+
+### Footer
+
+Use the supplied full logo/wordmark.
+
+### Waitlist / brand moment
+
+Use the full wordmark.
+
+### Favicon
+
+Use the supplied icon.
+
+Maintain the exact proportions of the supplied assets.
+
+Do not distort or stretch them.
+
+Do not create a CSS version of the icon.
+
+Do not generate another logo.
+
+---
+
+# WEBSITE STRUCTURE
+
+Keep the website deliberately short.
+
+Use exactly these primary content blocks:
+
+1. Hero
+2. The Gap
+3. What ScopeCI Does
+4. Contract → Code
+5. Evidence
+6. Commercial Check
+7. Waitlist
+8. Closing Brand Statement
+
+Navbar and footer are separate chrome, not counted as content sections.
+
+Do not add unnecessary sections.
+
+Do not add pricing, testimonials, fake customer logos, fake statistics, fake case studies, fake reviews, blog sections, giant FAQs, newsletter sections, or generic “why us” sections.
+
+---
+
+# NAVBAR
+
+Minimal, polished, centered max-width around 1180–1240px.
+
+Height around 64–72px.
+
+Left:
+
+ScopeCI logo.
+
+Optional subtle descriptor:
+
+`Commercial CI/CD`
+
+Right:
+
+`How it works`
+
+`Waitlist`
+
+Primary button:
+
+**Join waitlist**
+
+Use a refined sticky navbar only if it improves the experience.
+
+During scroll, use a subtle translucent surface with a very light border.
+
+No giant header.
+
+No excessive navigation.
+
+---
+
+# HERO
+
+Use generous whitespace.
+
+Small eyebrow:
+
+**COMMERCIAL CI/CD FOR SOFTWARE AGENCIES**
+
+Main headline:
+
+# Ship only work your client approved.
+
+Supporting copy:
+
+> ScopeCI connects your contract, project tracker, and GitHub workflow so unapproved client work gets caught before it reaches production.
+
+Primary CTA:
+
+**Join the waitlist →**
+
+Secondary:
+
+**See how it works ↓**
+
+Small supporting line:
+
+`Built for software agencies using GitHub + Linear/Jira.`
+
+Keep hero copy concise.
+
+Do not mention AI.
+
+Do not add buzzwords.
+
+---
+
+# HERO PRODUCT VISUAL
+
+Create a realistic product interface entirely with HTML/CSS/React.
+
+Do not use stock graphics.
+
+Do not use 3D illustrations.
+
+Do not use abstract blobs.
+
+The product visualization should resemble an actual developer/infrastructure interface.
+
+Show a pull request with a ScopeCI commercial review.
+
+Example:
+
+```text
+Pull Request #1842
+Add organization-level permissions
+
+ScopeCI
+──────────────────────────────
+
+COMMERCIAL REVIEW
+
+● NOT AUTHORIZED
+
+This work extends beyond
+the approved project scope.
+
+SOW
+§4.2 Authentication
+
+LINEAR
+ENG-184
+
+Estimated impact
+18–24 hrs     $2,700–$3,600
+
+Change order
+Not approved
+
+[ Request approval ]
+```
+
+Make it feel like a believable internal engineering product, not a marketing mockup.
+
+Use:
+
+* subtle separators
+* compact metadata
+* monospace labels
+* small status indicators
+* realistic spacing
+* precise typography
+
+---
+
+# HERO ANIMATION
+
+The product card should animate subtly.
+
+Sequence:
+
+1. PR appears.
+2. ScopeCI begins checking.
+3. `Checking commercial scope...`
+4. SOW / Linear / GitHub evidence resolves.
+5. Status becomes `NOT AUTHORIZED`.
+6. Estimated impact appears.
+7. `Request approval` becomes available.
+
+Animation should be quiet and polished.
+
+Use approximately 800–1500ms transitions.
+
+No infinite flashy loops.
+
+No particles.
+
+No neon.
+
+No glowing trails.
+
+No dramatic 3D.
+
+Motion should communicate **system activity**, not decoration.
+
+---
+
+# HERO BACKGROUND
+
+Create an extremely subtle technical background.
+
+Possible details:
+
+* faint engineering grid
+* tiny dotted matrix
+* extremely subtle graph lines
+* fine horizontal rules
+* barely visible coordinate markings
+
+Everything should be low opacity.
+
+It should be noticeable only when looked at closely.
+
+No giant gradients.
+
+No AI glow.
+
+No abstract blob.
+
+---
+
+# SMALL BRAND STATEMENT
+
+Under the hero visual:
+
+```text
+CONTRACT
+   ↓
+PROJECT
+   ↓
+CODE
+```
+
+Then:
+
+> **One commercial layer between what was sold and what ships.**
+
+Keep this small and elegant.
+
+---
+
+# THE GAP
+
+Eyebrow:
+
+**THE GAP**
+
+Headline:
+
+# The contract knows what was sold. GitHub knows what was built.
+
+Supporting copy:
+
+> The problem lives between them.
+
+Show a clean system flow:
+
+```text
+Signed SOW
+     ↓
+Client request
+     ↓
+Linear / Jira
+     ↓
+GitHub
+     ↓
+ScopeCI
+     ↓
+Production
+```
+
+Highlight ScopeCI as:
+
+**Commercial authorization**
+
+Make the diagram look like infrastructure architecture, not a generic SaaS flowchart.
+
+---
+
+# WHAT SCOPECI DOES
+
+Headline:
+
+# A commercial control layer for engineering.
+
+Three concise areas.
+
+### 01 — Understand the contract
+
+Turn signed SOWs and project agreements into a structured scope baseline.
+
+Small copy:
+
+> Deliverables, exclusions, assumptions, limits and milestones.
+
+### 02 — Trace the work
+
+Connect contractual scope to actual project work.
+
+Small copy:
+
+> Follow a request from the backlog all the way to the pull request.
+
+### 03 — Control the merge
+
+Require commercial approval before unauthorized work ships.
+
+Small copy:
+
+> Warn, review or enforce based on the agency's policy.
+
+Use typography, thin lines, and system diagrams rather than a grid full of icons.
+
+---
+
+# ICON STYLE
+
+All icons must feel like real software-product UI icons.
+
+Use a restrained geometric icon style similar to professional developer tooling.
+
+Preferred:
+
+* thin or medium stroke
+* simple geometry
+* monochrome charcoal/gray
+* occasional green status color
+* consistent stroke width
+* small scale
+
+Use authentic UI icons rather than decorative illustrations.
+
+Avoid:
+
+* 3D icons
+* emoji
+* cartoon icons
+* gradient icons
+* glowing icons
+* colorful AI-style icons
+* abstract “sparkle” icons
+* giant icon illustrations
+
+Icons should support hierarchy, not dominate it.
+
+---
+
+# CONTRACT → CODE
+
+Make this one of the strongest sections.
+
+Show a clean system graph:
+
+```text
+┌────────────────┐
+│   SIGNED SOW   │
+└───────┬────────┘
+        ↓
+┌────────────────┐
+│  SCOPE GRAPH   │
+└───────┬────────┘
+        ↓
+┌────────────────┐
+│  LINEAR / JIRA │
+└───────┬────────┘
+        ↓
+┌────────────────┐
+│    GITHUB PR   │
+└───────┬────────┘
+        ↓
+┌────────────────────┐
+│ COMMERCIAL CHECK   │
+└────────┬───────────┘
+         ↓
+    APPROVE / BLOCK
+         ↓
+        SHIP
+```
+
+Animate the flow as the user scrolls.
+
+Nodes activate sequentially.
+
+Connections should subtly illuminate as the flow progresses.
+
+No scroll-jacking.
+
+No excessive motion.
+
+---
+
+# EVIDENCE SECTION
+
+Headline:
+
+# Evidence, not guesses.
+
+Supporting copy:
+
+> Every decision connects back to the contract and the work being built.
+
+Create a premium split interface.
+
+LEFT:
+
+```text
+PROJECT SCOPE
+
+Included
+
+✓ User authentication
+✓ Profile management
+✓ Account settings
+
+Excluded
+
+× Organization roles
+× Team invitations
+```
+
+RIGHT:
+
+```text
+ENG-184
+
+Add organization-level permissions
+
+Changed files
+14
+
+Estimated effort
+18–24 hrs
+```
+
+Between the two:
+
+```text
+⚠ Scope expansion
+```
+
+Below:
+
+```text
+SOW §4.2
+      ↓
+ENG-184
+      ↓
+PR #1842
+```
+
+The visual should immediately communicate:
+
+**contract → issue → code**
+
+---
+
+# COMMERCIAL CHECK
+
+Create a realistic GitHub-style PR interface.
+
+Do not copy GitHub's entire UI or branding.
+
+Use a similar developer-tool density without implying official affiliation.
+
+Example:
+
+```text
+ScopeCI Commercial Check
+
+PR #1842
+
+Add organization-level permissions
+
+────────────────────────────
+
+SOW MATCH
+✕
+
+COMMERCIAL STATUS
+Not authorized
+
+CHANGE ORDER
+Not approved
+
+────────────────────────────
+
+Estimated impact
+18–24 engineer hours
+
+$2.7k–$3.6k
+
+────────────────────────────
+
+[ Request approval ]
+```
+
+Show the status as a real engineering check.
+
+Make the concept obvious:
+
+> This work cannot be treated as approved engineering work until the commercial state is resolved.
+
+Use restrained green/red indicators.
+
+---
+
+# DIFFERENTIATION COPY
+
+Keep it short.
+
+Headline:
+
+# Not another project management tool.
+
+Three concise points:
+
+### Works with your stack
+
+Keep GitHub, Linear, Jira and the workflows your team already uses.
+
+### Commercially aware
+
+Know whether engineering work is contractually approved before time disappears into it.
+
+### Engineering-native
+
+ScopeCI lives close to the work — from issue to pull request to merge.
+
+Do not turn these into giant feature cards.
+
+Use whitespace, typography and subtle diagrams.
+
+---
+
+# WAITLIST
+
+Make this the strongest conversion point.
+
+Headline:
+
+# Put a commercial check in front of your next merge.
+
+Supporting copy:
+
+> ScopeCI is being built for software development agencies working on fixed-price and milestone-based client projects.
+
+Form:
+
+```text
+Work email
+[ you@agency.com ]
+
+Agency / company
+[ optional ]
+
+[ Request early access → ]
+```
+
+Small text:
+
+`No spam. Early product access and occasional updates.`
+
+The form should be highly polished.
+
+Use:
+
+* proper labels
+* excellent focus states
+* clear validation
+* loading state
+* success state
+* error state
+
+Do not use fake urgency.
+
+Do not use fake countdowns.
+
+Do not show fake signup counts.
+
+---
+
+# WAITLIST SUCCESS STATE
+
+After submission, transform the form into a clean success state.
+
+```text
+✓
+
+You're on the list.
+
+We'll reach out when early access opens.
+
+ScopeCI
+```
+
+Animate the check subtly.
+
+No confetti.
+
+No large celebration animation.
+
+---
+
+# CLOSING BRAND STATEMENT
+
+Very small final section.
+
+Headline:
+
+# Connect the contract to the code.
+
+Supporting line:
+
+`Commercial CI/CD for software agencies.`
+
+Keep this section compact.
+
+No additional feature content.
+
+---
+
+# FOOTER
+
+Minimal.
+
+Left:
+
+ScopeCI logo
+
+Text:
+
+`Commercial CI/CD for software agencies.`
+
+Right:
+
+`Waitlist`
+
+`Privacy`
+
+`Contact`
+
+Only use real links.
+
+Do not invent social handles or URLs.
+
+Bottom:
+
+`© 2026 ScopeCI`
+
+---
+
+# VISUAL LANGUAGE
+
+Use:
+
+* large whitespace
+* fine borders
+* clean surfaces
+* restrained shadows
+* subtle background transitions
+* strong typography
+* precise alignment
+* realistic product interfaces
+* thin technical diagrams
+* minimal iconography
+
+Avoid excessive card usage.
+
+Most sections should rely on:
+
+**type + space + lines + diagrams + product UI**
+
+rather than cards.
+
+---
+
+# CARDS
+
+Do not put everything in rounded boxes.
+
+Use cards only where they represent an actual product surface.
+
+Prefer:
+
+* open layouts
+* thin separators
+* inset sections
+* subtle surface changes
+* technical panels
+
+Use consistent border radius, approximately subtle and modern.
+
+Avoid oversized pill shapes everywhere.
+
+---
+
+# DEPTH
+
+Avoid heavy drop shadows.
+
+Use:
+
+* border contrast
+* layered surfaces
+* tiny elevation
+* soft shadows only around important UI
+
+The website should feel flat, precise and premium.
+
+---
+
+# GRID
+
+Use a polished 12-column desktop system.
+
+Maximum content width:
+
+**1180–1240px**
+
+Text width:
+
+approximately **600–720px**
+
+Hero can use more horizontal space for the product interface.
+
+Maintain precise alignment throughout the page.
+
+---
+
+# MOTION
+
+Motion should explain functionality.
+
+Use:
+
+* scroll reveal
+* subtle opacity transitions
+* tiny vertical translation
+* button micro-interactions
+* connection-line animations
+* product-status transitions
+* check-state transitions
+
+Nothing should bounce unnecessarily.
+
+Nothing should spin continuously.
+
+Nothing should float around without purpose.
+
+Principle:
+
+> **Nothing moves unless there is a reason for it to move.**
+
+Respect:
+
+`prefers-reduced-motion`.
+
+---
+
+# RESPONSIVE DESIGN
+
+Design mobile deliberately.
+
+At approximately 390px:
+
+Navbar:
+
+* icon/full logo as appropriate
+* compact CTA
+
+Hero:
+
+* strong headline
+* comfortable line height
+* full-width CTA
+* product visualization stacked cleanly
+
+Diagrams:
+
+Convert desktop flows into clear vertical flows.
+
+Product interfaces:
+
+Never overflow horizontally.
+
+Waitlist:
+
+Full-width inputs and button.
+
+Maintain strong whitespace.
+
+Tablet should also receive deliberate layout treatment.
+
+---
+
+# UI STATES
+
+Every interactive element should have polished states.
+
+Buttons:
+
+* default
+* hover
+* active
+* focus
+* loading
+* disabled
+
+Inputs:
+
+* default
+* focus
+* valid
+* invalid
+* disabled
+
+Waitlist:
+
+* idle
+* submitting
+* success
+* error
+
+Product visualization:
+
+* checking
+* detected
+* unauthorized
+* approved
+
+Make all states visually coherent.
+
+---
+
+# ACCESSIBILITY
+
+Use:
+
+* semantic HTML
+* accessible labels
+* correct heading hierarchy
+* visible keyboard focus
+* keyboard navigation
+* high contrast
+* reduced-motion support
+* accessible form validation
+
+Do not make information dependent only on animation.
+
+---
+
+# PERFORMANCE
+
+The website must feel extremely fast.
+
+Prefer:
+
+* CSS
+* SVG
+* HTML
+* React
+
+Avoid:
+
+* video backgrounds
+* giant image assets
+* heavy 3D
+* unnecessary dependencies
+* oversized animation libraries
+
+Use the supplied logos efficiently and preserve their quality.
+
+Optimize all assets.
+
+---
+
+# TECH STACK
+
+Use:
+
+* Next.js
+* TypeScript
+* Tailwind CSS
+* Framer Motion where appropriate
+* shadcn/ui only where it genuinely improves the interface
+
+Use reusable components.
+
+Keep the codebase clean and production-quality.
+
+Suggested components:
+
+```text
+Navbar
+Hero
+HeroPRCard
+ScopeGap
+HowScopeCIWorks
+ContractCodeGraph
+EvidencePanel
+CommercialCheck
+Waitlist
+Footer
+```
+
+---
+
+# SEO
+
+Page title:
+
+**ScopeCI — Commercial CI/CD for Software Agencies**
+
+Meta description:
+
+**ScopeCI connects your contracts, project work and GitHub workflow to catch commercially unauthorized engineering work before it ships.**
+
+Create appropriate:
+
+* Open Graph metadata
+* favicon
+* Apple touch icon
+* canonical metadata
+
+Use the supplied ScopeCI icon as favicon.
+
+---
+
+# NO FAKE CLAIMS
+
+Do not invent:
+
+* customers
+* logos
+* funding
+* YC acceptance
+* revenue
+* metrics
+* reviews
+* testimonials
+* user counts
+* awards
+* partnerships
+
+The company should look credible because the product and design are excellent.
+
+Not because of fabricated proof.
+
+---
+
+# NO AI SLOP
+
+This is extremely important.
+
+The entire website must avoid the visual language of generic AI startups.
+
+Do not use:
+
+* purple gradients
+* blue/purple glowing backgrounds
+* magic sparkles
+* star icons
+* AI badges
+* neural-network illustrations
+* robot graphics
+* chatbot imagery
+* “AI magic” animations
+* oversized gradient typography
+* futuristic sci-fi visuals
+* floating glowing orbs
+* excessive glassmorphism
+
+The website should feel like:
+
+**developer infrastructure + enterprise-grade engineering software**
+
+not:
+
+**AI productivity SaaS**
+
+---
+
+# COPY STYLE
+
+Write like a technical founder.
+
+Short.
+
+Direct.
+
+Confident.
+
+Precise.
+
+Examples:
+
+> Ship only work your client approved.
+
+> Connect the contract to the code.
+
+> Evidence, not guesses.
+
+> Commercial authorization for engineering work.
+
+> One layer between what was sold and what ships.
+
+Never write generic marketing copy such as:
+
+> Revolutionize your agency.
+
+> Unlock unprecedented productivity.
+
+> Empower your team with intelligent automation.
+
+> Transform your workflow.
+
+> The future of project management.
+
+Avoid unnecessary adjectives.
+
+Every sentence should earn its place.
+
+---
+
+# FINAL DESIGN QUALITY BAR
+
+The finished site should make a technical founder think:
+
+> **“These people understand software delivery.”**
+
+It should make an agency owner think:
+
+> **“This could stop my team from doing unpaid work.”**
+
+It should make a developer think:
+
+> **“This actually belongs in the engineering workflow.”**
+
+And within roughly 10 seconds, the visitor should understand:
+
+**ScopeCI connects the contract to the code and puts commercial authorization around engineering work.**
+
+The final result must be:
+
+**top-notch · premium · highly polished · original · minimal · technical · trustworthy · YC-quality**
+
+with a short, focused waitlist journey and exceptional UI/UX.

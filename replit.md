@@ -1,6 +1,6 @@
-# [Project name]
+# ScopeCI
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+ScopeCI is a premium landing and waitlist site for commercial CI/CD built for software agencies.
 
 ## Run & Operate
 
@@ -22,23 +22,29 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/scopeci/src/App.tsx` — single-page landing experience and interactive product surfaces
+- `artifacts/scopeci/src/index.css` — ScopeCI visual tokens, responsive layout, and motion rules
+- `attached_assets/logo-without-bg_1788955275556.png` — supplied icon-only logo asset
+- `attached_assets/logo-without-bg-and-wordmark_1788955275557.png` — supplied transparent full logo asset
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- The landing page is frontend-only; waitlist submission is intentionally represented with a polished local success state until a real endpoint is connected.
+- Product visuals are built from HTML/CSS so they stay crisp, fast, and believable at all viewport sizes.
+- Motion is used to explain system activity and respects reduced-motion preferences.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+The site explains how ScopeCI connects signed scope, project issues, and GitHub pull requests to commercial authorization, then captures early-access interest through a waitlist form.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- Keep the brand technical, restrained, and credible; do not introduce generic AI-startup visual language or fabricated proof.
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Use the supplied logo files directly and preserve their proportions.
+- Verify the page through the managed `artifacts/scopeci: web` workflow rather than a root-level dev command.
 
 ## Pointers
 

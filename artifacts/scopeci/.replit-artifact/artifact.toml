@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "ScopeCI"
+description = "A production-ready landing and waitlist website for ScopeCI, a commercial CI/CD layer that connects software agency contracts to project work and GitHub shipping decisions."
+version = "1.0.0"
+id = "artifacts/scopeci"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18768
+
+[services.development]
+run = "pnpm --filter @workspace/scopeci run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/scopeci", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/scopeci/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18768"
+BASE_PATH = "/"
