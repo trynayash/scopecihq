@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: waitlist
+    description: Early access signup operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,37 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /waitlist:
+    post:
+      operationId: createWaitlistSignup
+      tags: [waitlist]
+      summary: Join the ScopeCI waitlist
+      description: Stores an agency contact for early access updates.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WaitlistSignupInput"
+      responses:
+        "201":
+          description: Waitlist signup created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WaitlistSignup"
+        "409":
+          description: Email is already on the waitlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "400":
+          description: Invalid waitlist signup
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +66,42 @@ components:
           type: string
       required:
         - status
+    WaitlistSignupInput:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 3
+          maxLength: 320
+        agency:
+          type: ["string", "null"]
+          maxLength: 160
+      required:
+        - email
+    WaitlistSignup:
+      type: object
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+          format: email
+        agency:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - email
+        - agency
+        - createdAt
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
 

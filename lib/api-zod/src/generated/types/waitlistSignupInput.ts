@@ -5,9 +5,6 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-export interface HealthStatus {
-  status: string;
-}
 
 export interface WaitlistSignupInput {
   /**
@@ -21,16 +18,3 @@ export interface WaitlistSignupInput {
      */
   agency?: string | null;
 }
-
-export interface WaitlistSignup {
-  id: number;
-  email: string;
-  /** @nullable */
-  agency: string | null;
-  createdAt: string;
-}
-
-export interface ErrorResponse {
-  error: string;
-}
-

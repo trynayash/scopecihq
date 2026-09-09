@@ -1,14 +1,28 @@
-import { type FormEvent, type ReactNode, useEffect, useRef, useState } from 'react';
+import {
+  type FormEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   AlertTriangle,
   ArrowDown,
   ArrowRight,
   Check,
-  CircleDot,
+  FileSignature,
   GitBranch,
-  Github,
+  GitPullRequest,
+  Circle,
+  Inbox,
+  Scale,
+  ServerCog,
+  X,
 } from 'lucide-react';
+import { SiGithub, SiJira, SiLinear } from 'react-icons/si';
+import { useCreateWaitlistSignup } from '@workspace/api-client-react';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -16,190 +30,585 @@ import NotFound from '@/pages/not-found';
 import { Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
 
 const queryClient = new QueryClient();
-const wordmark = '/assets/logo-wordmark.png';
-const iconMark = '/assets/logo-icon.png';
 
-function Reveal({ children, className = '' }: { children: ReactNode; className?: string }) {
-  const ref = useRef<HTMLDivElement>(null);
+const WORDMARK = '/assets/logo-wordmark.png';
+const ICON_MARK = '/assets/logo-icon.png';
+
+const PAGE_TITLE = 'ScopeCI — Commercial CI/CD for Software Agencies';
+const PAGE_DESCRIPTION =
+  'ScopeCI connects your contracts, project work and GitHub workflow to catch commercially unauthorized engineering work before it ships.';
+
+const PRIVACY_TITLE = 'Privacy Policy — ScopeCI';
+const PRIVACY_DESCRIPTION =
+  'What ScopeCI collects through its early-access waitlist, why, and how to have it removed.';
+
+/* Absolute paths, so in-page anchors also work from routes other than "/". */
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
+const HOME = `${BASE}/`;
+const PRIVACY_PATH = `${BASE}/privacy`;
+const anchor = (id: string) => `${BASE}/#${id}`;
+
+/** Keeps the document title, description and canonical in step with the route. */
+function usePageMeta(title: string, description: string) {
+  useEffect(() => {
+    document.title = title;
+    const setMeta = (selector: string, value: string) => {
+      document.querySelector(selector)?.setAttribute('content', value);
+    };
+    setMeta('meta[name="description"]', description);
+    setMeta('meta[property="og:title"]', title);
+    setMeta('meta[property="og:description"]', description);
+    setMeta('meta[name="twitter:title"]', title);
+    setMeta('meta[name="twitter:description"]', description);
+
+    let canonical = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+    if (!canonical) {
+      canonical = document.createElement('link');
+      canonical.rel = 'canonical';
+      document.head.appendChild(canonical);
+    }
+    canonical.href = window.location.origin + window.location.pathname;
+  }, [title, description]);
+}
+
+/* ------------------------------------------------------------------ */
+/* Motion primitives                                                   */
+/* ------------------------------------------------------------------ */
+
+function prefersReducedMotion() {
+  if (typeof window === 'undefined' || !window.matchMedia) return false;
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/** Reports once when `ref` first enters the viewport. */
+function useInView<T extends HTMLElement>(rootMargin = '-12% 0px -12% 0px') {
+  const ref = useRef<T>(null);
+  const [inView, setInView] = useState(false);
+
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setInView(true);
+      return;
+    }
     const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          node.classList.add('is-visible');
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setInView(true);
           observer.disconnect();
         }
       },
-      { threshold: 0.12 },
+      { rootMargin, threshold: 0.01 },
     );
     observer.observe(node);
     return () => observer.disconnect();
-  }, []);
-  return <div ref={ref} className={`reveal ${className}`}>{children}</div>;
+  }, [rootMargin]);
+
+  return [ref, inView] as const;
 }
+
+/**
+ * Advances through `delays.length` steps once `enabled` is true. With reduced
+ * motion the final step is applied immediately, so nothing is conveyed by
+ * animation alone.
+ */
+function useTimeline(delays: readonly number[], enabled: boolean) {
+  const [step, setStep] = useState(0);
+
+  useEffect(() => {
+    if (!enabled) return;
+    if (prefersReducedMotion()) {
+      setStep(delays.length);
+      return;
+    }
+    const timers = delays.map((delay, index) =>
+      window.setTimeout(() => setStep(index + 1), delay),
+    );
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+    // `delays` is a module-level constant at every call site.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled]);
+
+  return step;
+}
+
+function Reveal({
+  children,
+  className = '',
+  delay = 0,
+  as: Tag = 'div',
+}: {
+  children: ReactNode;
+  className?: string;
+  delay?: number;
+  as?: 'div' | 'section' | 'header' | 'li';
+}) {
+  const [ref, inView] = useInView<HTMLDivElement>('0px 0px -8% 0px');
+  return (
+    <Tag
+      ref={ref as never}
+      className={`reveal ${inView ? 'is-visible' : ''} ${className}`.trim()}
+      style={delay ? ({ '--reveal-delay': `${delay}ms` } as React.CSSProperties) : undefined}
+    >
+      {children}
+    </Tag>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Vendor marks                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Official GitHub / Linear / Jira marks (Simple Icons paths via react-icons),
+ * drawn in `currentColor` so they sit inside the ScopeCI palette. They are
+ * shown to state compatibility only — no partnership is implied.
+ */
+function VendorMark({
+  name,
+  size = 14,
+}: {
+  name: 'github' | 'linear' | 'jira' | 'scopeci';
+  size?: number;
+}) {
+  if (name === 'scopeci') {
+    return (
+      <img
+        className="vendor-mark"
+        src={ICON_MARK}
+        alt=""
+        width={size}
+        height={size}
+        decoding="async"
+      />
+    );
+  }
+  const Mark = name === 'github' ? SiGithub : name === 'linear' ? SiLinear : SiJira;
+  return <Mark className="vendor-mark" size={size} aria-hidden="true" focusable="false" />;
+}
+
+function StackMarks({ size = 15 }: { size?: number }) {
+  return (
+    <span className="stack-marks" aria-hidden="true">
+      <VendorMark name="github" size={size} />
+      <VendorMark name="linear" size={size} />
+      <VendorMark name="jira" size={size} />
+    </span>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Navigation                                                          */
+/* ------------------------------------------------------------------ */
 
 function Navbar() {
   const [scrolled, setScrolled] = useState(false);
+
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 14);
+    const onScroll = () => setScrolled(window.scrollY > 8);
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
+
   return (
-    <header className={`nav-wrap ${scrolled ? 'scrolled' : ''}`}>
-      <nav className="nav container" aria-label="Primary navigation">
-        <a className="nav-brand" href="#top" data-testid="link-brand">
-          <picture className="nav-logo">
-            <source media="(max-width: 640px)" srcSet={iconMark} />
-            <img src={wordmark} alt="ScopeCI" width="143" height="34" />
+    <header className={`masthead ${scrolled ? 'is-scrolled' : ''}`}>
+      <nav className="masthead-inner container" aria-label="Primary">
+        <a className="brand" href={anchor('top')} data-testid="link-brand">
+          <picture className="brand-logo">
+            <source media="(max-width: 719px)" srcSet={ICON_MARK} />
+            <img
+              src={WORDMARK}
+              alt="ScopeCI"
+              width="651"
+              height="217"
+              decoding="async"
+            />
           </picture>
-          <span className="nav-descriptor">Commercial CI/CD</span>
         </a>
-        <div className="nav-links">
-          <a className="nav-link" href="#how-it-works" data-testid="link-how-it-works">How it works</a>
-          <a className="nav-link" href="#waitlist" data-testid="link-waitlist-nav">Waitlist</a>
-          <a className="nav-cta" href="#waitlist" data-testid="button-join-waitlist-nav">Join waitlist <ArrowRight size={14} aria-hidden="true" /></a>
+
+        <div className="masthead-actions">
+          <a className="masthead-link" href={anchor('how-it-works')} data-testid="link-how-it-works">
+            How it works
+          </a>
+          <a className="masthead-link" href={anchor('waitlist')} data-testid="link-waitlist-nav">
+            Waitlist
+          </a>
+          <a className="button button-primary button-sm" href={anchor('waitlist')} data-testid="button-join-waitlist-nav">
+            Join waitlist
+            <ArrowRight size={14} aria-hidden="true" />
+          </a>
         </div>
       </nav>
     </header>
   );
 }
 
-function HeroPRCard() {
-  const [status, setStatus] = useState<'checking' | 'resolved'>('checking');
-  const [approvalRequested, setApprovalRequested] = useState(false);
-  useEffect(() => {
-    const timer = window.setTimeout(() => setStatus('resolved'), 1900);
-    return () => window.clearTimeout(timer);
-  }, []);
+/* ------------------------------------------------------------------ */
+/* Hero product surface                                                */
+/* ------------------------------------------------------------------ */
+
+/* checking -> sow -> linear -> github -> verdict -> impact -> action.
+   The whole sequence lands in ~1.4s, then the surface stays still. */
+const REVIEW_STEPS = [140, 400, 600, 800, 1000, 1180, 1360] as const;
+
+const EVIDENCE_ROWS = [
+  { source: 'SOW', mark: 'sow', value: '§4.2 Authentication', result: 'no match', tone: 'bad' },
+  { source: 'LINEAR', mark: 'linear', value: 'ENG-184', result: 'linked', tone: 'ok' },
+  { source: 'GITHUB', mark: 'github', value: 'PR #1842', result: 'read', tone: 'ok' },
+] as const;
+
+function CommercialReviewSurface() {
+  const [ref, inView] = useInView<HTMLDivElement>('0px');
+  const step = useTimeline(REVIEW_STEPS, inView);
+  const [requested, setRequested] = useState(false);
+
+  const checking = step >= 1 && step < 5;
+  const resolved = step >= 5;
+  const actionable = step >= 7;
+
   return (
-    <div className="product-frame" aria-label="ScopeCI commercial review product preview" data-testid="product-preview">
-      <div className="product-window">
+    <figure className="surface" ref={ref} data-testid="product-preview">
+      <div className="window">
         <div className="window-bar">
-          <div className="window-dots" aria-hidden="true"><span className="window-dot" /><span className="window-dot" /><span className="window-dot" /></div>
-          <span className="window-title">github.com / northstar / api</span>
-          <span className="window-title">PR VIEW</span>
+          <span className="window-dots" aria-hidden="true">
+            <i /><i /><i />
+          </span>
+          <span className="window-path mono">
+            <VendorMark name="github" size={12} />
+            northstar / api
+          </span>
+          <span className="window-ref mono">Pull request #1842</span>
         </div>
-        <div className="pr-body">
-          <div className="pr-main">
-            <p className="pr-label">Pull request #1842</p>
-            <h2 className="pr-title">Add organization-level permissions</h2>
-            <div className="pr-meta">
-              <span className="pr-pill"><Github size={12} aria-hidden="true" /> northstar/api</span>
-              <span className="pr-pill"><GitBranch size={12} aria-hidden="true" /> feature/permissions</span>
+
+        <div className="window-body">
+          {/* Left: the pull request as GitHub shows it. */}
+          <div className="window-main">
+            <div className="pr-head">
+              <span className={`pr-state mono ${resolved ? 'is-held' : ''}`}>
+                <GitPullRequest size={12} aria-hidden="true" />
+                {resolved ? 'On hold' : 'Open'}
+              </span>
+              <p className="pr-title">Add organization-level permissions</p>
+              <p className="pr-meta mono">
+                <GitBranch size={11} aria-hidden="true" />
+                <span>feature/org-permissions</span>
+                <span className="pr-arrow" aria-hidden="true">&#8594;</span>
+                <span>main</span>
+                <span className="pr-dot" aria-hidden="true" />
+                <span>14 files</span>
+                <span className="pos">+386</span>
+                <span className="neg">&#8722;22</span>
+              </p>
             </div>
-            <div className="pr-divider" />
-            <div className="diff-line"><span className="diff-sign">−</span><span>account.settings = member</span></div>
-            <div className="diff-line added"><span className="diff-sign">+</span><span>organization.roles = enabled</span></div>
-            <div className="diff-line added"><span className="diff-sign">+</span><span>inviteMembers(account)</span></div>
-            {status === 'checking' && <div className="checking-line" data-testid="status-checking"><span /> Checking commercial scope...</div>}
+
+            <ul className="checks mono" aria-label="Merge checks">
+              <li>
+                <span className="check-icon ok" aria-hidden="true"><Check size={10} /></span>
+                <span className="check-name">build</span>
+                <span className="check-result">passed</span>
+              </li>
+              <li>
+                <span className="check-icon ok" aria-hidden="true"><Check size={10} /></span>
+                <span className="check-name">test:unit</span>
+                <span className="check-result">passed</span>
+              </li>
+              <li className={resolved ? 'is-failed' : 'is-running'}>
+                <span className="check-icon" aria-hidden="true">
+                  {resolved ? <X size={10} /> : <span className="spinner" />}
+                </span>
+                <span className="check-name">scopeci / commercial</span>
+                <span className="check-result">
+                  {resolved ? 'not authorized' : checking ? 'checking scope' : 'queued'}
+                </span>
+              </li>
+            </ul>
+
+              <ul className="evidence-rows mono" aria-label="Evidence resolved by ScopeCI">
+                {EVIDENCE_ROWS.map((row, index) => (
+                  <li key={row.source} className={step >= index + 2 ? 'is-resolved' : ''}>
+                    <span className="evidence-source">
+                      {row.mark === 'sow' ? (
+                        <FileSignature size={12} aria-hidden="true" />
+                      ) : (
+                        <VendorMark name={row.mark} size={12} />
+                      )}
+                      {row.source}
+                    </span>
+                    <span className="evidence-value">{row.value}</span>
+                    <span className={`evidence-result ${row.tone}`}>
+                      {step >= index + 2 ? row.result : 'resolving'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
           </div>
-          <div className="pr-side">
-            <div className="scope-check">
-              <div className="scope-top">
-                <span className="scope-mark"><img src={iconMark} alt="" width="14" height="14" /> ScopeCI</span>
-                <span className="pr-label">Commercial review</span>
-              </div>
-              <div className="scope-status" data-testid="status-commercial-review"><span className="status-dot" /> {status === 'checking' ? 'CHECKING' : 'NOT AUTHORIZED'}</div>
-              <p className="scope-statement">{status === 'checking' ? 'Comparing this work with the approved project scope.' : 'This work extends beyond the approved project scope.'}</p>
-              <div className="scope-row"><span>SOW</span><strong>§4.2 Authentication</strong></div>
-              <div className="scope-row"><span>LINEAR</span><strong>ENG-184</strong></div>
-              <div className="scope-row"><span>Estimated impact</span><strong>{status === 'checking' ? 'Resolving...' : '18–24 hrs · $2,700–$3,600'}</strong></div>
-              <div className="scope-row"><span>Change order</span><strong>{status === 'checking' ? 'Checking...' : 'Not approved'}</strong></div>
-              <button className="scope-request" type="button" disabled={status === 'checking' || approvalRequested} onClick={() => setApprovalRequested(true)} data-testid="button-request-approval">
-                {status === 'checking' ? 'Reviewing evidence' : approvalRequested ? 'Approval requested' : 'Request approval'}
-              </button>
+
+          {/* Right: what ScopeCI adds to it. */}
+          <div className="review">
+            <div className="review-head">
+              <span className="review-brand mono">
+                <img src={ICON_MARK} alt="" width="288" height="270" decoding="async" />
+                ScopeCI
+              </span>
+              <span className="review-label mono">Commercial review</span>
             </div>
+
+            <p
+              className={`verdict mono ${resolved ? 'is-blocked' : ''}`}
+              data-testid="status-commercial-review"
+            >
+              <span className="verdict-dot" aria-hidden="true" />
+              {resolved ? 'Not authorized' : 'Reviewing'}
+            </p>
+            <p className="verdict-note">
+              {resolved
+                ? 'This work extends beyond the approved project scope.'
+                : 'Comparing this pull request against the approved project scope.'}
+            </p>
+
+
+            <div className={`impact ${step >= 6 ? 'is-shown' : ''}`}>
+              <div>
+                <p className="impact-label mono">Estimated impact</p>
+                <p className="impact-value mono">{step >= 6 ? '18–24 hrs' : 'calculating'}</p>
+              </div>
+              <p className="impact-amount mono">{step >= 6 ? '$2,700–$3,600' : '—'}</p>
+            </div>
+
+            <div className="review-row mono">
+              <span>Change order</span>
+              <strong>{actionable ? 'Not approved' : '—'}</strong>
+            </div>
+
+            <button
+              type="button"
+              className="button button-quiet review-action"
+              disabled={!actionable || requested}
+              onClick={() => setRequested(true)}
+              data-testid="button-request-approval"
+            >
+              {requested ? 'Approval requested' : 'Request approval'}
+            </button>
           </div>
         </div>
       </div>
-    </div>
+
+      {/* Three annotations, drawn from the same record the surface shows:
+          the contract clause, the cost, and the consequence. */}
+      <span className={`float-card float-sow ${step >= 2 ? 'is-shown' : ''}`} aria-hidden="true">
+        <span className="float-icon is-alert"><FileSignature size={14} /></span>
+        <span className="float-body">
+          <strong>SOW §4.2</strong>
+          <em>No match in approved scope</em>
+        </span>
+      </span>
+
+      <span className={`float-card float-impact ${step >= 6 ? 'is-shown' : ''}`} aria-hidden="true">
+        <span className="float-icon is-forest"><Scale size={14} /></span>
+        <span className="float-body">
+          <strong>Estimated impact</strong>
+          <em>18–24 hrs · $2,700–$3,600</em>
+        </span>
+      </span>
+
+      <span className={`float-card float-block ${step >= 5 ? 'is-shown' : ''}`} aria-hidden="true">
+        <span className="float-icon is-alert"><X size={14} /></span>
+        <span className="float-body">
+          <strong>Merge blocked</strong>
+          <em>scopeci / commercial</em>
+        </span>
+      </span>
+
+      <figcaption className="sr-only">
+        A ScopeCI commercial review of pull request #1842, Add organization-level
+        permissions. Build and unit tests pass, but the commercial check resolves to
+        not authorized: the work has no match in SOW §4.2, is linked to Linear issue
+        ENG-184 and to PR #1842, and carries an estimated impact of 18 to 24 engineer
+        hours, or $2,700 to $3,600. No change order is approved, so the merge is blocked.
+      </figcaption>
+    </figure>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* Sections                                                            */
+/* ------------------------------------------------------------------ */
 
 function Hero() {
   return (
     <section className="hero" id="top" aria-labelledby="hero-title">
-      <div className="container">
-        <Reveal className="hero-content">
-          <p className="eyebrow">Commercial CI/CD for software agencies</p>
-          <h1 className="hero-title" id="hero-title">Ship only work your client approved.</h1>
-          <p className="hero-copy">ScopeCI connects your contract, project tracker, and GitHub workflow so unapproved client work gets caught before it reaches production.</p>
-          <div className="hero-actions">
-            <a className="primary-button" href="#waitlist" data-testid="button-join-waitlist-hero">Join the waitlist <ArrowRight size={15} aria-hidden="true" /></a>
-            <a className="text-button" href="#how-it-works" data-testid="link-see-how-it-works">See how it works <ArrowDown size={15} aria-hidden="true" /></a>
-          </div>
-          <p className="hero-note">Built for software agencies using GitHub + Linear/Jira.</p>
-        </Reveal>
-        <Reveal className="hero-product">
-          <HeroPRCard />
-        </Reveal>
-        <Reveal className="hero-statement">
-          <div className="sequence" aria-label="Contract leads to project, which leads to code">
-            <span>CONTRACT</span><span className="arrow">↓</span><span>PROJECT</span><span className="arrow">↓</span><span>CODE</span>
-          </div>
-          <p>One commercial layer between what was sold and what ships.</p>
-        </Reveal>
-      </div>
-    </section>
-  );
-}
+      <div className="container hero-inner">
+        <Reveal className="hero-lead">
+          <p className="hero-badge mono">Commercial CI/CD for software agencies</p>
 
-function ScopeGap() {
-  const flow = [
-    ['Signed SOW', 'approved scope'],
-    ['Client request', 'new work enters'],
-    ['Linear / Jira', 'project work'],
-    ['GitHub', 'code changes'],
-    ['ScopeCI', 'commercial authorization'],
-    ['Production', 'approved work ships'],
-  ];
-  return (
-    <section className="section gap-section" id="the-gap" aria-labelledby="gap-title">
-      <div className="container gap-layout">
-        <Reveal>
-          <p className="eyebrow">The gap</p>
-          <h2 className="section-heading" id="gap-title">The contract knows what was sold. GitHub knows what was built.</h2>
-          <p className="section-copy">The problem lives between them.</p>
-        </Reveal>
-        <Reveal className="architecture-flow" aria-label="ScopeCI authorization flow">
-          {flow.map(([name, detail], index) => (
-            <div className={`flow-row ${name === 'ScopeCI' ? 'scopeci' : ''} ${name === 'Production' ? 'production' : ''}`} key={name}>
-              <div className="flow-rail"><span className="flow-node" /></div>
-              <div className="flow-copy"><strong>{name}</strong><span>{detail}</span></div>
+          <div className="hero-lead-grid">
+            <div className="hero-headline">
+              <h1 className="hero-title" id="hero-title">
+                Ship only work your client <em>approved.</em>
+              </h1>
+              <p className="hero-note mono">
+                <StackMarks size={17} />
+                Built for software agencies using GitHub + Linear/Jira.
+              </p>
             </div>
-          ))}
+
+            <div className="hero-aside">
+              <p className="hero-lede">
+                ScopeCI connects your contract, project tracker, and GitHub workflow so
+                unapproved client work gets caught before it reaches production.
+              </p>
+              <div className="hero-actions">
+                <a
+                  className="button button-primary"
+                  href={anchor('waitlist')}
+                  data-testid="button-join-waitlist-hero"
+                >
+                  Join the waitlist
+                  <ArrowRight size={15} aria-hidden="true" />
+                </a>
+                <a
+                  className="button button-ghost"
+                  href={anchor('how-it-works')}
+                  data-testid="link-see-how-it-works"
+                >
+                  See how it works
+                  <ArrowDown size={15} aria-hidden="true" />
+                </a>
+              </div>
+            </div>
+          </div>
+        </Reveal>
+
+        <Reveal className="hero-stage" delay={110}>
+          <CommercialReviewSurface />
         </Reveal>
       </div>
     </section>
   );
 }
 
-function HowScopeCIWorks() {
-  const items = [
-    ['01', 'Understand the contract', 'Turn signed SOWs and project agreements into a structured scope baseline.', 'Deliverables, exclusions, assumptions, limits and milestones.'],
-    ['02', 'Trace the work', 'Connect contractual scope to actual project work.', 'Follow a request from the backlog all the way to the pull request.'],
-    ['03', 'Control the merge', 'Require commercial approval before unauthorized work ships.', "Warn, review or enforce based on the agency's policy."],
-  ];
+const GAP_CHAIN = [
+  { name: 'Signed SOW', detail: 'what was sold', domain: 'Commercial', mark: 'sow' },
+  { name: 'Client request', detail: 'new work enters', domain: 'Commercial', mark: 'request' },
+  { name: 'Linear / Jira', detail: 'work is planned', domain: 'Engineering', mark: 'tracker' },
+  { name: 'GitHub', detail: 'what was built', domain: 'Engineering', mark: 'github' },
+  { name: 'ScopeCI', detail: 'Commercial authorization', domain: 'Control', mark: 'scopeci' },
+  { name: 'Production', detail: 'approved work ships', domain: 'Release', mark: 'production' },
+] as const;
+
+/** Renders the real product mark for a stage, or a neutral glyph where the
+ *  stage is not a specific vendor. */
+function StageMark({ mark }: { mark: string }) {
+  if (mark === 'github' || mark === 'scopeci') {
+    return <VendorMark name={mark} size={15} />;
+  }
+  if (mark === 'tracker') {
+    return (
+      <>
+        <VendorMark name="linear" size={15} />
+        <VendorMark name="jira" size={15} />
+      </>
+    );
+  }
+  if (mark === 'sow') return <FileSignature size={15} aria-hidden="true" />;
+  if (mark === 'request') return <Inbox size={15} aria-hidden="true" />;
+  return <ServerCog size={15} aria-hidden="true" />;
+}
+
+function TheGap() {
   return (
-    <section className="section works-section" id="how-it-works" aria-labelledby="works-title">
-      <div className="container works-layout">
-        <Reveal className="works-heading">
-          <p className="eyebrow">What ScopeCI does</p>
-          <h2 className="section-heading" id="works-title">A commercial control layer for engineering.</h2>
+    <section className="section section-gap" id="the-gap" aria-labelledby="gap-title">
+      <div className="container split">
+        <Reveal className="split-lede">
+          <p className="eyebrow">The gap</p>
+          <h2 className="section-title" id="gap-title">
+            The contract knows what was sold.
+            <br />
+            GitHub knows what was built.
+          </h2>
+          <p className="section-lede">The problem lives between them.</p>
         </Reveal>
-        <div className="works-list">
-          {items.map(([num, title, description, small]) => (
-            <Reveal key={num}>
-              <article className="work-item" data-testid={`article-work-${num}`}>
-                <span className="work-num">{num}</span>
-                <div>
-                  <h3>{title}</h3>
-                  <p>{description}</p>
-                  <span className="work-underline" />
-                  <p className="mono" style={{ fontSize: 11, color: 'var(--forest-2)', marginTop: 17 }}>{small}</p>
+
+        <Reveal className="split-body" delay={80}>
+          <ol className="chain" aria-label="Where work travels, from signed scope to production">
+            {GAP_CHAIN.map((node, index) => {
+              const isControl = node.name === 'ScopeCI';
+              return (
+                <li
+                  key={node.name}
+                  className={`chain-row ${isControl ? 'is-control' : ''} ${
+                    node.name === 'Production' ? 'is-terminal' : ''
+                  }`}
+                >
+                  <span className="chain-rail" aria-hidden="true">
+                    <span className="chain-node" />
+                  </span>
+                  <span className="chain-index mono" aria-hidden="true">
+                    {String(index + 1).padStart(2, '0')}
+                  </span>
+                  <span className="chain-mark" aria-hidden="true">
+                    <StageMark mark={node.mark} />
+                  </span>
+                  <span className="chain-name">{node.name}</span>
+                  {isControl ? (
+                    <span className="chain-tag mono">{node.detail}</span>
+                  ) : (
+                    <span className="chain-detail mono">{node.detail}</span>
+                  )}
+                  <span className="chain-domain mono">{node.domain}</span>
+                </li>
+              );
+            })}
+          </ol>
+        </Reveal>
+      </div>
+    </section>
+  );
+}
+
+const CAPABILITIES = [
+  {
+    num: '01',
+    title: 'Understand the contract',
+    body: 'Turn signed SOWs and project agreements into a structured scope baseline.',
+    detail: 'Deliverables, exclusions, assumptions, limits and milestones.',
+  },
+  {
+    num: '02',
+    title: 'Trace the work',
+    body: 'Connect contractual scope to actual project work.',
+    detail: 'Follow a request from the backlog all the way to the pull request.',
+  },
+  {
+    num: '03',
+    title: 'Control the merge',
+    body: 'Require commercial approval before unauthorized work ships.',
+    detail: "Warn, review or enforce based on the agency's policy.",
+  },
+] as const;
+
+function WhatScopeCIDoes() {
+  return (
+    <section className="section section-does" id="how-it-works" aria-labelledby="does-title">
+      <div className="container split">
+        <Reveal className="split-lede">
+          <p className="eyebrow">What ScopeCI does</p>
+          <h2 className="section-title" id="does-title">
+            A commercial control layer for engineering.
+          </h2>
+        </Reveal>
+
+        <div className="split-body capability-list">
+          {CAPABILITIES.map((item, index) => (
+            <Reveal as="div" key={item.num} delay={index * 70}>
+              <article className="capability" data-testid={`article-work-${item.num}`}>
+                <span className="capability-num mono">{item.num}</span>
+                <div className="capability-body">
+                  <h3>{item.title}</h3>
+                  <p>{item.body}</p>
+                  <p className="capability-detail mono">{item.detail}</p>
                 </div>
               </article>
             </Reveal>
@@ -210,62 +619,200 @@ function HowScopeCIWorks() {
   );
 }
 
-function ContractCodeGraph() {
-  const nodes = ['SIGNED SOW', 'SCOPE GRAPH', 'LINEAR / JIRA', 'GITHUB PR', 'COMMERCIAL CHECK'];
+/* The same work item, and the commercial state it carries at each stage. */
+const WORK_STATES = [
+  { stage: 'Signed SOW', ref: '§4.2 Authentication', state: 'approved', mark: 'sow' },
+  { stage: 'Linear / Jira', ref: 'ENG-184', state: 'review', mark: 'tracker' },
+  { stage: 'GitHub', ref: 'PR #1842', state: 'needs', mark: 'github' },
+  { stage: 'Commercial check', ref: 'scopeci / commercial', state: 'blocked', mark: 'scopeci' },
+  { stage: 'Approval', ref: 'Change order', state: 'needs', mark: 'approval' },
+  { stage: 'Ship', ref: 'production', state: 'blocked', mark: 'production' },
+] as const;
+
+type StateKey = 'approved' | 'review' | 'needs' | 'blocked';
+
+const STATE_META: Record<StateKey, { label: string; icon: ReactNode }> = {
+  approved: { label: 'Approved', icon: <Check size={11} aria-hidden="true" /> },
+  review: { label: 'Review', icon: <Circle size={9} aria-hidden="true" /> },
+  needs: { label: 'Needs approval', icon: <AlertTriangle size={11} aria-hidden="true" /> },
+  blocked: { label: 'Not authorized', icon: <X size={11} aria-hidden="true" /> },
+};
+
+const STATE_STEPS = [120, 260, 400, 540, 680, 820] as const;
+
+function CommercialState() {
+  const [ref, inView] = useInView<HTMLDivElement>('-10% 0px -18% 0px');
+  const step = useTimeline(STATE_STEPS, inView);
+
   return (
-    <section className="section graph-section" aria-labelledby="graph-title">
-      <div className="container graph-layout">
-        <Reveal>
-          <p className="eyebrow">Contract → code</p>
-          <h2 className="section-heading" id="graph-title">The commercial state follows the work.</h2>
-          <p className="section-copy">A clear path from agreement to issue to pull request, with authorization at the merge boundary.</p>
+    <section className="section section-state" aria-labelledby="state-title">
+      <div className="container">
+        <Reveal className="state-lede">
+          <p className="eyebrow">Commercial state</p>
+          <h2 className="section-title" id="state-title">
+            The commercial state follows the work.
+          </h2>
+          <p className="section-lede">Every piece of work carries one.</p>
         </Reveal>
-        <Reveal className="graph" aria-label="Contract to code system graph">
-          {nodes.map((node, index) => (
-            <div key={node} style={{ width: '100%', display: 'contents' }}>
-              <div className={`graph-node ${node === 'COMMERCIAL CHECK' ? 'active' : ''}`} data-testid={`node-${index + 1}`}>{node}</div>
-              {index < nodes.length - 1 && <div className="graph-arrow">↓</div>}
+
+        <Reveal className="state-body" delay={80}>
+          <div className="state-panel" ref={ref}>
+            <div className="state-panel-head mono">
+              <span className="state-panel-label">Work item</span>
+              <span className="state-panel-ref">
+                ENG-184 · Add organization-level permissions
+              </span>
             </div>
-          ))}
-          <div className="graph-outcome"><span>Approve</span><span>Block</span><span>Ship</span></div>
+
+            <ol className="state-rows mono" aria-label="Commercial state at each stage">
+              {WORK_STATES.map((row, index) => {
+                const meta = STATE_META[row.state as StateKey];
+                const shown = step > index;
+                return (
+                  <li
+                    key={row.stage}
+                    className={`state-row ${shown ? 'is-shown' : ''}`}
+                    data-testid={`state-row-${index + 1}`}
+                  >
+                    <span className="state-rail" aria-hidden="true">
+                      <span className="state-node" />
+                    </span>
+                    <span className="state-mark" aria-hidden="true">
+                      {row.mark === 'approval' ? (
+                        <FileSignature size={14} aria-hidden="true" />
+                      ) : (
+                        <StageMark mark={row.mark} />
+                      )}
+                    </span>
+                    <span className="state-stage">{row.stage}</span>
+                    <span className="state-ref">{row.ref}</span>
+                    <span className={`state-badge is-${row.state}`}>
+                      {shown ? (
+                        <>
+                          {meta.icon}
+                          {meta.label}
+                        </>
+                      ) : (
+                        <span className="state-pending">resolving</span>
+                      )}
+                    </span>
+                  </li>
+                );
+              })}
+            </ol>
+
+            <div className="state-legend mono" aria-hidden="true">
+              {(Object.keys(STATE_META) as StateKey[]).map((key) => (
+                <span key={key} className={`state-badge is-${key}`}>
+                  {STATE_META[key].icon}
+                  {STATE_META[key].label}
+                </span>
+              ))}
+            </div>
+          </div>
         </Reveal>
       </div>
     </section>
   );
 }
 
-function EvidencePanel() {
+function Evidence() {
   return (
-    <section className="section evidence-section" aria-labelledby="evidence-title">
-      <div className="container evidence-layout">
-        <Reveal>
+    <section className="section section-evidence" id="evidence" aria-labelledby="evidence-title">
+      <div className="container">
+        <Reveal className="evidence-lede">
           <p className="eyebrow">Evidence</p>
-          <h2 className="section-heading" id="evidence-title">Evidence, not guesses.</h2>
-          <p className="section-copy">Every decision connects back to the contract and the work being built.</p>
-          <div className="evidence-trace" aria-label="Evidence chain">
-            <span className="trace-node">SOW §4.2</span><span className="trace-line" /><span className="trace-node">ENG-184</span><span className="trace-line" /><span className="trace-node">PR #1842</span>
-          </div>
+          <h2 className="section-title" id="evidence-title">Evidence, not guesses.</h2>
+          <p className="section-lede">
+            Every decision connects back to the contract and the work being built.
+          </p>
         </Reveal>
-        <Reveal>
-          <div className="evidence-interface" data-testid="evidence-panel">
-            <div className="evidence-pane">
-              <p className="pane-title">Project scope</p>
-              <p className="pane-project">Northstar / API</p>
-              <ul className="scope-list">
-                <li className="included"><Check size={13} aria-hidden="true" /> User authentication</li>
-                <li className="included"><Check size={13} aria-hidden="true" /> Profile management</li>
-                <li className="included"><Check size={13} aria-hidden="true" /> Account settings</li>
-                <li className="excluded"><span>×</span> Organization roles</li>
-                <li className="excluded"><span>×</span> Team invitations</li>
-              </ul>
+
+        <Reveal className="evidence-body" delay={80}>
+          <div className="ledger" data-testid="evidence-panel">
+            <div className="ledger-grid">
+              <div className="ledger-pane">
+                <p className="pane-label mono">Project scope</p>
+                <p className="pane-subject mono">
+                  <FileSignature size={14} aria-hidden="true" />
+                  Northstar / API
+                </p>
+
+                <p className="pane-group mono">Included</p>
+                <ul className="scope-items mono">
+                  <li className="is-included">
+                    <Check size={12} aria-hidden="true" /> User authentication
+                  </li>
+                  <li className="is-included">
+                    <Check size={12} aria-hidden="true" /> Profile management
+                  </li>
+                  <li className="is-included">
+                    <Check size={12} aria-hidden="true" /> Account settings
+                  </li>
+                </ul>
+
+                <p className="pane-group mono">Excluded</p>
+                <ul className="scope-items mono">
+                  <li className="is-excluded">
+                    <X size={12} aria-hidden="true" /> Organization roles
+                  </li>
+                  <li className="is-excluded">
+                    <X size={12} aria-hidden="true" /> Team invitations
+                  </li>
+                </ul>
+              </div>
+
+              {/* The seam carries the finding that connects the two sides. */}
+              <div className="ledger-seam">
+                <span className="seam-line" aria-hidden="true" />
+                <span className="seam-badge mono">
+                  <AlertTriangle size={11} aria-hidden="true" />
+                  Scope expansion
+                </span>
+                <span className="seam-line" aria-hidden="true" />
+              </div>
+
+              <div className="ledger-pane">
+                <p className="pane-label mono">Engineering</p>
+                <p className="pane-subject mono">
+                  <VendorMark name="linear" size={14} />
+                  ENG-184
+                </p>
+                <p className="pane-headline">Add organization-level permissions</p>
+
+                <dl className="pane-facts mono">
+                  <div>
+                    <dt>Changed files</dt>
+                    <dd>14</dd>
+                  </div>
+                  <div>
+                    <dt>Estimated effort</dt>
+                    <dd>18–24 hrs</dd>
+                  </div>
+                  <div>
+                    <dt>Pull request</dt>
+                    <dd>
+                      <VendorMark name="github" size={12} />
+                      #1842
+                    </dd>
+                  </div>
+                </dl>
+
+                <p className="pane-flag mono" data-testid="status-scope-expansion">
+                  Matches an excluded deliverable.
+                </p>
+              </div>
             </div>
-            <div className="evidence-pane">
-              <p className="pane-title">ENG-184</p>
-              <p className="pane-project">Add organization-level permissions</p>
-              <div className="pane-data"><p>Changed files</p><strong>14</strong></div>
-              <div className="pane-data"><p>Estimated effort</p><strong>18–24 hrs</strong></div>
+
+            {/* Trace lives inside the panel, so both sides read as one record. */}
+            <div className="ledger-trace">
+              <span className="trace-label mono">Trace</span>
+              <ol className="trace mono" aria-label="Trace from contract clause to pull request">
+                <li>SOW §4.2</li>
+                <li>ENG-184</li>
+                <li>PR #1842</li>
+              </ol>
             </div>
-            <div className="scope-expansion" data-testid="status-scope-expansion"><AlertTriangle size={12} aria-hidden="true" /> Scope expansion</div>
           </div>
         </Reveal>
       </div>
@@ -275,33 +822,79 @@ function EvidencePanel() {
 
 function CommercialCheck() {
   const [requested, setRequested] = useState(false);
+
   return (
-    <section className="section check-section" aria-labelledby="check-title">
-      <div className="container check-layout">
-        <Reveal>
-          <p className="eyebrow">Commercial check</p>
-          <h2 className="section-heading" id="check-title">A merge should know what the contract says.</h2>
-          <p className="check-copy">This work cannot be treated as approved engineering work until the commercial state is resolved.</p>
+    <section className="section section-check" aria-labelledby="check-title">
+      <div className="container split split-reverse">
+        <Reveal className="split-lede">
+          <p className="eyebrow">Merge check</p>
+          <h2 className="section-title" id="check-title">
+            A merge should know what the contract says.
+          </h2>
+          <p className="section-lede">
+            The commercial state sits with the pull request, where the decision is
+            actually made — not in a spreadsheet discovered at invoicing.
+          </p>
         </Reveal>
-        <Reveal>
-          <div className="check-window" data-testid="commercial-check-panel">
-            <div className="check-header">
-              <span className="check-brand"><img src={iconMark} alt="" width="17" height="17" /> ScopeCI Commercial Check</span>
-              <CircleDot size={14} color="#7f9a8c" aria-hidden="true" />
+
+        <Reveal className="split-body" delay={80}>
+          <div className="check-card" data-testid="commercial-check-panel">
+            <div className="check-card-head">
+              <span className="review-brand mono">
+                <img src={ICON_MARK} alt="" width="288" height="270" decoding="async" />
+                ScopeCI commercial check
+              </span>
+              <span className="check-card-ref mono">
+                <VendorMark name="github" size={12} />
+                northstar / api
+              </span>
             </div>
-            <div className="check-pr">
-              <span className="check-pr-number">PR #1842</span>
-              <h3>Add organization-level permissions</h3>
-              <div className="check-table">
-                <div className="check-table-row"><span>SOW match</span><strong className="bad">× Not found</strong></div>
-                <div className="check-table-row"><span>Commercial status</span><strong className="bad">Not authorized</strong></div>
-                <div className="check-table-row"><span>Change order</span><strong>Not approved</strong></div>
-              </div>
+
+            <div className="check-card-body">
+              <p className="check-card-ref-line mono">Pull request #1842</p>
+              <p className="check-card-title">Add organization-level permissions</p>
+
+              <p className="check-verdict mono">
+                <X size={13} aria-hidden="true" />
+                Not authorized
+              </p>
+
+              <dl className="check-table mono">
+                <div>
+                  <dt>SOW match</dt>
+                  <dd className="is-bad">No</dd>
+                </div>
+                <div>
+                  <dt>Change order</dt>
+                  <dd>Not approved</dd>
+                </div>
+                <div>
+                  <dt>Policy</dt>
+                  <dd>Block on unapproved scope</dd>
+                </div>
+              </dl>
+
               <div className="check-impact">
-                <p>Estimated impact<strong>18–24 engineer hours</strong></p>
-                <span className="amount">$2.7k–$3.6k</span>
+                <div>
+                  <p className="impact-label mono">Estimated impact</p>
+                  <p className="impact-value mono">18–24 engineer hours</p>
+                </div>
+                <p className="impact-amount mono">$2.7k–$3.6k</p>
               </div>
-              <button type="button" className="approval-button" onClick={() => setRequested(true)} data-testid="button-request-commercial-approval">{requested ? 'Approval requested' : 'Request approval'}</button>
+
+              <button
+                type="button"
+                className="button button-quiet check-action"
+                onClick={() => setRequested(true)}
+                disabled={requested}
+                data-testid="button-request-commercial-approval"
+              >
+                {requested ? 'Approval requested' : 'Request approval'}
+              </button>
+
+              <p className="check-foot mono">
+                Checked 3s ago · scopeci / commercial
+              </p>
             </div>
           </div>
         </Reveal>
@@ -310,65 +903,232 @@ function CommercialCheck() {
   );
 }
 
+const DIFFERENTIATORS = [
+  {
+    title: 'Works with your stack',
+    body: 'Keep GitHub, Linear, Jira and the workflows your team already uses.',
+    marks: true,
+  },
+  {
+    title: 'Commercially aware',
+    body: 'Know whether engineering work is contractually approved before time disappears into it.',
+  },
+  {
+    title: 'Engineering-native',
+    body: 'ScopeCI lives close to the work — from issue to pull request to merge.',
+  },
+] as const;
+
+function Differentiator() {
+  return (
+    <section className="section section-diff" aria-labelledby="diff-title">
+      <div className="container">
+        <Reveal className="diff-head">
+          <h2 className="diff-title" id="diff-title">Not another project management tool.</h2>
+        </Reveal>
+        <Reveal className="diff-grid" delay={70}>
+          {DIFFERENTIATORS.map((item) => (
+            <div className="diff-item" key={item.title}>
+              <h3>{item.title}</h3>
+              <p>{item.body}</p>
+              {'marks' in item && item.marks ? <StackMarks size={16} /> : null}
+            </div>
+          ))}
+        </Reveal>
+      </div>
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Waitlist                                                            */
+/* ------------------------------------------------------------------ */
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+type WaitlistState = 'idle' | 'submitting' | 'success' | 'duplicate';
+
 function Waitlist() {
   const [email, setEmail] = useState('');
   const [agency, setAgency] = useState('');
-  const [state, setState] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle');
+  const [state, setState] = useState<WaitlistState>('idle');
   const [emailError, setEmailError] = useState('');
-  const [serverError, setServerError] = useState('');
+  const [formError, setFormError] = useState('');
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setEmailError('');
-    setServerError('');
-    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setEmailError('Enter a valid work email.');
-      return;
-    }
-    setState('submitting');
-    window.setTimeout(() => {
-      if (email.toLowerCase().includes('error')) {
-        setState('error');
-        setServerError('Something went wrong. Please try again.');
-      } else {
-        setState('success');
+  const createSignup = useCreateWaitlistSignup();
+  const submitting = state === 'submitting';
+
+  const submit = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (submitting) return;
+
+      const trimmedEmail = email.trim();
+      const trimmedAgency = agency.trim();
+
+      setFormError('');
+      if (!trimmedEmail) {
+        setEmailError('Enter your work email.');
+        return;
       }
-    }, 900);
-  };
+      if (trimmedEmail.length > 320 || !EMAIL_PATTERN.test(trimmedEmail)) {
+        setEmailError('Enter a valid work email address.');
+        return;
+      }
+      setEmailError('');
+      setState('submitting');
+
+      createSignup.mutate(
+        {
+          data: {
+            email: trimmedEmail.toLowerCase(),
+            agency: trimmedAgency ? trimmedAgency.slice(0, 160) : null,
+          },
+        },
+        {
+          onSuccess: () => setState('success'),
+          onError: (error) => {
+            setState('idle');
+            const status = error?.status;
+            if (status === 409) {
+              setState('duplicate');
+              return;
+            }
+            if (status === 400) {
+              setEmailError(
+                error?.data?.error ?? 'Enter a valid work email address.',
+              );
+              return;
+            }
+            setFormError(
+              "We couldn't save your request. Please try again in a moment.",
+            );
+          },
+        },
+      );
+    },
+    [agency, createSignup, email, submitting],
+  );
+
+  const settled = state === 'success' || state === 'duplicate';
 
   return (
-    <section className="waitlist-section" id="waitlist" aria-labelledby="waitlist-title">
-      <div className="container waitlist-layout">
-        <Reveal className="waitlist-heading">
+    <section className="waitlist" id="waitlist" aria-labelledby="waitlist-title">
+      <div className="container split">
+        <Reveal className="split-lede">
           <p className="eyebrow">Early access</p>
-          <h2 className="section-heading" id="waitlist-title">Put a commercial check in front of your next merge.</h2>
-          <p className="waitlist-copy">ScopeCI is being built for software development agencies working on fixed-price and milestone-based client projects.</p>
+          <h2 className="section-title" id="waitlist-title">
+            Put a commercial check in front of your next merge.
+          </h2>
+          <p className="section-lede">
+            ScopeCI is being built for software development agencies working on
+            fixed-price and milestone-based client projects.
+          </p>
         </Reveal>
-        <Reveal>
-          <div className="waitlist-form-wrap">
-            {state === 'success' ? (
-              <div className="success-state" role="status" data-testid="waitlist-success">
-                <span className="success-check"><Check size={20} aria-hidden="true" /></span>
-                <h3>You're on the list.</h3>
+
+        <Reveal className="split-body" delay={80}>
+          <div className="waitlist-panel">
+            <div className="waitlist-panel-head mono">
+              <span className="review-brand">
+                <img src={ICON_MARK} alt="" width="288" height="270" decoding="async" />
+                ScopeCI
+              </span>
+              <span className="waitlist-panel-label">Early access request</span>
+            </div>
+            {settled ? (
+              <div className="settled" role="status" data-testid="waitlist-success">
+                <span className="settled-mark" aria-hidden="true">
+                  <Check size={18} />
+                </span>
+                <h3>
+                  {state === 'duplicate'
+                    ? "You're already on the list."
+                    : "You're on the list."}
+                </h3>
                 <p>We'll reach out when early access opens.</p>
-                <span className="mono">ScopeCI</span>
+                <span className="settled-sig mono">ScopeCI</span>
               </div>
             ) : (
               <form className="waitlist-form" onSubmit={submit} noValidate>
                 <div className="field">
-                  <label htmlFor="work-email">Work email</label>
-                  <input id="work-email" name="email" type="email" autoComplete="email" placeholder="you@agency.com" value={email} onChange={(event) => { setEmail(event.target.value); setEmailError(''); }} className={emailError ? 'invalid' : ''} aria-invalid={Boolean(emailError)} aria-describedby={emailError ? 'email-error' : undefined} data-testid="input-work-email" />
-                  {emailError && <span className="field-error" id="email-error" role="alert">{emailError}</span>}
+                  <label className="mono" htmlFor="work-email">
+                    Work email
+                  </label>
+                  <input
+                    id="work-email"
+                    name="email"
+                    type="email"
+                    inputMode="email"
+                    autoComplete="email"
+                    maxLength={320}
+                    required
+                    placeholder="you@agency.com"
+                    value={email}
+                    disabled={submitting}
+                    onChange={(event) => {
+                      setEmail(event.target.value);
+                      if (emailError) setEmailError('');
+                    }}
+                    className={emailError ? 'is-invalid' : ''}
+                    aria-invalid={Boolean(emailError)}
+                    aria-describedby={emailError ? 'work-email-error' : undefined}
+                    data-testid="input-work-email"
+                  />
+                  {emailError && (
+                    <p className="field-error mono" id="work-email-error">
+                      {emailError}
+                    </p>
+                  )}
                 </div>
+
                 <div className="field">
-                  <label htmlFor="agency-name">Agency / company <span style={{ fontWeight: 400, color: '#8a968d' }}>(optional)</span></label>
-                  <input id="agency-name" name="agency" type="text" autoComplete="organization" placeholder="Your agency" value={agency} onChange={(event) => setAgency(event.target.value)} data-testid="input-agency-name" />
+                  <label className="mono" htmlFor="agency-name">
+                    Agency / company <span className="field-optional">optional</span>
+                  </label>
+                  <input
+                    id="agency-name"
+                    name="agency"
+                    type="text"
+                    autoComplete="organization"
+                    maxLength={160}
+                    placeholder="Your agency"
+                    value={agency}
+                    disabled={submitting}
+                    onChange={(event) => setAgency(event.target.value)}
+                    data-testid="input-agency-name"
+                  />
                 </div>
-                {serverError && <p className="form-error" role="alert" data-testid="status-waitlist-error">{serverError}</p>}
-                <button className="primary-button waitlist-submit" type="submit" disabled={state === 'submitting'} data-testid="button-submit-waitlist">
-                  {state === 'submitting' ? 'Requesting access…' : 'Request early access'} {state !== 'submitting' && <ArrowRight size={15} aria-hidden="true" />}
+
+                <p aria-live="polite" className="form-status">
+                  {formError && (
+                    <span className="form-error mono" data-testid="status-waitlist-error">
+                      {formError}
+                    </span>
+                  )}
+                </p>
+
+                <button
+                  type="submit"
+                  className="button button-primary waitlist-submit"
+                  disabled={submitting}
+                  data-testid="button-submit-waitlist"
+                >
+                  {submitting ? (
+                    <>
+                      <span className="spinner spinner-dark" aria-hidden="true" />
+                      Requesting access
+                    </>
+                  ) : (
+                    <>
+                      Request early access
+                      <ArrowRight size={15} aria-hidden="true" />
+                    </>
+                  )}
                 </button>
-                <p className="form-note">No spam. Early product access and occasional updates.</p>
+
+                <p className="form-note mono">
+                  No spam. Early product access and occasional updates.
+                </p>
               </form>
             )}
           </div>
@@ -378,14 +1138,17 @@ function Waitlist() {
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* Closing + footer                                                    */
+/* ------------------------------------------------------------------ */
+
 function Closing() {
   return (
     <section className="closing" aria-labelledby="closing-title">
       <div className="container">
         <Reveal>
-          <p className="eyebrow">ScopeCI</p>
           <h2 id="closing-title">Connect the contract to the code.</h2>
-          <p>Commercial CI/CD for software agencies.</p>
+          <p className="mono">Commercial CI/CD for software agencies.</p>
         </Reveal>
       </div>
     </section>
@@ -398,51 +1161,71 @@ function Footer() {
       <div className="container">
         <div className="footer-top">
           <div className="footer-brand">
-            <img src={wordmark} alt="ScopeCI" width="133" height="32" />
+            <img
+              src={WORDMARK}
+              alt="ScopeCI"
+              width="651"
+              height="217"
+              loading="lazy"
+              decoding="async"
+            />
             <p>Commercial CI/CD for software agencies.</p>
           </div>
-          <nav className="footer-links" aria-label="Footer navigation">
-            <a href="#waitlist" data-testid="link-waitlist-footer">Waitlist</a>
-            <span data-testid="text-privacy-footer">Privacy</span>
-            <a href="mailto:hello@scopeci.com" data-testid="link-contact-footer">Contact</a>
+          <nav className="footer-links mono" aria-label="Footer">
+            <a href={anchor('waitlist')} data-testid="link-waitlist-footer">Waitlist</a>
+            <a href={PRIVACY_PATH} data-testid="link-privacy-footer">Privacy</a>
+            {/* No mailbox is configured yet, so "Contact" goes to the one channel
+                that actually reaches us: the early-access form. */}
+            <a href={anchor('waitlist')} data-testid="link-contact-footer">Contact</a>
           </nav>
         </div>
-        <div className="footer-bottom"><span>© 2026 ScopeCI</span><span>Commercial authorization for engineering work.</span></div>
+        <div className="footer-bottom mono">
+          <span>© 2026 ScopeCI</span>
+          <span>Commercial authorization for engineering work.</span>
+        </div>
       </div>
     </footer>
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* Page                                                                */
+/* ------------------------------------------------------------------ */
+
 function Home() {
+  usePageMeta(PAGE_TITLE, PAGE_DESCRIPTION);
+
+  // Arriving from another route (e.g. the footer's Waitlist/Contact links), the
+  // browser resolves the hash before React has rendered these sections, so it
+  // silently gives up. Re-run the jump once they exist.
   useEffect(() => {
-    document.title = 'ScopeCI — Commercial CI/CD for Software Agencies';
-    const description = 'ScopeCI connects your contracts, project work and GitHub workflow to catch commercially unauthorized engineering work before it ships.';
-    const setMeta = (selector: string, attribute: string, value: string) => {
-      const element = document.querySelector(selector);
-      if (element) element.setAttribute(attribute, value);
-    };
-    setMeta('meta[name="description"]', 'content', description);
-    setMeta('meta[property="og:title"]', 'content', 'ScopeCI — Commercial CI/CD for Software Agencies');
-    setMeta('meta[property="og:description"]', 'content', description);
-    setMeta('meta[name="twitter:title"]', 'content', 'ScopeCI — Commercial CI/CD for Software Agencies');
-    setMeta('meta[name="twitter:description"]', 'content', description);
-    if (!document.querySelector('link[rel="canonical"]')) {
-      const canonical = document.createElement('link');
-      canonical.rel = 'canonical';
-      canonical.href = window.location.origin + window.location.pathname;
-      document.head.appendChild(canonical);
+    const { hash } = window.location;
+    if (hash.length < 2) return;
+    let target: Element | null = null;
+    try {
+      target = document.querySelector(hash);
+    } catch {
+      return; // not a usable selector
     }
+    if (!target) return;
+    const frame = requestAnimationFrame(() =>
+      target?.scrollIntoView({ behavior: 'auto', block: 'start' }),
+    );
+    return () => cancelAnimationFrame(frame);
   }, []);
+
   return (
-    <div className="site-shell">
+    <div className="site">
+      <a className="skip-link" href="#main">Skip to content</a>
       <Navbar />
-      <main>
+      <main id="main">
         <Hero />
-        <ScopeGap />
-        <HowScopeCIWorks />
-        <ContractCodeGraph />
-        <EvidencePanel />
+        <TheGap />
+        <WhatScopeCIDoes />
+        <CommercialState />
+        <Evidence />
         <CommercialCheck />
+        <Differentiator />
         <Waitlist />
         <Closing />
       </main>
@@ -451,20 +1234,137 @@ function Home() {
   );
 }
 
-function Router() {
+/* ------------------------------------------------------------------ */
+/* Privacy                                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Describes only what the site actually does today: one waitlist form, no
+ * accounts, no analytics. Nothing here asserts a company entity, address or
+ * jurisdiction, because none is established yet.
+ */
+const PRIVACY_SECTIONS: ReadonlyArray<{ heading: string; body: readonly string[] }> = [
+  {
+    heading: 'What we collect',
+    body: [
+      'When you submit the early-access form we store the work email address you enter, the agency or company name if you choose to add one, and the date the request was made.',
+      'That is the only information you give us. There is no account to create and no product to sign into yet, and no client, contract, issue-tracker or repository data is collected through this site.',
+    ],
+  },
+  {
+    heading: 'Technical information',
+    body: [
+      'As with any website, requests to ScopeCI are handled by our hosting and database providers, whose logs record standard technical details such as IP address, browser type and the pages requested. These logs exist to run, debug and secure the service.',
+      'This site sets no analytics, advertising or tracking cookies.',
+    ],
+  },
+  {
+    heading: 'How we use it',
+    body: [
+      'Your email address is used to contact you about ScopeCI early access and occasional product updates — nothing else. We do not sell or rent early-access details, and we do not share them with third parties for their own marketing.',
+    ],
+  },
+  {
+    heading: 'Who else processes it',
+    body: [
+      'Waitlist entries are held in a hosted database, and the site is served by our hosting provider. Both process this information on our behalf so that the service can run.',
+      'The site loads its typefaces from Google Fonts, so your browser requests those files from Google when a page loads.',
+    ],
+  },
+  {
+    heading: 'How long we keep it',
+    body: [
+      'We keep early-access requests until early access closes or you ask us to remove yours, whichever happens first.',
+    ],
+  },
+  {
+    heading: 'Your choices',
+    body: [
+      'You can ask us to remove your details from the early-access list at any time and we will delete the record. Depending on where you live, you may also have rights to access or correct the information we hold about you.',
+    ],
+  },
+  {
+    heading: 'Contact',
+    body: [
+      'We do not publish a dedicated privacy address yet. Until we do, reply to any email you receive from us about ScopeCI early access and we will handle access or removal requests from there.',
+    ],
+  },
+  {
+    heading: 'Changes to this policy',
+    body: [
+      'If this policy changes we will update the date at the top of this page. ScopeCI is still being built, so we expect to expand this policy as the product itself launches.',
+    ],
+  },
+];
+
+function Privacy() {
+  usePageMeta(PRIVACY_TITLE, PRIVACY_DESCRIPTION);
+
   return (
-    <RoutedErrorBoundary>
-      <Switch>
-        <Route path="/" component={Home} />
-        <Route component={NotFound} />
-      </Switch>
-    </RoutedErrorBoundary>
+    <div className="site site-legal">
+      <a className="skip-link" href="#main">Skip to content</a>
+      <Navbar />
+      <main id="main">
+        <article className="legal" aria-labelledby="privacy-title">
+          <div className="container legal-inner">
+            <header className="legal-head">
+              <p className="eyebrow">ScopeCI</p>
+              <h1 className="legal-title" id="privacy-title">Privacy Policy</h1>
+              <p className="legal-meta mono">
+                Last updated 9 September 2026 · Early access
+              </p>
+              <p className="legal-lede">
+                ScopeCI is not generally available yet. Today this site does two
+                things: it describes the product, and it collects early-access
+                requests. This policy covers what that form collects, and what is
+                processed to keep the site running.
+              </p>
+            </header>
+
+            <ol className="legal-sections">
+              {PRIVACY_SECTIONS.map((section, index) => (
+                <li className="legal-section" key={section.heading}>
+                  <span className="legal-num mono" aria-hidden="true">
+                    {String(index + 1).padStart(2, '0')}
+                  </span>
+                  <div className="legal-body">
+                    <h2>{section.heading}</h2>
+                    {section.body.map((paragraph) => (
+                      <p key={paragraph.slice(0, 40)}>{paragraph}</p>
+                    ))}
+                  </div>
+                </li>
+              ))}
+            </ol>
+
+            <p className="legal-foot mono">
+              <a href={anchor('waitlist')} data-testid="link-privacy-back">
+                Back to ScopeCI
+              </a>
+            </p>
+          </div>
+        </article>
+      </main>
+      <Footer />
+    </div>
   );
 }
 
 function RoutedErrorBoundary({ children }: { children: ReactNode }) {
   const [location] = useLocation();
   return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
+}
+
+function Router() {
+  return (
+    <RoutedErrorBoundary>
+      <Switch>
+        <Route path="/" component={Home} />
+        <Route path="/privacy" component={Privacy} />
+        <Route component={NotFound} />
+      </Switch>
+    </RoutedErrorBoundary>
+  );
 }
 
 function App() {
