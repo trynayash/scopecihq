@@ -35,6 +35,30 @@ from public.waitlist_signups
 order by created_at desc;
 ```
 
+## Deployment (Render)
+
+One Render Web Service builds the frontend and serves it from the same Express
+process as the API — `app.ts` serves `artifacts/scopeci/dist/public` as static
+files with an SPA fallback, and mounts the API under `/api`. Same origin, so
+the site's relative `fetch("/api/...")` calls need no CORS or proxy setup.
+
+`render.yaml` at the repo root defines the service (Render Blueprint). To
+deploy:
+
+1. Render → **New** → **Blueprint** → connect the `scopecihq` GitHub repo.
+   Render reads `render.yaml` and pre-fills the service.
+2. Before the first deploy, add the one secret it doesn't commit: this
+   service's **Environment** tab → `DATABASE_URL` → the Supabase connection
+   string (see `.env.example`).
+3. Deploy. Render assigns `PORT` itself; `index.ts` already reads it.
+
+`healthCheckPath: /api/healthz` is set, so Render only swaps traffic to a new
+deploy once the server actually responds.
+
+The free plan spins the service down after inactivity — the next request pays
+a cold-start (tens of seconds), same as Supabase's own free-tier pausing.
+Fine for a waitlist; worth a paid plan before real launch traffic.
+
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
@@ -49,6 +73,8 @@ order by created_at desc;
 - `artifacts/scopeci/src/App.tsx` — the landing experience, the `/privacy` page, and the interactive product surfaces
 - `artifacts/scopeci/src/index.css` — ScopeCI visual tokens, responsive layout, and motion rules
 - `artifacts/api-server/src/routes/waitlist.ts` — waitlist endpoint (`POST /api/waitlist`)
+- `artifacts/api-server/src/app.ts` — mounts `/api`, then serves the built frontend with an SPA fallback
+- `render.yaml` — Render Blueprint: build/start commands, health check
 - `lib/db/src/index.ts` — pool and TLS resolution
 - `lib/db/src/schema/index.ts` — `waitlist_signups` table
 - `lib/db/sql/001_waitlist_rls.sql` — Supabase row level security, run once

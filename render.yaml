@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: scopeci
+    env: node
+    plan: free
+    buildCommand: >-
+      corepack enable &&
+      pnpm install --frozen-lockfile &&
+      pnpm run typecheck &&
+      PORT=3000 BASE_PATH=/ pnpm --filter @workspace/scopeci run build &&
+      pnpm --filter @workspace/api-server run build
+    startCommand: node --enable-source-maps artifacts/api-server/dist/index.mjs
+    healthCheckPath: /api/healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Set in the Render dashboard, not here — this file is committed to a
+      # public repo. Render → this service → Environment → Add Environment
+      # Variable. See .env.example for the Supabase connection string shape.
+      - key: DATABASE_URL
+        sync: false
