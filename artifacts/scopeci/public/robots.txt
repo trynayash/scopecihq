@@ -1,2 +1,5 @@
 User-agent: *
 Allow: /
+Disallow: /admin/
+
+Sitemap: https://scopeci.onrender.com/sitemap.xml

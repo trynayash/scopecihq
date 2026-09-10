@@ -12,11 +12,13 @@ import {
   ArrowDown,
   ArrowRight,
   Check,
+  Download,
   FileSignature,
   GitBranch,
   GitPullRequest,
   Circle,
   Inbox,
+  Lock,
   Scale,
   ServerCog,
   X,
@@ -46,7 +48,103 @@ const PRIVACY_DESCRIPTION =
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
 const HOME = `${BASE}/`;
 const PRIVACY_PATH = `${BASE}/privacy`;
+const ADMIN_PATH = `${BASE}/admin/waitlist`;
 const anchor = (id: string) => `${BASE}/#${id}`;
+
+/* ------------------------------------------------------------------ */
+/* Attribution & lightweight analytics                                 */
+/* ------------------------------------------------------------------ */
+
+/** Captured once on page load — stays constant for the session. */
+const UTM_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'] as const;
+
+interface Attribution {
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+  utmContent: string | null;
+  utmTerm: string | null;
+  referrer: string | null;
+}
+
+function captureAttribution(): Attribution {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    utmSource: params.get('utm_source'),
+    utmMedium: params.get('utm_medium'),
+    utmCampaign: params.get('utm_campaign'),
+    utmContent: params.get('utm_content'),
+    utmTerm: params.get('utm_term'),
+    referrer: document.referrer || null,
+  };
+}
+
+/** Module-level singleton — read once, never mutated. */
+const attribution = captureAttribution();
+
+/**
+ * Fire-and-forget analytics. Uses sendBeacon when available so events
+ * survive page unloads; falls back to a detached fetch. Never blocks
+ * rendering or throws.
+ */
+function track(event: string): void {
+  try {
+    const payload = JSON.stringify({
+      event,
+      source: attribution.utmSource,
+      medium: attribution.utmMedium,
+      campaign: attribution.utmCampaign,
+      referrer: attribution.referrer,
+      landingPage: window.location.pathname,
+    });
+
+    if (navigator.sendBeacon) {
+      const blob = new Blob([payload], { type: 'application/json' });
+      navigator.sendBeacon(`${BASE}/api/events`, blob);
+    } else {
+      fetch(`${BASE}/api/events`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        keepalive: true,
+      }).catch(() => {});
+    }
+  } catch {
+    // Analytics must never break the page.
+  }
+}
+
+/** One-shot scroll depth observers. */
+function useScrollDepth() {
+  useEffect(() => {
+    if (prefersReducedMotion()) return;
+
+    const fired = { 50: false, 90: false };
+
+    const onScroll = () => {
+      const scrollTop = window.scrollY;
+      const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+      if (docHeight <= 0) return;
+      const pct = (scrollTop / docHeight) * 100;
+
+      if (!fired[50] && pct >= 50) {
+        fired[50] = true;
+        track('scroll_50');
+      }
+      if (!fired[90] && pct >= 90) {
+        fired[90] = true;
+        track('scroll_90');
+      }
+
+      if (fired[50] && fired[90]) {
+        window.removeEventListener('scroll', onScroll);
+      }
+    };
+
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+}
 
 /** Keeps the document title, description and canonical in step with the route. */
 function usePageMeta(title: string, description: string) {
@@ -464,6 +562,7 @@ function Hero() {
                   className="button button-primary"
                   href={anchor('waitlist')}
                   data-testid="button-join-waitlist-hero"
+                  onClick={() => track('hero_cta_click')}
                 >
                   Join the waitlist
                   <ArrowRight size={15} aria-hidden="true" />
@@ -957,6 +1056,7 @@ function Waitlist() {
 
   const createSignup = useCreateWaitlistSignup();
   const submitting = state === 'submitting';
+  const hasStartedRef = useRef(false);
 
   const submit = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
@@ -978,31 +1078,40 @@ function Waitlist() {
       setEmailError('');
       setState('submitting');
 
+      track('waitlist_submitted');
+
       createSignup.mutate(
         {
           data: {
             email: trimmedEmail.toLowerCase(),
             agency: trimmedAgency ? trimmedAgency.slice(0, 160) : null,
-          },
+            ...attribution,
+          } as never,
         },
         {
-          onSuccess: () => setState('success'),
+          onSuccess: () => {
+            setState('success');
+            track('waitlist_success');
+          },
           onError: (error) => {
             setState('idle');
             const status = error?.status;
             if (status === 409) {
               setState('duplicate');
+              track('waitlist_duplicate');
               return;
             }
             if (status === 400) {
               setEmailError(
                 error?.data?.error ?? 'Enter a valid work email address.',
               );
+              track('waitlist_error');
               return;
             }
             setFormError(
               "We couldn't save your request. Please try again in a moment.",
             );
+            track('waitlist_error');
           },
         },
       );
@@ -1068,6 +1177,10 @@ function Waitlist() {
                     onChange={(event) => {
                       setEmail(event.target.value);
                       if (emailError) setEmailError('');
+                      if (!hasStartedRef.current) {
+                        hasStartedRef.current = true;
+                        track('waitlist_started');
+                      }
                     }}
                     className={emailError ? 'is-invalid' : ''}
                     aria-invalid={Boolean(emailError)}
@@ -1194,6 +1307,10 @@ function Footer() {
 
 function Home() {
   usePageMeta(PAGE_TITLE, PAGE_DESCRIPTION);
+  useScrollDepth();
+
+  // Track the page view once.
+  useEffect(() => { track('page_view'); }, []);
 
   // Arriving from another route (e.g. the footer's Waitlist/Contact links), the
   // browser resolves the hash before React has rendered these sections, so it
@@ -1248,14 +1365,22 @@ const PRIVACY_SECTIONS: ReadonlyArray<{ heading: string; body: readonly string[]
     heading: 'What we collect',
     body: [
       'When you submit the early-access form we store the work email address you enter, the agency or company name if you choose to add one, and the date the request was made.',
+      'If you arrive through a campaign link, the URL may contain standard marketing parameters such as utm_source and utm_campaign. We store these alongside your signup so we can understand which channels bring us the most relevant users.',
       'That is the only information you give us. There is no account to create and no product to sign into yet, and no client, contract, issue-tracker or repository data is collected through this site.',
+    ],
+  },
+  {
+    heading: 'First-party analytics',
+    body: [
+      'This site records a small number of first-party analytics events — page views, scroll depth, and form interactions — to understand how visitors use the site. These events are sent to our own server, not to a third-party analytics service.',
+      'No cookies are set for analytics. No personal information is included in the events.',
     ],
   },
   {
     heading: 'Technical information',
     body: [
       'As with any website, requests to ScopeCI are handled by our hosting and database providers, whose logs record standard technical details such as IP address, browser type and the pages requested. These logs exist to run, debug and secure the service.',
-      'This site sets no analytics, advertising or tracking cookies.',
+      'This site sets no advertising or tracking cookies.',
     ],
   },
   {
@@ -1311,7 +1436,7 @@ function Privacy() {
               <p className="eyebrow">ScopeCI</p>
               <h1 className="legal-title" id="privacy-title">Privacy Policy</h1>
               <p className="legal-meta mono">
-                Last updated 9 September 2026 · Early access
+                Last updated 10 September 2026 · Early access
               </p>
               <p className="legal-lede">
                 ScopeCI is not generally available yet. Today this site does two
@@ -1355,12 +1480,187 @@ function RoutedErrorBoundary({ children }: { children: ReactNode }) {
   return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
 }
 
+/* ------------------------------------------------------------------ */
+/* Admin                                                               */
+/* ------------------------------------------------------------------ */
+
+interface AdminSignup {
+  id: number;
+  email: string;
+  agency: string | null;
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+  utmContent: string | null;
+  utmTerm: string | null;
+  referrer: string | null;
+  createdAt: string;
+}
+
+interface AdminStats {
+  total: number;
+  qualified: number;
+  recent: number;
+}
+
+function AdminWaitlist() {
+  usePageMeta('Admin — Waitlist', 'Internal admin page.');
+
+  const [key, setKey] = useState(() => sessionStorage.getItem('admin_key') || '');
+  const [authed, setAuthed] = useState(false);
+  const [signups, setSignups] = useState<AdminSignup[]>([]);
+  const [stats, setStats] = useState<AdminStats | null>(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const fetchData = useCallback(async (secret: string) => {
+    setLoading(true);
+    setError('');
+    try {
+      const [signupsRes, statsRes] = await Promise.all([
+        fetch(`${BASE}/api/admin/waitlist?key=${encodeURIComponent(secret)}`),
+        fetch(`${BASE}/api/admin/waitlist/stats?key=${encodeURIComponent(secret)}`),
+      ]);
+      if (signupsRes.status === 401 || statsRes.status === 401) {
+        setError('Invalid admin key.');
+        setAuthed(false);
+        sessionStorage.removeItem('admin_key');
+        return;
+      }
+      setSignups(await signupsRes.json());
+      setStats(await statsRes.json());
+      setAuthed(true);
+      sessionStorage.setItem('admin_key', secret);
+    } catch {
+      setError('Failed to fetch data.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Auto-login if key is in sessionStorage.
+  useEffect(() => {
+    if (key && !authed) fetchData(key);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSubmitKey = (e: FormEvent) => {
+    e.preventDefault();
+    if (key.trim()) fetchData(key.trim());
+  };
+
+  const handleExportCsv = () => {
+    window.open(`${BASE}/api/admin/waitlist/csv?key=${encodeURIComponent(key)}`, '_blank');
+  };
+
+  if (!authed) {
+    return (
+      <div className="site">
+        <main className="admin">
+          <div className="container admin-gate">
+            <Lock size={24} />
+            <h1 className="mono">Admin access</h1>
+            <form onSubmit={handleSubmitKey}>
+              <input
+                type="password"
+                value={key}
+                onChange={(e) => setKey(e.target.value)}
+                placeholder="Admin key"
+                className="admin-key-input mono"
+                autoFocus
+              />
+              <button type="submit" className="button button-primary" disabled={loading}>
+                {loading ? 'Verifying…' : 'Enter'}
+              </button>
+            </form>
+            {error && <p className="admin-error mono">{error}</p>}
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  const fmtDate = (iso: string) => {
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      + ' ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  };
+
+  return (
+    <div className="site">
+      <main className="admin">
+        <div className="container">
+          <div className="admin-header">
+            <div>
+              <h1 className="mono">Waitlist</h1>
+              <p className="admin-sub mono">ScopeCI early access signups</p>
+            </div>
+            <button type="button" className="button button-quiet" onClick={handleExportCsv}>
+              <Download size={14} aria-hidden="true" />
+              Export CSV
+            </button>
+          </div>
+
+          {stats && (
+            <div className="admin-stats">
+              <div className="admin-stat">
+                <span className="admin-stat-value mono">{stats.total}</span>
+                <span className="admin-stat-label mono">Total signups</span>
+              </div>
+              <div className="admin-stat">
+                <span className="admin-stat-value mono">{stats.qualified}</span>
+                <span className="admin-stat-label mono">Qualified agencies</span>
+              </div>
+              <div className="admin-stat">
+                <span className="admin-stat-value mono">{stats.recent}</span>
+                <span className="admin-stat-label mono">Recent (7d)</span>
+              </div>
+            </div>
+          )}
+
+          {signups.length === 0 ? (
+            <p className="admin-empty mono">No signups yet.</p>
+          ) : (
+            <div className="admin-table-wrap">
+              <table className="admin-table mono">
+                <thead>
+                  <tr>
+                    <th>Email</th>
+                    <th>Agency</th>
+                    <th>Date</th>
+                    <th>Source</th>
+                    <th>Campaign</th>
+                    <th>Referrer</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {signups.map((s) => (
+                    <tr key={s.id}>
+                      <td>{s.email}</td>
+                      <td>{s.agency || '—'}</td>
+                      <td className="admin-nowrap">{fmtDate(s.createdAt)}</td>
+                      <td>{s.utmSource || '—'}</td>
+                      <td>{s.utmCampaign || '—'}</td>
+                      <td className="admin-ref">{s.referrer || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}
+
 function Router() {
   return (
     <RoutedErrorBoundary>
       <Switch>
         <Route path="/" component={Home} />
         <Route path="/privacy" component={Privacy} />
+        <Route path="/admin/waitlist" component={AdminWaitlist} />
         <Route component={NotFound} />
       </Switch>
     </RoutedErrorBoundary>

@@ -25,14 +25,30 @@ router.post("/waitlist", async (req, res): Promise<void> => {
     return;
   }
 
+  // Attribution fields are optional — passed through from the frontend's
+  // captured UTM parameters. They are not part of the public form UI.
+  const {
+    utmSource, utmMedium, utmCampaign, utmContent, utmTerm, referrer,
+  } = req.body ?? {};
+
   try {
     const [signup] = await db
       .insert(waitlistSignupsTable)
       .values({
         email: parsed.data.email.trim().toLowerCase(),
         agency: parsed.data.agency?.trim() || null,
+        utmSource: typeof utmSource === "string" ? utmSource.slice(0, 100) : null,
+        utmMedium: typeof utmMedium === "string" ? utmMedium.slice(0, 100) : null,
+        utmCampaign: typeof utmCampaign === "string" ? utmCampaign.slice(0, 200) : null,
+        utmContent: typeof utmContent === "string" ? utmContent.slice(0, 200) : null,
+        utmTerm: typeof utmTerm === "string" ? utmTerm.slice(0, 200) : null,
+        referrer: typeof referrer === "string" ? referrer.slice(0, 2000) : null,
       })
       .returning();
+
+    // TODO: Send confirmation email here when an SMTP provider is configured.
+    // Suggested subject: "You're on the ScopeCI early access list"
+    // See DEPLOYMENT_CONTEXT.md section 6 for the suggested body copy.
 
     res.status(201).json(CreateWaitlistSignupResponse.parse(signup));
   } catch (error: unknown) {

@@ -26,3 +26,5 @@ services:
       # Variable. See .env.example for the Supabase connection string shape.
       - key: DATABASE_URL
         sync: false
+      - key: ADMIN_SECRET
+        sync: false
