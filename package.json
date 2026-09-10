@@ -8,7 +8,9 @@
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
-    "simulate": "node node_modules/.pnpm/tsx@4.23.4/node_modules/tsx/dist/cli.mjs lib/commercial-engine/src/simulator.ts"
+    "simulate": "node node_modules/.pnpm/tsx@4.23.4/node_modules/tsx/dist/cli.mjs lib/commercial-engine/src/simulator.ts",
+    "db:seed": "node --env-file-if-exists=.env node_modules/.pnpm/tsx@4.23.4/node_modules/tsx/dist/cli.mjs lib/db/src/seed.ts",
+    "db:test": "node --env-file-if-exists=.env node_modules/.pnpm/tsx@4.23.4/node_modules/tsx/dist/cli.mjs lib/db/src/tests/provenance.test.ts"
   },
   "private": true,
   "dependencies": {

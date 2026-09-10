@@ -1,6 +1,10 @@
 import { createInsertSchema } from "drizzle-zod";
-import { pgTable, serial, text, timestamp, varchar } from "drizzle-orm/pg-core";
+import { pgTable, serial, timestamp, varchar } from "drizzle-orm/pg-core";
 import { z } from "zod/v4";
+
+/* ==================================================================
+   Existing Landing Page Tables (Preserved)
+   ================================================================== */
 
 export const waitlistSignupsTable = pgTable("waitlist_signups", {
   id: serial("id").primaryKey(),
@@ -41,3 +45,9 @@ export const insertSiteEventSchema = createInsertSchema(siteEventsTable).omit({
 
 export type InsertSiteEvent = z.infer<typeof insertSiteEventSchema>;
 export type SiteEvent = typeof siteEventsTable.$inferSelect;
+
+/* ==================================================================
+   ScopeCI Commercial Provenance Graph
+   ================================================================== */
+
+export * from "./provenance.js";
