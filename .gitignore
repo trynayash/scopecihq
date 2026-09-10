@@ -52,3 +52,6 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Development context (chat history — local reference only)
+DEPLOYMENT_CONTEXT.md
