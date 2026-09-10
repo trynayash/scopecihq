@@ -348,7 +348,7 @@ export class WebhookService {
               externalId: `lin_issue_${resolved.id}`,
               identifier: resolved.id,
               title: resolved.title,
-              description: resolved.description,
+              description: resolved.description || "",
               status: resolved.status,
               estimate: resolved.estimateHours || null,
             })
@@ -356,7 +356,7 @@ export class WebhookService {
               target: [issuesTable.externalProvider, issuesTable.externalId],
               set: {
                 title: resolved.title,
-                description: resolved.description,
+                description: resolved.description || "",
                 status: resolved.status,
                 estimate: resolved.estimateHours || null,
                 updatedAt: new Date(),

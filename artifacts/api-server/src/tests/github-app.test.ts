@@ -476,7 +476,7 @@ async function runPhase2TestSuite(): Promise<void> {
   });
   assert(evalRow !== undefined, "Commercial evaluation persisted in database");
   assert(evalRow?.policyMode === "OBSERVE", "Policy mode is OBSERVE");
-  assert(evalRow?.evaluatorVersion?.startsWith("scopeci-"), "Evaluator version recorded");
+  assert(Boolean(evalRow?.evaluatorVersion?.startsWith("scopeci-")), "Evaluator version recorded");
 
   // -------------------------------------------------------------
   // Test 22: Full Mocked End-to-End Flow & HeadSha Invariant Verification
