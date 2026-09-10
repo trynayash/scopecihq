@@ -51,3 +51,4 @@ export type SiteEvent = typeof siteEventsTable.$inferSelect;
    ================================================================== */
 
 export * from "./provenance.js";
+export * from "./github.js";

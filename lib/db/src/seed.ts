@@ -8,6 +8,8 @@ import {
   contractClausesTable,
   contractsTable,
   deliverablesTable,
+  githubCheckRunsTable,
+  githubInstallationsTable,
   issueDeliverableLinksTable,
   issuesTable,
   organizationsTable,
@@ -16,6 +18,7 @@ import {
   projectLinksTable,
   pullRequestsTable,
   scopeBaselinesTable,
+  webhookDeliveriesTable,
 } from './schema/index.js';
 
 export async function seedProvenanceGraph(): Promise<void> {
@@ -30,9 +33,11 @@ export async function seedProvenanceGraph(): Promise<void> {
   if (existingOrg) {
     console.log('▶ Resetting previous test organization seed data...');
     await db.delete(commercialEventsTable).where(eq(commercialEventsTable.organizationId, existingOrg.id));
+    await db.delete(githubInstallationsTable).where(eq(githubInstallationsTable.organizationId, existingOrg.id));
     
     const prs = await db.select().from(pullRequestsTable).where(eq(pullRequestsTable.organizationId, existingOrg.id));
     for (const pr of prs) {
+      await db.delete(githubCheckRunsTable).where(eq(githubCheckRunsTable.pullRequestId, pr.id));
       const evals = await db.select().from(commercialEvaluationsTable).where(eq(commercialEvaluationsTable.pullRequestId, pr.id));
       for (const ev of evals) {
         await db.delete(commercialApprovalsTable).where(eq(commercialApprovalsTable.commercialEvaluationId, ev.id));
@@ -203,6 +208,31 @@ export async function seedProvenanceGraph(): Promise<void> {
     })
     .returning();
   console.log(`  ✓ Project Link: ${projLink.externalProjectName} <-> ${projLink.repositoryFullName}`);
+
+  // 6b. GitHub Installation
+  console.log('▶ 6b. Seeding GitHub App Installation...');
+  const [ghInstall] = await db
+    .insert(githubInstallationsTable)
+    .values({
+      installationId: 'gh_install_184200',
+      organizationId: org.id,
+      githubAccountId: 'gh_acct_northstar',
+      githubAccountLogin: 'northstar',
+      githubAccountType: 'Organization',
+      permissionsJson: {
+        pull_requests: 'read',
+        contents: 'read',
+        checks: 'write',
+      },
+      repositorySelection: 'selected',
+      installedBy: 'northstar-admin',
+    })
+    .onConflictDoUpdate({
+      target: githubInstallationsTable.installationId,
+      set: { organizationId: org.id, updatedAt: new Date() },
+    })
+    .returning();
+  console.log(`  ✓ GitHub Installation: ${ghInstall.installationId} -> Org ${ghInstall.organizationId}`);
 
   // 7. Linear Issues
   console.log('▶ 7. Seeding Linear Issues...');

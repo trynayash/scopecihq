@@ -469,6 +469,7 @@ export const prDiffAnalysesTable = pgTable(
       .notNull()
       .references(() => pullRequestsTable.id, { onDelete: "restrict" }),
     analysisVersion: integer("analysis_version").default(1).notNull(),
+    headSha: varchar("head_sha", { length: 64 }),
     status: varchar("status", { length: 50 }).default("COMPLETED").notNull(), // PENDING, COMPLETED, FAILED
     filesChangedJson: jsonb("files_changed_json").default([]).notNull(),
     subsystemsJson: jsonb("subsystems_json").default([]).notNull(),
@@ -481,6 +482,7 @@ export const prDiffAnalysesTable = pgTable(
   },
   (table) => [
     index("diff_analysis_pr_idx").on(table.pullRequestId),
+    index("diff_analysis_head_sha_idx").on(table.headSha),
     index("diff_analysis_status_idx").on(table.status),
   ]
 );
@@ -510,6 +512,7 @@ export const commercialEvaluationsTable = pgTable(
     prDiffAnalysisId: uuid("pr_diff_analysis_id").references(() => prDiffAnalysesTable.id, {
       onDelete: "set null",
     }),
+    headSha: varchar("head_sha", { length: 64 }),
     state: varchar("state", { length: 50 }).notNull(), // IN_SCOPE, REVIEW_REQUIRED, CHANGE_REQUIRED, APPROVED_CHANGE, BLOCKED, OVERRIDDEN
     policyMode: varchar("policy_mode", { length: 50 }).default("REVIEW").notNull(), // OBSERVE, REVIEW, ENFORCE
     confidence: numeric("confidence", { precision: 5, scale: 4 }),
@@ -529,6 +532,7 @@ export const commercialEvaluationsTable = pgTable(
   },
   (table) => [
     index("eval_pr_idx").on(table.pullRequestId),
+    index("eval_head_sha_idx").on(table.headSha),
     index("eval_baseline_idx").on(table.scopeBaselineId),
     index("eval_state_idx").on(table.state),
     index("eval_created_at_idx").on(table.createdAt),
