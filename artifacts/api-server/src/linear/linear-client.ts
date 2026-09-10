@@ -307,7 +307,32 @@ export class RealLinearClient implements ILinearClient {
 
   constructor(accessToken: string, endpoint: string = "https://api.linear.app/graphql") {
     this.accessToken = accessToken;
-    this.endpoint = endpoint;
+
+    // SSRF Guard: Validate endpoint protocol and hostname
+    try {
+      const parsed = new URL(endpoint);
+      if (process.env.NODE_ENV === "production" && parsed.protocol !== "https:") {
+        throw new Error("Linear GraphQL endpoint must use HTTPS in production.");
+      }
+
+      const host = parsed.hostname.toLowerCase();
+      const isPrivateOrLoopback =
+        host === "localhost" ||
+        host === "127.0.0.1" ||
+        host === "::1" ||
+        host.startsWith("169.254.") ||
+        host.startsWith("10.") ||
+        host.startsWith("192.168.") ||
+        /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host);
+
+      if (process.env.NODE_ENV === "production" && isPrivateOrLoopback) {
+        throw new Error(`SSRF Blocked: Linear endpoint cannot target private/internal host: ${host}`);
+      }
+
+      this.endpoint = endpoint;
+    } catch (err: any) {
+      throw new Error(`Invalid Linear API endpoint: ${err.message}`);
+    }
   }
 
   private async graphql<T>(query: string, variables?: Record<string, unknown>, retries: number = 2): Promise<T> {

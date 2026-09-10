@@ -12,6 +12,7 @@ import {
   encryptToken,
   generateOAuthState,
   verifyLinearWebhookSignature,
+  verifyLinearWebhookTimestamp,
 } from "../linear/crypto.js";
 import {
   type ILinearClient,
@@ -20,11 +21,36 @@ import {
 } from "../linear/linear-client.js";
 import { LinearSyncService } from "../linear/sync-service.js";
 import { logger } from "../lib/logger.js";
+import { requireApiKeyOrSession, requireTenantAccess } from "../middlewares/auth.js";
 
 const router: IRouter = Router();
 
 // Configurable environment defaults
 const APP_BASE_URL = process.env.APP_BASE_URL || "https://app.scopeci.dev";
+
+/**
+ * Validates that redirect URLs are strictly restricted to the application domain
+ * or relative paths, preventing open redirect vulnerabilities.
+ */
+function validateRedirectUrl(urlStr: string | undefined): string {
+  const fallback = `${APP_BASE_URL}/settings/integrations/linear`;
+  if (!urlStr) return fallback;
+  try {
+    if (urlStr.startsWith("/") && !urlStr.startsWith("//")) {
+      return `${APP_BASE_URL}${urlStr}`;
+    }
+    const parsed = new URL(urlStr);
+    const appOrigin = new URL(APP_BASE_URL).origin;
+    if (parsed.origin === appOrigin) {
+      return urlStr;
+    }
+    logger.warn({ urlStr }, "Rejected unapproved OAuth redirect URL, falling back to APP_BASE_URL");
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 const LINEAR_CLIENT_ID = process.env.LINEAR_CLIENT_ID || "mock_linear_client_id";
 const LINEAR_CLIENT_SECRET = process.env.LINEAR_CLIENT_SECRET || "mock_linear_client_secret";
 const LINEAR_WEBHOOK_SECRET = process.env.LINEAR_WEBHOOK_SECRET || "mock_linear_webhook_secret";
@@ -71,7 +97,7 @@ export function setTokenExchanger(fn: TokenExchanger): void {
 router.get("/integrations/linear/connect", async (req: Request, res: Response): Promise<void> => {
   const organizationId = (req.query.organizationId as string) || (req.headers["x-organization-id"] as string);
   const userId = (req.query.userId as string) || (req.headers["x-user-id"] as string) || "user_admin";
-  const redirectParam = req.query.redirectUrl as string | undefined;
+  const redirectParam = validateRedirectUrl(req.query.redirectUrl as string | undefined);
 
   if (!organizationId) {
     res.status(400).json({ error: "organizationId is required to initiate Linear OAuth" });
@@ -287,6 +313,18 @@ router.post("/webhooks/linear", async (req: Request, res: Response): Promise<voi
     return;
   }
 
+  // September 2026 Linear guidance: Validate webhook timestamp against replay attacks (300s window)
+  const timestampHeader =
+    (req.headers["linear-delivery-timestamp"] as string) ||
+    (req.headers["x-linear-timestamp"] as string) ||
+    req.body?.createdAt;
+
+  if (timestampHeader && !verifyLinearWebhookTimestamp(timestampHeader, 300)) {
+    logger.warn({ deliveryId, timestampHeader }, "Linear webhook timestamp replay rejected");
+    res.status(401).json({ error: "Webhook timestamp expired or invalid (replay defense)" });
+    return;
+  }
+
   // Check delivery idempotency
   const existingDelivery = await db
     .select()
@@ -342,9 +380,23 @@ router.post("/webhooks/linear", async (req: Request, res: Response): Promise<voi
     }
 
     if (!orgId) {
-      // Fallback to first active organization for local tests
-      const orgs = await db.select().from(organizationsTable).limit(1);
-      if (orgs.length > 0) orgId = orgs[0].id;
+      // Security Fix: Do NOT fall back to arbitrary tenant. Fail closed with IGNORED status.
+      logger.warn({ linearWorkspaceId, deliveryId }, "Linear webhook received for unmapped workspace; rejecting cross-tenant injection.");
+      await db
+        .update(linearWebhookDeliveriesTable)
+        .set({
+          status: "IGNORED",
+          errorMessage: "unmapped_workspace",
+          processedAt: new Date(),
+        })
+        .where(eq(linearWebhookDeliveriesTable.id, delivery.id));
+
+      res.status(200).json({
+        status: "ignored",
+        reason: "unmapped_workspace",
+        deliveryId,
+      });
+      return;
     }
 
     if (orgId) {
@@ -412,7 +464,11 @@ router.post("/webhooks/linear", async (req: Request, res: Response): Promise<voi
    4. POST /api/integrations/linear/projects/map
    Maps a Linear project to a GitHub repository in project_links.
    ================================================================== */
-router.post("/integrations/linear/projects/map", async (req: Request, res: Response): Promise<void> => {
+router.post(
+  "/integrations/linear/projects/map",
+  requireApiKeyOrSession({ allowAnonymousInDev: true }),
+  requireTenantAccess((req) => req.body?.organizationId),
+  async (req: Request, res: Response): Promise<void> => {
   const {
     organizationId,
     externalProjectId,
@@ -453,7 +509,11 @@ router.post("/integrations/linear/projects/map", async (req: Request, res: Respo
    5. POST /api/integrations/linear/projects/:projectId/sync
    Synchronizes all issues for a Linear project into the ScopeCI graph.
    ================================================================== */
-router.post("/integrations/linear/projects/:projectId/sync", async (req: Request, res: Response): Promise<void> => {
+router.post(
+  "/integrations/linear/projects/:projectId/sync",
+  requireApiKeyOrSession({ allowAnonymousInDev: true }),
+  requireTenantAccess((req) => req.body?.organizationId),
+  async (req: Request, res: Response): Promise<void> => {
   const projectId = req.params.projectId as string;
   const { organizationId } = req.body;
 
@@ -483,7 +543,11 @@ router.post("/integrations/linear/projects/:projectId/sync", async (req: Request
    6. POST /api/integrations/linear/issues/:issueId/link-deliverable
    Manual issue → deliverable linking with immutable commercial event audit.
    ================================================================== */
-router.post("/integrations/linear/issues/:issueId/link-deliverable", async (req: Request, res: Response): Promise<void> => {
+router.post(
+  "/integrations/linear/issues/:issueId/link-deliverable",
+  requireApiKeyOrSession({ allowAnonymousInDev: true }),
+  requireTenantAccess((req) => req.body?.organizationId),
+  async (req: Request, res: Response): Promise<void> => {
   const issueId = req.params.issueId as string;
   const { organizationId, deliverableId, actor } = req.body;
 

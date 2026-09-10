@@ -32,8 +32,15 @@ export function resolveEncryptionKey(keyVersion: string = DEFAULT_KEY_VERSION): 
   const versionedEnvName = `LINEAR_TOKEN_ENCRYPTION_KEY_${keyVersion.toUpperCase()}`;
   const rawKey =
     process.env[versionedEnvName] ||
-    process.env.LINEAR_TOKEN_ENCRYPTION_KEY ||
-    "scopeci-alpha-deterministic-test-encryption-key-32b";
+    process.env.LINEAR_TOKEN_ENCRYPTION_KEY;
+
+  if (!rawKey) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("LINEAR_TOKEN_ENCRYPTION_KEY must be explicitly configured in production.");
+    }
+    // Deterministic fallback for test/local development
+    return crypto.createHash("sha256").update("scopeci-alpha-deterministic-test-encryption-key-32b").digest();
+  }
 
   // Deterministically hash to 32 bytes (256 bits) to accept passphrase or hex string
   return crypto.createHash("sha256").update(rawKey).digest();
@@ -126,4 +133,45 @@ export function verifyLinearWebhookSignature(
   } catch {
     return false;
   }
+}
+
+/**
+ * September 2026 Linear webhook guidance:
+ * Validate webhook timestamp against replay attacks (recommended tolerance: 300 seconds).
+ */
+export function verifyLinearWebhookTimestamp(
+  timestamp: string | number | undefined,
+  maxAgeSeconds: number = 300
+): boolean {
+  if (!timestamp) {
+    return false;
+  }
+
+  let eventTimeMs: number;
+  if (typeof timestamp === "number") {
+    // Check if seconds or milliseconds
+    eventTimeMs = timestamp < 1e11 ? timestamp * 1000 : timestamp;
+  } else {
+    const parsedNum = Number(timestamp);
+    if (!Number.isNaN(parsedNum)) {
+      eventTimeMs = parsedNum < 1e11 ? parsedNum * 1000 : parsedNum;
+    } else {
+      const parsedDate = Date.parse(timestamp);
+      if (Number.isNaN(parsedDate)) {
+        return false;
+      }
+      eventTimeMs = parsedDate;
+    }
+  }
+
+  const now = Date.now();
+  const ageMs = now - eventTimeMs;
+  const maxAgeMs = maxAgeSeconds * 1000;
+
+  // Allow up to 60s future drift for slight clock discrepancies between servers
+  if (ageMs < -60_000) {
+    return false;
+  }
+
+  return ageMs <= maxAgeMs;
 }

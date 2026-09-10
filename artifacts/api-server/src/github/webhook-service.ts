@@ -6,6 +6,7 @@ import {
   commercialEventsTable,
   githubCheckRunsTable,
   githubInstallationsTable,
+  contractsTable,
   issuesTable,
   prDiffAnalysesTable,
   prIssueLinksTable,
@@ -100,10 +101,15 @@ export class WebhookService {
   ): Promise<{ shouldProcess: boolean; reason?: string }> {
     const { deliveryId, eventType, signature } = headers;
 
-    // 1. Signature Verification
-    if (this.secret && !verifyWebhookSignature(rawBody, signature, this.secret)) {
-      logger.warn({ deliveryId, eventType }, "GitHub webhook signature verification failed");
-      throw new Error("Invalid webhook signature");
+    // 1. Signature Verification (Fail-closed in production or when secret configured)
+    if (this.secret) {
+      if (!signature || !verifyWebhookSignature(rawBody, signature, this.secret)) {
+        logger.warn({ deliveryId, eventType }, "GitHub webhook signature verification failed");
+        throw new Error("Invalid webhook signature");
+      }
+    } else if (process.env.NODE_ENV === "production") {
+      logger.error("GITHUB_WEBHOOK_SECRET is not configured in production; failing closed");
+      throw new Error("GitHub webhook secret not configured");
     }
 
     // 2. Ping event handling
@@ -149,19 +155,27 @@ export class WebhookService {
       sender: payload.sender?.login,
     };
 
-    await db.insert(webhookDeliveriesTable).values({
-      deliveryId,
-      eventType,
-      action: payload.action,
-      installationId: payload.installation?.id ? String(payload.installation.id) : null,
-      repositoryFullName: repo?.full_name || null,
-      headSha: pr?.head?.sha || null,
-      prNumber: pr?.number || null,
-      senderLogin: payload.sender?.login || null,
-      summaryJson,
-      status: "PENDING",
-      expiresAt,
-    });
+    try {
+      await db.insert(webhookDeliveriesTable).values({
+        deliveryId,
+        eventType,
+        action: payload.action,
+        installationId: payload.installation?.id ? String(payload.installation.id) : null,
+        repositoryFullName: repo?.full_name || null,
+        headSha: pr?.head?.sha || null,
+        prNumber: pr?.number || null,
+        senderLogin: payload.sender?.login || null,
+        summaryJson,
+        status: "PENDING",
+        expiresAt,
+      });
+    } catch (err: any) {
+      if (err.code === "23505" || err.message?.includes("unique constraint") || err.message?.includes("duplicate key")) {
+        logger.info({ deliveryId }, "Duplicate webhook delivery detected during concurrent insert");
+        return { shouldProcess: false, reason: "already_processed" };
+      }
+      throw err;
+    }
 
     return { shouldProcess: true };
   }
@@ -205,9 +219,14 @@ export class WebhookService {
         }
       }
 
-      // If no installation record, try to resolve via project_links repositoryFullName
+      // If installationId resolved organizationId, require projectLink to strictly belong to that organizationId
       let projectLink = await db.query.projectLinksTable.findFirst({
-        where: eq(projectLinksTable.repositoryFullName, repositoryFullName),
+        where: organizationId
+          ? and(
+              eq(projectLinksTable.repositoryFullName, repositoryFullName),
+              eq(projectLinksTable.organizationId, organizationId)
+            )
+          : eq(projectLinksTable.repositoryFullName, repositoryFullName),
       });
 
       if (!organizationId && projectLink) {
@@ -382,14 +401,35 @@ export class WebhookService {
         })
         .returning();
 
-      // 5. Query Active Scope Baseline for Organization
-      const baselineRecord = await db.query.scopeBaselinesTable.findFirst({
-        where: eq(scopeBaselinesTable.status, "ACTIVE"),
-        with: {
-          clauses: true,
-          deliverables: true,
-        },
-      });
+      // 5. Query Active Scope Baseline for Organization (Tenant-Scoped via Contract)
+      let baselineRecord;
+      if (organizationId) {
+        const contract = await db.query.contractsTable.findFirst({
+          where: eq(contractsTable.organizationId, organizationId),
+        });
+        if (contract) {
+          baselineRecord = await db.query.scopeBaselinesTable.findFirst({
+            where: and(
+              eq(scopeBaselinesTable.contractId, contract.id),
+              eq(scopeBaselinesTable.status, "ACTIVE")
+            ),
+            with: {
+              clauses: true,
+              deliverables: true,
+            },
+          });
+        }
+      }
+
+      if (!baselineRecord) {
+        baselineRecord = await db.query.scopeBaselinesTable.findFirst({
+          where: eq(scopeBaselinesTable.status, "ACTIVE"),
+          with: {
+            clauses: true,
+            deliverables: true,
+          },
+        });
+      }
 
       // Construct domain ScopeBaseline
       const domainBaseline: ScopeBaseline = baselineRecord

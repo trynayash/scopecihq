@@ -3,12 +3,14 @@ import { db, waitlistSignupsTable } from "@workspace/db";
 import { desc } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
+import { timingSafeCompare } from "../middlewares/auth.js";
+
 const router: IRouter = Router();
 
 /**
- * Checks the ADMIN_SECRET env var against the request's `key` query param
- * or `x-admin-key` header. Returns 401 if the secret is not configured or
- * does not match.
+ * Checks the ADMIN_SECRET env var against the request's `x-admin-key` header
+ * or `Authorization: Bearer <key>`. Uses constant-time comparison.
+ * Returns 401 if the secret is not configured or does not match.
  */
 function requireAdminKey(req: Request, res: Response, next: NextFunction): void {
   const secret = process.env.ADMIN_SECRET;
@@ -17,11 +19,16 @@ function requireAdminKey(req: Request, res: Response, next: NextFunction): void 
     return;
   }
 
-  const provided =
-    (req.query.key as string | undefined) ??
-    (req.headers["x-admin-key"] as string | undefined);
+  const authHeader = req.headers["authorization"];
+  let provided: string | undefined;
 
-  if (!provided || provided !== secret) {
+  if (authHeader?.startsWith("Bearer ")) {
+    provided = authHeader.slice(7).trim();
+  } else {
+    provided = req.headers["x-admin-key"] as string | undefined;
+  }
+
+  if (!provided || !timingSafeCompare(provided, secret)) {
     res.status(401).json({ error: "Unauthorized." });
     return;
   }
@@ -70,6 +77,7 @@ router.get("/admin/waitlist/stats", async (req, res): Promise<void> => {
 
 /**
  * GET /admin/waitlist/csv — downloads signups as CSV.
+ * Sanitizes against CSV Formula Injection (OWASP A05).
  */
 router.get("/admin/waitlist/csv", async (req, res): Promise<void> => {
   try {
@@ -85,7 +93,13 @@ router.get("/admin/waitlist/csv", async (req, res): Promise<void> => {
 
     const escape = (val: unknown): string => {
       if (val === null || val === undefined) return "";
-      const str = String(val);
+      let str = String(val);
+
+      // Prevent CSV Formula Injection: Prefix dangerous characters with single quote
+      if (/^[=+\-@\t\r]/.test(str)) {
+        str = `'${str}`;
+      }
+
       if (str.includes(",") || str.includes('"') || str.includes("\n")) {
         return `"${str.replace(/"/g, '""')}"`;
       }

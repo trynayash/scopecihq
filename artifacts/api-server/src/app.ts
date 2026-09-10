@@ -7,7 +7,12 @@ import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
 
+import { securityHeaders } from "./middlewares/security-headers";
+
 const app: Express = express();
+
+// OWASP Security Headers (HSTS, CSP, X-Frame-Options, X-Content-Type-Options)
+app.use(securityHeaders());
 
 app.use(
   pinoHttp({
@@ -28,15 +33,49 @@ app.use(
     },
   }),
 );
-app.use(cors());
+
+// Restricted CORS Allowlist
+const allowedOrigins: string[] = [
+  "http://localhost:3000",
+  "http://localhost:5000",
+  "http://localhost:5173",
+  "http://localhost:5174",
+];
+
+if (process.env.APP_BASE_URL) {
+  try {
+    allowedOrigins.push(new URL(process.env.APP_BASE_URL).origin);
+  } catch {}
+}
+if (process.env.NEXT_PUBLIC_MARKETING_URL) {
+  try {
+    allowedOrigins.push(new URL(process.env.NEXT_PUBLIC_MARKETING_URL).origin);
+  } catch {}
+}
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps, curl, server-to-server, webhooks)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin) || process.env.NODE_ENV !== "production") {
+        return callback(null, true);
+      }
+      return callback(new Error(`CORS origin not allowed: ${origin}`));
+    },
+    credentials: true,
+  })
+);
+
 app.use(
   express.json({
+    limit: "1mb",
     verify: (req: any, _res, buf) => {
       req.rawBody = buf;
     },
   })
 );
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
 app.use("/api", router);
 
