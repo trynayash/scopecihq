@@ -69,8 +69,8 @@ export class MockGitHubClient implements IGitHubClient {
   public simulatedFailure: { code: number; message: string; retryAfter?: number } | null = null;
   public failureCountRemaining = 0;
 
-  private checkRunCounter = 5000;
-  private commentCounter = 8000;
+  private checkRunCounter = Date.now();
+  private commentCounter = Date.now();
 
   public setFilesForPR(owner: string, repo: string, prNumber: number, files: RawGitHubFile[]): void {
     const key = `${owner}/${repo}#${prNumber}`;

@@ -4,6 +4,7 @@ import waitlistRouter from "./waitlist";
 import eventsRouter from "./events";
 import adminRouter from "./admin";
 import githubRouter from "./github";
+import linearRouter from "./linear";
 
 const router: IRouter = Router();
 
@@ -12,5 +13,6 @@ router.use(waitlistRouter);
 router.use(eventsRouter);
 router.use(adminRouter);
 router.use(githubRouter);
+router.use(linearRouter);
 
 export default router;
