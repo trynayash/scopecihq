@@ -3,8 +3,10 @@ services:
     name: scopeci
     env: node
     plan: free
+    # Render's Node image already wires up pnpm via Corepack from the
+    # `packageManager` field in package.json — running `corepack enable`
+    # ourselves collides with a pnpm shim Render ships on a read-only path.
     buildCommand: >-
-      corepack enable &&
       pnpm install --frozen-lockfile &&
       pnpm run typecheck &&
       PORT=3000 BASE_PATH=/ pnpm --filter @workspace/scopeci run build &&
