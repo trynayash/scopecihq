@@ -343,7 +343,7 @@ export class WebhookService {
           const [dbIssue] = await db
             .insert(issuesTable)
             .values({
-              organizationId,
+              organizationId: organizationId!,
               externalProvider: "LINEAR",
               externalId: `lin_issue_${resolved.id}`,
               identifier: resolved.id,
@@ -507,19 +507,31 @@ export class WebhookService {
           prDiffAnalysisId: diffAnalysis.id,
           headSha,
           state: evaluation.state,
+          evaluationStatus: "COMPLETED",
+          scopeTaxonomy: evaluation.taxonomy,
+          reviewReasonCode: evaluation.reviewReasonCode || null,
           policyMode: "OBSERVE",
           confidence: String(evaluation.confidence),
+          commercialConfidence: String(evaluation.commercialConfidence),
+          modelConfidence: String(evaluation.modelConfidence || 0.91),
+          evaluationIdentityHash: evaluation.identityHash,
+          documentVersion: "doc_v1.0",
+          issueSnapshotHash: evaluation.evidenceBundle?.issueEvidence ? "computed" : null,
+          modelVersion: "deterministic-v4",
+          promptVersion: "sow_decomp_v1.0",
           contractClauseIdsJson: evaluation.contractClauseId ? [evaluation.contractClauseId] : [],
           deliverableIdsJson: evaluation.deliverableId ? [evaluation.deliverableId] : [],
           issueIdsJson: primaryIssue ? [primaryIssue.id] : [],
           evidenceJson: evaluation.evidence,
+          evidenceBundleJson: evaluation.evidenceBundle,
+          decisionExplanationJson: evaluation.evidenceBundle?.decisionExplanation,
           estimatedHoursMin: evaluation.estimatedHours.min,
           estimatedHoursMax: evaluation.estimatedHours.max,
           estimatedValueMin: evaluation.commercialValue.min,
           estimatedValueMax: evaluation.commercialValue.max,
           currency: evaluation.commercialValue.currency,
           reason: evaluation.detectedDelta.join("; ") || "Commercial evaluation completed",
-          evaluatorVersion: "scopeci-alpha-0.2.0",
+          evaluatorVersion: evaluation.evaluatorVersion || "scopeci-alpha-0.2.0",
         })
         .returning();
 

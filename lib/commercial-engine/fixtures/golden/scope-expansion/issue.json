@@ -1,0 +1,10 @@
+{
+  "id": "ENG-184",
+  "identifier": "ENG-184",
+  "title": "Add organization-level permissions and roles",
+  "description": "Implement multi-tenant RBAC with admin/editor/viewer roles and team invite APIs.",
+  "status": "In Progress",
+  "estimateHours": 20,
+  "labels": ["backend", "permissions", "team-management"],
+  "updatedAt": "2026-09-02T14:30:00Z"
+}

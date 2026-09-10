@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /* ------------------------------------------------------------------ */
-/* Core Enums & States                                                */
+/* 1. Core Enums & States                                             */
 /* ------------------------------------------------------------------ */
 
 export const CommercialStateEnum = z.enum([
@@ -12,8 +12,16 @@ export const CommercialStateEnum = z.enum([
   'BLOCKED',
   'OVERRIDDEN',
 ]);
-
 export type CommercialState = z.infer<typeof CommercialStateEnum>;
+
+export const EvaluationStatusEnum = z.enum([
+  'PENDING',
+  'RUNNING',
+  'COMPLETED',
+  'FAILED',
+  'STALE',
+]);
+export type EvaluationStatus = z.infer<typeof EvaluationStatusEnum>;
 
 export const PolicyModeEnum = z.enum(['OBSERVE', 'REVIEW', 'ENFORCE']);
 export type PolicyMode = z.infer<typeof PolicyModeEnum>;
@@ -26,8 +34,53 @@ export const CheckRunConclusionEnum = z.enum([
 ]);
 export type CheckRunConclusion = z.infer<typeof CheckRunConclusionEnum>;
 
+/**
+ * Conservative Scope Taxonomy (Phase 4 Hard Requirement 2 & 23)
+ * Never equate "not mentioned in SOW" with "out of scope".
+ */
+export const ScopeTaxonomyEnum = z.enum([
+  'CLEARLY_IN_SCOPE',
+  'CLEARLY_OUT_OF_SCOPE',
+  'EXPLICITLY_EXCLUDED',
+  'AMBIGUOUS',
+  'AUTHORIZED_CHANGE',
+  'INSUFFICIENT_EVIDENCE',
+]);
+export type ScopeTaxonomy = z.infer<typeof ScopeTaxonomyEnum>;
+
+/**
+ * Standardized Human Review Reason Codes (Phase 4 Hard Requirement 17)
+ */
+export const ReviewReasonCodeEnum = z.enum([
+  'MISSING_CONTRACT_EVIDENCE',
+  'AMBIGUOUS_SCOPE',
+  'MULTIPLE_DELIVERABLES',
+  'LOW_CONFIDENCE',
+  'UNLINKED_ISSUE',
+  'UNPARSEABLE_DIFF',
+  'CONFLICTING_CLAUSES',
+  'EXPIRED_BASELINE',
+  'MODEL_FAILURE',
+]);
+export type ReviewReasonCode = z.infer<typeof ReviewReasonCodeEnum>;
+
+/**
+ * Source Quality Hierarchy (Phase 4 Hard Requirement 18)
+ * PRIMARY_CONTRACT > CHANGE_ORDER > LINEAR_ISSUE > GITHUB_DIFF > GITHUB_PR > INFERRED > MODEL_SUMMARY
+ */
+export const EvidenceSourceQualityEnum = z.enum([
+  'PRIMARY_CONTRACT',
+  'CHANGE_ORDER',
+  'LINEAR_ISSUE',
+  'GITHUB_DIFF',
+  'GITHUB_PR',
+  'INFERRED',
+  'MODEL_SUMMARY',
+]);
+export type EvidenceSourceQuality = z.infer<typeof EvidenceSourceQualityEnum>;
+
 /* ------------------------------------------------------------------ */
-/* Scope Baseline & Provenance Graph Entities                          */
+/* 2. Scope Baseline & Provenance Entities                            */
 /* ------------------------------------------------------------------ */
 
 export interface ContractClause {
@@ -37,6 +90,8 @@ export interface ContractClause {
   legalText: string;
   inclusions: string[];
   exclusions: string[];
+  sourcePage?: number | string;
+  sourceLocation?: string;
 }
 
 export interface Deliverable {
@@ -56,6 +111,7 @@ export interface ScopeBaseline {
   title: string;
   description: string;
   status: 'active' | 'superseded';
+  documentVersion?: string;
   clauses: ContractClause[];
   deliverables: Deliverable[];
   createdAt: string;
@@ -63,34 +119,43 @@ export interface ScopeBaseline {
 
 export interface LinearIssue {
   id: string; // e.g. "ENG-184"
+  identifier?: string;
   title: string;
-  description: string;
+  description?: string;
   status: string;
   estimateHours?: number;
   deliverableId?: string;
+  labels?: string[];
+  updatedAt?: string;
 }
 
 export interface ChangedFile {
   path: string;
-  status: 'added' | 'modified' | 'deleted';
+  status?: 'added' | 'modified' | 'deleted' | 'renamed';
   module: string;
-  linesAdded: number;
-  linesDeleted: number;
+  linesAdded?: number;
+  linesDeleted?: number;
+  additions?: number;
+  deletions?: number;
 }
 
 export interface PullRequest {
   id: string;
   number: number;
   title: string;
-  branch: string;
-  base: string;
-  author: string;
+  body?: string;
+  branch?: string;
+  base?: string;
+  baseBranch?: string;
+  headBranch?: string;
+  author?: string;
+  headSha?: string;
   issueId?: string;
   filesChanged: number;
   additions: number;
   deletions: number;
   changedFiles: ChangedFile[];
-  detectedSubsystems: string[];
+  detectedSubsystems?: string[];
 }
 
 export interface ChangeOrder {
@@ -108,7 +173,148 @@ export interface ChangeOrder {
 }
 
 /* ------------------------------------------------------------------ */
-/* Golden Evaluation Contract                                         */
+/* 3. Capability Extraction & Grounded Evidence                        */
+/* ------------------------------------------------------------------ */
+
+export interface DetectedCapability {
+  id: string; // e.g. "cap_org_rbac_1"
+  name: string; // e.g. "organization_rbac"
+  description?: string;
+  sourceQuality: EvidenceSourceQuality;
+  evidenceLocation: string; // file path or identifier
+  evidenceText: string;
+  confidence: number;
+  extractionMethod: 'STATIC_AST' | 'DIFF_PATH' | 'SYMBOL_DETECTION' | 'SEMANTIC_INTERPRETATION';
+}
+
+export interface ContractEvidence {
+  clauseId: string;
+  clauseRef: string; // e.g. "§4.2"
+  title: string;
+  page?: number | string;
+  location?: string;
+  legalTextExcerpt: string;
+  boundarySummary: string;
+  isExplicitlyExcluded?: boolean;
+  isExplicitlyIncluded?: boolean;
+}
+
+export interface CandidateDeliverableMatch {
+  deliverableId: string;
+  clauseId: string;
+  title: string;
+  confidence: number;
+  matchedKeywords: string[];
+  sourceQuality: EvidenceSourceQuality;
+}
+
+export interface ScopeDeltaStatement {
+  statement: string;
+  evidenceIdRefs: string[];
+  nature: 'EXPANSION' | 'EXCLUSION' | 'AMBIGUITY' | 'COMPLIANT' | 'AUTHORIZED';
+}
+
+export type RecommendedAction =
+  | 'PROCEED'
+  | 'REQUEST_CHANGE_ORDER'
+  | 'REQUEST_CHANGE_APPROVAL'
+  | 'MANUAL_PM_REVIEW'
+  | 'REQUEST_PM_REVIEW'
+  | 'AWAIT_APPROVAL'
+  | 'RESOLVE_CHANGE_ORDER';
+
+export interface DecisionExplanation {
+  decision: CommercialState;
+  reason: string;
+  reviewReasonCode?: ReviewReasonCode;
+  evidenceIds: string[];
+  uncertainties: string[];
+  missingEvidence: string[];
+  recommendedAction: RecommendedAction;
+}
+
+/* ------------------------------------------------------------------ */
+/* 4. Immutable Evaluation Identity & Evidence Bundle                 */
+/* ------------------------------------------------------------------ */
+
+export interface EvaluationIdentity {
+  baselineVersion: string;
+  documentVersion: string;
+  issueSnapshotHash: string;
+  headSha: string;
+  diffAnalysisVersion: number;
+  evaluatorVersion: string;
+  modelVersion: string;
+  promptVersion: string;
+  capabilityTaxonomyVersion: string;
+  scopeTaxonomyVersion: string;
+  estimationRulesVersion: string;
+  policyConfigVersion: string;
+}
+
+export interface EvidenceBundle {
+  evaluationId: string;
+  identityHash: string;
+  state: CommercialState;
+  taxonomy: ScopeTaxonomy;
+  commercialConfidence: number;
+  modelConfidence?: number;
+  contractEvidence: ContractEvidence[];
+  candidateDeliverables: CandidateDeliverableMatch[];
+  issueEvidence: {
+    identifier: string;
+    title: string;
+    status: string;
+    estimateHours?: number;
+  } | null;
+  engineeringEvidence: {
+    prNumber: number;
+    headSha: string;
+    filesChanged: number;
+    additions: number;
+    deletions: number;
+    primaryModules: string[];
+    changedFiles: string[];
+  };
+  detectedCapabilities: DetectedCapability[];
+  scopeDelta: ScopeDeltaStatement[];
+  impact: {
+    estimatedHours: { min: number; max: number };
+    commercialValue: {
+      currency: string;
+      min: number;
+      max: number;
+      status: 'available' | 'unavailable';
+    };
+  };
+  decisionExplanation: DecisionExplanation;
+  evaluatedAt: string;
+}
+
+/* ------------------------------------------------------------------ */
+/* 5. Policy Configuration                                             */
+/* ------------------------------------------------------------------ */
+
+export interface PolicyConfig {
+  version: string;
+  reviewThreshold: number; // default 0.85
+  highConfidenceThreshold: number; // default 0.90
+  hourlyRate?: number;
+  defaultPolicyMode: PolicyMode;
+  allowInferenceWithoutClause: boolean;
+}
+
+export const DEFAULT_POLICY_CONFIG: PolicyConfig = {
+  version: 'policy_cfg_2026_09_v1',
+  reviewThreshold: 0.85,
+  highConfidenceThreshold: 0.90,
+  hourlyRate: 150,
+  defaultPolicyMode: 'OBSERVE',
+  allowInferenceWithoutClause: false,
+};
+
+/* ------------------------------------------------------------------ */
+/* 6. Commercial Evaluation Full Output                               */
 /* ------------------------------------------------------------------ */
 
 export interface EvaluationEvidence {
@@ -123,23 +329,31 @@ export interface EvaluationEvidence {
 export interface CommercialEvaluation {
   evaluationId: string;
   pullRequestId: string;
+  status: EvaluationStatus;
   issueId?: string;
   deliverableId?: string;
   contractClauseId?: string;
   state: CommercialState;
-  confidence: number;
+  taxonomy: ScopeTaxonomy;
+  confidence: number; // Maintained for backward compatibility (= commercialConfidence)
+  commercialConfidence: number;
+  modelConfidence?: number;
   evidence: EvaluationEvidence[];
+  evidenceBundle: EvidenceBundle;
+  identityHash: string;
   detectedDelta: string[];
   estimatedHours: { min: number; max: number };
-  commercialValue: { currency: string; min: number; max: number };
-  recommendedAction: 'PROCEED' | 'REQUEST_CHANGE_APPROVAL' | 'MANUAL_PM_REVIEW' | 'RESOLVE_CHANGE_ORDER';
+  commercialValue: { currency: string; min: number; max: number; status?: 'available' | 'unavailable' };
+  recommendedAction: RecommendedAction;
   checkConclusion: CheckRunConclusion;
   policyMode: PolicyMode;
+  reviewReasonCode?: ReviewReasonCode;
+  evaluatorVersion: string;
   evaluatedAt: string;
 }
 
 /* ------------------------------------------------------------------ */
-/* Immutable Event Log                                                */
+/* 7. Immutable Event Log                                              */
 /* ------------------------------------------------------------------ */
 
 export type CommercialEventType =

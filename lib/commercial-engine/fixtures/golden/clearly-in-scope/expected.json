@@ -1,0 +1,22 @@
+{
+  "state": "IN_SCOPE",
+  "taxonomy": "CLEARLY_IN_SCOPE",
+  "commercialConfidence": 0.95,
+  "deliverableId": "deliv_auth",
+  "contractClauseId": "clause_4_2",
+  "issueId": "ENG-101",
+  "pullRequestId": "pr_1042",
+  "detectedDelta": [],
+  "estimatedHours": {
+    "min": 0,
+    "max": 0
+  },
+  "commercialValue": {
+    "currency": "USD",
+    "min": 0,
+    "max": 0,
+    "status": "available"
+  },
+  "recommendedAction": "PROCEED",
+  "checkConclusion": "success"
+}

@@ -121,11 +121,17 @@ function formatActionLabel(action: CommercialEvaluation['recommendedAction']): s
   switch (action) {
     case 'PROCEED':
       return 'Authorized to merge';
+    case 'REQUEST_CHANGE_ORDER':
     case 'REQUEST_CHANGE_APPROVAL':
       return 'Request commercial approval / Draft Change Order';
     case 'MANUAL_PM_REVIEW':
+    case 'REQUEST_PM_REVIEW':
       return 'Requires agency PM commercial review';
     case 'RESOLVE_CHANGE_ORDER':
+    case 'AWAIT_APPROVAL':
       return 'Pending client signature on change order';
+    default:
+      return 'Review Required';
   }
 }
+

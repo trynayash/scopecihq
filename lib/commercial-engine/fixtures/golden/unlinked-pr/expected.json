@@ -1,0 +1,12 @@
+{
+  "state": "REVIEW_REQUIRED",
+  "taxonomy": "INSUFFICIENT_EVIDENCE",
+  "commercialConfidence": 0.60,
+  "pullRequestId": "pr_1999",
+  "detectedDelta": [
+    "Pull Request does not link to an authorized Linear issue"
+  ],
+  "recommendedAction": "MANUAL_PM_REVIEW",
+  "reviewReasonCode": "UNLINKED_ISSUE",
+  "checkConclusion": "action_required"
+}

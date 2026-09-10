@@ -1,0 +1,10 @@
+{
+  "id": "ENG-101",
+  "identifier": "ENG-101",
+  "title": "Implement secure password reset with time-limited token",
+  "description": "Generate HMAC token for user password reset flow and dispatch email.",
+  "status": "In Progress",
+  "estimateHours": 6,
+  "labels": ["auth", "security"],
+  "updatedAt": "2026-09-02T10:00:00Z"
+}

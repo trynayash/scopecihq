@@ -514,12 +514,24 @@ export const commercialEvaluationsTable = pgTable(
     }),
     headSha: varchar("head_sha", { length: 64 }),
     state: varchar("state", { length: 50 }).notNull(), // IN_SCOPE, REVIEW_REQUIRED, CHANGE_REQUIRED, APPROVED_CHANGE, BLOCKED, OVERRIDDEN
+    evaluationStatus: varchar("evaluation_status", { length: 50 }).default("COMPLETED").notNull(), // PENDING, RUNNING, COMPLETED, FAILED, STALE
+    scopeTaxonomy: varchar("scope_taxonomy", { length: 50 }).default("CLEARLY_IN_SCOPE"),
+    reviewReasonCode: varchar("review_reason_code", { length: 50 }),
     policyMode: varchar("policy_mode", { length: 50 }).default("REVIEW").notNull(), // OBSERVE, REVIEW, ENFORCE
     confidence: numeric("confidence", { precision: 5, scale: 4 }),
+    commercialConfidence: numeric("commercial_confidence", { precision: 5, scale: 4 }),
+    modelConfidence: numeric("model_confidence", { precision: 5, scale: 4 }),
+    evaluationIdentityHash: varchar("evaluation_identity_hash", { length: 64 }),
+    documentVersion: varchar("document_version", { length: 50 }),
+    issueSnapshotHash: varchar("issue_snapshot_hash", { length: 64 }),
+    modelVersion: varchar("model_version", { length: 50 }),
+    promptVersion: varchar("prompt_version", { length: 50 }),
     contractClauseIdsJson: jsonb("contract_clause_ids_json").default([]).notNull(),
     deliverableIdsJson: jsonb("deliverable_ids_json").default([]).notNull(),
     issueIdsJson: jsonb("issue_ids_json").default([]).notNull(),
     evidenceJson: jsonb("evidence_json").default([]).notNull(),
+    evidenceBundleJson: jsonb("evidence_bundle_json"),
+    decisionExplanationJson: jsonb("decision_explanation_json"),
     estimatedHoursMin: integer("estimated_hours_min"),
     estimatedHoursMax: integer("estimated_hours_max"),
     estimatedValueMin: integer("estimated_value_min"),
@@ -535,6 +547,8 @@ export const commercialEvaluationsTable = pgTable(
     index("eval_head_sha_idx").on(table.headSha),
     index("eval_baseline_idx").on(table.scopeBaselineId),
     index("eval_state_idx").on(table.state),
+    index("eval_status_idx").on(table.evaluationStatus),
+    index("eval_identity_hash_idx").on(table.evaluationIdentityHash),
     index("eval_created_at_idx").on(table.createdAt),
   ]
 );

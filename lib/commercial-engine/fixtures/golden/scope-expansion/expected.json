@@ -1,0 +1,25 @@
+{
+  "state": "CHANGE_REQUIRED",
+  "taxonomy": "EXPLICITLY_EXCLUDED",
+  "commercialConfidence": 0.96,
+  "deliverableId": "deliv_auth",
+  "contractClauseId": "clause_4_2",
+  "issueId": "ENG-184",
+  "pullRequestId": "pr_1842",
+  "detectedDelta": [
+    "Explicitly excluded by contract §4.2: organization_rbac",
+    "Explicitly excluded by contract §4.2: team_invitations"
+  ],
+  "estimatedHours": {
+    "min": 18,
+    "max": 24
+  },
+  "commercialValue": {
+    "currency": "USD",
+    "min": 2700,
+    "max": 3600,
+    "status": "available"
+  },
+  "recommendedAction": "REQUEST_CHANGE_APPROVAL",
+  "checkConclusion": "action_required"
+}

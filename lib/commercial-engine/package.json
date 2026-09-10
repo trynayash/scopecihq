@@ -8,6 +8,7 @@
   },
   "scripts": {
     "test": "tsx src/simulator.ts",
+    "replay:evaluation": "tsx src/replay.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

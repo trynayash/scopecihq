@@ -1,0 +1,10 @@
+{
+  "id": "ENG-204",
+  "identifier": "ENG-204",
+  "title": "Export analytics report as CSV",
+  "description": "Add CSV formatting helper for metrics tables so users can download raw rows.",
+  "status": "In Progress",
+  "estimateHours": 4,
+  "labels": ["analytics", "reporting", "export"],
+  "updatedAt": "2026-09-03T11:00:00Z"
+}

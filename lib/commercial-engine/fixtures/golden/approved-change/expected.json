@@ -1,0 +1,22 @@
+{
+  "state": "APPROVED_CHANGE",
+  "taxonomy": "AUTHORIZED_CHANGE",
+  "commercialConfidence": 0.98,
+  "deliverableId": "deliv_auth",
+  "contractClauseId": "clause_4_2",
+  "issueId": "ENG-184",
+  "pullRequestId": "pr_1842",
+  "detectedDelta": [],
+  "estimatedHours": {
+    "min": 0,
+    "max": 0
+  },
+  "commercialValue": {
+    "currency": "USD",
+    "min": 0,
+    "max": 0,
+    "status": "available"
+  },
+  "recommendedAction": "PROCEED",
+  "checkConclusion": "success"
+}

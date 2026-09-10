@@ -69,7 +69,21 @@ export function formatScopeCIComment(input: CommentFormatInput): string {
 |---|---|---|
 ${evidenceRows}
 ${commercialImpact}${deltaSection}
----
+${
+  evaluation.evidenceBundle?.decisionExplanation
+    ? `<details>
+<summary><b>Why This Decision (Commercial Provenance)</b></summary>
+
+- **Reason**: ${sanitizeMarkdown(evaluation.evidenceBundle.decisionExplanation.reason)}
+- **Recommended Action**: \`${sanitizeMarkdown(evaluation.evidenceBundle.decisionExplanation.recommendedAction)}\`
+- **Review Reason**: \`${sanitizeMarkdown(evaluation.reviewReasonCode || "NONE")}\`
+- **Commercial Confidence**: ${Math.round(evaluation.commercialConfidence * 100)}%
+- **Evaluation Identity**: \`${evaluation.identityHash.substring(0, 16)}...\`
+- **Grounded Evidence IDs**: ${evaluation.evidenceBundle.decisionExplanation.evidenceIds.map((id) => `\`${sanitizeMarkdown(id)}\``).join(", ")}
+</details>
+`
+    : ""
+}---
 *ScopeCI is operating in **Observe** mode. Merges are not blocked. This assessment provides commercial alignment evidence and does not constitute formal legal determination.*
 `;
 }

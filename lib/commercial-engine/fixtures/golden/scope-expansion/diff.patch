@@ -1,0 +1,36 @@
+diff --git a/src/auth/roles.ts b/src/auth/roles.ts
+new file mode 100644
+index 0000000..e69de29
+--- /dev/null
++++ b/src/auth/roles.ts
+@@ -0,0 +1,24 @@
++export type OrgRole = 'OWNER' | 'ADMIN' | 'MEMBER' | 'VIEWER';
++
++export interface OrgPermissionAssignment {
++  orgId: string;
++  userId: string;
++  role: OrgRole;
++  grantedAt: Date;
++}
++
++export function checkOrgPermission(role: OrgRole, requiredRole: OrgRole): boolean {
++  const hierarchy: Record<OrgRole, number> = { OWNER: 4, ADMIN: 3, MEMBER: 2, VIEWER: 1 };
++  return hierarchy[role] >= hierarchy[requiredRole];
++}
+diff --git a/src/middleware/rbac.ts b/src/middleware/rbac.ts
+new file mode 100644
+index 0000000..e69de29
+--- /dev/null
++++ b/src/middleware/rbac.ts
+@@ -0,0 +1,18 @@
++import { checkOrgPermission, OrgRole } from '../auth/roles';
++
++export function requireOrgRole(minimumRole: OrgRole) {
++  return (req: any, res: any, next: any) => {
++    const userRole = req.tenant?.role;
++    if (!userRole || !checkOrgPermission(userRole, minimumRole)) {
++      return res.status(403).json({ error: 'INSUFFICIENT_ORG_PERMISSIONS' });
++    }
++    next();
++  };
++}

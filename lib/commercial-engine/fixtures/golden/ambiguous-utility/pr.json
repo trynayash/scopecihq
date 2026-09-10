@@ -1,0 +1,16 @@
+{
+  "id": "pr_1204",
+  "number": 1204,
+  "title": "feat(reporting): add CSV export endpoint for daily metrics",
+  "body": "Implements ENG-204. Provides CSV generation alongside existing JSON endpoints.",
+  "baseBranch": "main",
+  "headBranch": "feat/eng-204-csv-export",
+  "headSha": "d4e5f6a1b2c30987654321fedcba0987654321ab",
+  "filesChanged": 2,
+  "additions": 48,
+  "deletions": 2,
+  "changedFiles": [
+    { "path": "src/reporting/csv.ts", "module": "reporting", "additions": 40, "deletions": 0 },
+    { "path": "tests/reporting/csv.test.ts", "module": "tests", "additions": 8, "deletions": 2 }
+  ]
+}

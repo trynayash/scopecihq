@@ -13,7 +13,9 @@
     "db:test": "node --env-file-if-exists=.env node_modules/.pnpm/tsx@4.23.4/node_modules/tsx/dist/cli.mjs lib/db/src/tests/provenance.test.ts",
     "test:github": "node --env-file-if-exists=.env node_modules/.pnpm/tsx@4.23.4/node_modules/tsx/dist/cli.mjs artifacts/api-server/src/tests/github-app.test.ts",
     "test:linear": "node --env-file-if-exists=.env node_modules/.pnpm/tsx@4.23.4/node_modules/tsx/dist/cli.mjs artifacts/api-server/src/tests/linear-integration.test.ts",
-    "test:security": "node --env-file-if-exists=.env node_modules/.pnpm/tsx@4.23.4/node_modules/tsx/dist/cli.mjs artifacts/api-server/src/tests/security-audit.test.ts"
+    "test:security": "node --env-file-if-exists=.env node_modules/.pnpm/tsx@4.23.4/node_modules/tsx/dist/cli.mjs artifacts/api-server/src/tests/security-audit.test.ts",
+    "replay:evaluation": "node --env-file-if-exists=.env node_modules/.pnpm/tsx@4.23.4/node_modules/tsx/dist/cli.mjs lib/commercial-engine/src/replay.ts",
+    "test:phase4": "node --env-file-if-exists=.env node_modules/.pnpm/tsx@4.23.4/node_modules/tsx/dist/cli.mjs artifacts/api-server/src/tests/phase4-commercial-intelligence.test.ts"
   },
   "pnpm": {
     "overrides": {

@@ -1,0 +1,25 @@
+{
+  "state": "REVIEW_REQUIRED",
+  "taxonomy": "AMBIGUOUS",
+  "commercialConfidence": 0.75,
+  "deliverableId": "deliv_reporting",
+  "contractClauseId": "clause_4_3",
+  "issueId": "ENG-204",
+  "pullRequestId": "pr_1204",
+  "detectedDelta": [
+    "Ambiguous requirement: csv_export"
+  ],
+  "estimatedHours": {
+    "min": 4,
+    "max": 8
+  },
+  "commercialValue": {
+    "currency": "USD",
+    "min": 600,
+    "max": 1200,
+    "status": "available"
+  },
+  "recommendedAction": "MANUAL_PM_REVIEW",
+  "checkConclusion": "action_required",
+  "reviewReasonCode": "AMBIGUOUS_SCOPE"
+}

@@ -1,0 +1,19 @@
+{
+  "id": "pr_1842",
+  "number": 1842,
+  "title": "feat(auth): add organization roles, permissions matrix, and team invitations",
+  "body": "Resolves ENG-184. Adds full multi-tenant organization RBAC with role assignment and team member invite flow.",
+  "baseBranch": "main",
+  "headBranch": "feat/eng-184-org-rbac",
+  "headSha": "c8f921e4b859345719302bf37618fbc8d3129321",
+  "filesChanged": 14,
+  "additions": 386,
+  "deletions": 22,
+  "changedFiles": [
+    { "path": "src/auth/roles.ts", "module": "auth", "additions": 84, "deletions": 0 },
+    { "path": "src/auth/permissions.ts", "module": "auth", "additions": 92, "deletions": 4 },
+    { "path": "src/middleware/rbac.ts", "module": "auth", "additions": 68, "deletions": 2 },
+    { "path": "src/routes/teams.ts", "module": "teams", "additions": 54, "deletions": 6 },
+    { "path": "src/db/migrations/20260901_org_rbac.sql", "module": "db", "additions": 88, "deletions": 10 }
+  ]
+}
