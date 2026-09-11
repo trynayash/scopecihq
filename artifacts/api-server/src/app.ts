@@ -53,19 +53,34 @@ if (process.env.NEXT_PUBLIC_MARKETING_URL) {
   } catch {}
 }
 
-app.use(
+// Per-request wrapper so we can reflect same-origin asset loads. Vite tags
+// production module scripts with `crossorigin`, so the browser sends Origin
+// even for same-origin /assets/* requests — without this, those 500 when
+// APP_BASE_URL isn't on the allowlist and the SPA stays a blank page.
+app.use((req, res, next) => {
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps, curl, server-to-server, webhooks)
+      // Allow requests with no origin (curl, server-to-server, webhooks)
       if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin) || process.env.NODE_ENV !== "production") {
         return callback(null, true);
       }
+
+      try {
+        const originHost = new URL(origin).host;
+        const requestHost = req.headers.host?.split(",")[0]?.trim();
+        if (requestHost && originHost === requestHost) {
+          return callback(null, true);
+        }
+      } catch {
+        // fall through
+      }
+
       return callback(new Error(`CORS origin not allowed: ${origin}`));
     },
     credentials: true,
-  })
-);
+  })(req, res, next);
+});
 
 app.use(
   express.json({

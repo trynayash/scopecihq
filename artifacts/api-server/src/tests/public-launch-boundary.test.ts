@@ -343,9 +343,50 @@ async function runPublicLaunchBoundaryTests() {
     });
 
     // -------------------------------------------------------------
-    // Criterion 11: SPA Fallback Does NOT Serve HTML for Static Assets
+    // Criterion 11: Same-origin static assets survive production CORS
     // -------------------------------------------------------------
-    await testScenario("Criterion 11: Missing static assets return 404, not index.html with wrong MIME type", async () => {
+    await testScenario("Criterion 11: Built JS/CSS assets load with same-origin crossorigin requests in production", async () => {
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const { fileURLToPath } = await import("node:url");
+
+      const currentDir = path.dirname(fileURLToPath(import.meta.url));
+      const publicDir = path.join(currentDir, "..", "..", "..", "scopeci", "dist", "public");
+      const assetsDir = path.join(publicDir, "assets");
+
+      if (!fs.existsSync(assetsDir)) {
+        console.log("  (skipped — frontend build not present)");
+        return;
+      }
+
+      const jsAsset = fs.readdirSync(assetsDir).find((name) => name.endsWith(".js"));
+      check(Boolean(jsAsset), "Built JS asset exists under artifacts/scopeci/dist/public/assets");
+
+      const previousNodeEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = "production";
+      try {
+        const origin = `http://127.0.0.1:${testPort}`;
+        const res = await makeRequest(server, `/assets/${jsAsset}`, {
+          headers: { Origin: origin },
+        });
+        check(res.status === 200, `Same-origin JS asset returns 200 (got ${res.status})`);
+        check(
+          typeof res.headers["access-control-allow-origin"] === "string",
+          "Same-origin JS asset includes Access-Control-Allow-Origin",
+        );
+      } finally {
+        if (previousNodeEnv === undefined) {
+          delete process.env.NODE_ENV;
+        } else {
+          process.env.NODE_ENV = previousNodeEnv;
+        }
+      }
+    });
+
+    // -------------------------------------------------------------
+    // Criterion 12: SPA Fallback Does NOT Serve HTML for Static Assets
+    // -------------------------------------------------------------
+    await testScenario("Criterion 12: Missing static assets return 404, not index.html with wrong MIME type", async () => {
       // Request a non-existent CSS file — should NOT get index.html
       const cssRes = await makeRequest(server, "/assets/nonexistent-file.css");
       check(cssRes.status === 404, `Missing .css file returns 404 (got ${cssRes.status})`);
@@ -365,9 +406,9 @@ async function runPublicLaunchBoundaryTests() {
     });
 
     // -------------------------------------------------------------
-    // Criterion 12: Production Route Gating Logic Exists
+    // Criterion 13: Production Route Gating Logic Exists
     // -------------------------------------------------------------
-    await testScenario("Criterion 12: Integration routes are gated behind ENABLE_INTEGRATION_ROUTES in production", async () => {
+    await testScenario("Criterion 13: Integration routes are gated behind ENABLE_INTEGRATION_ROUTES in production", async () => {
       // Read the routes/index source to verify the gate exists.
       // This is a source-level verification that the gate wasn't accidentally removed.
       const fs = await import("node:fs");
@@ -396,9 +437,9 @@ async function runPublicLaunchBoundaryTests() {
     });
 
     // -------------------------------------------------------------
-    // Criterion 13: No Hardcoded Runtime Domain Dependencies
+    // Criterion 14: No Hardcoded Runtime Domain Dependencies
     // -------------------------------------------------------------
-    await testScenario("Criterion 13: No hardcoded scopeci.dev, scopeci.com, or scopeci.in in runtime source", async () => {
+    await testScenario("Criterion 14: No hardcoded scopeci.dev, scopeci.com, or scopeci.in in runtime source", async () => {
       const fs = await import("node:fs");
       const path = await import("node:path");
       const { fileURLToPath } = await import("node:url");
