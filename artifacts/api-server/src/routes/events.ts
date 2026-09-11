@@ -1,14 +1,25 @@
 import { Router, type IRouter } from "express";
 import { db, siteEventsTable } from "@workspace/db";
+import { rateLimiter } from "../middlewares/rate-limit.js";
 
 const router: IRouter = Router();
+
+/**
+ * Rate limiter: 60 events per minute per IP for public site telemetry.
+ * Protects against event queue flooding.
+ */
+export const eventsRateLimiter = rateLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  message: "Too many site events. Rate limit exceeded.",
+});
 
 /**
  * Lightweight analytics endpoint. Accepts a site event and inserts it
  * asynchronously — the response is sent immediately so the client is
  * never blocked on the database write.
  */
-router.post("/events", (req, res): void => {
+router.post("/events", eventsRateLimiter, (req, res): void => {
   const { event, source, medium, campaign, referrer, landingPage } = req.body ?? {};
 
   if (!event || typeof event !== "string") {

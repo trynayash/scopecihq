@@ -285,7 +285,7 @@ async function main() {
        Scenario 7: Open Redirect Protection in OAuth
        ------------------------------------------------------------- */
     await runScenario("OAuth Security: Open redirect URLs are strictly sanitized to application domain", async () => {
-      const appBase = "https://app.scopeci.dev";
+      const appBase = process.env.APP_BASE_URL || "http://localhost:3000";
 
       function sanitizeUrl(target: string | undefined): string {
         const fallback = `${appBase}/settings/integrations/linear`;

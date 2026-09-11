@@ -129,7 +129,7 @@ async function runPhase3TestSuite(): Promise<void> {
       state: stateVal1,
       organizationId: org.id,
       userId: "user_pm_1",
-      redirectUrl: "https://app.scopeci.dev/settings/integrations/linear",
+      redirectUrl: (process.env.APP_BASE_URL || "http://localhost:3000") + "/settings/integrations/linear",
       expiresAt: expiresAt1,
     })
     .returning();

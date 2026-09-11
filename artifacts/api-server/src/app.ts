@@ -97,10 +97,23 @@ if (fs.existsSync(publicDir)) {
 
   // SPA fallback: a GET that isn't an API route or a real static file (e.g. a
   // direct visit to /privacy, or a hard refresh) resolves to index.html, and
-  // client-side routing takes it from there. Anything else — an unmatched
-  // /api/* route, a non-GET request — falls through to Express's own 404.
+  // client-side routing takes it from there.
+  //
+  // Requests that look like static assets (paths with a file extension, e.g.
+  // /assets/index-CRuTf4yf.css) are NOT caught here. If express.static()
+  // didn't find them, they must 404 — serving index.html with Content-Type
+  // text/html for a missing .css file causes the MIME-type error the browser
+  // reports. Anything else — an unmatched /api/* route, a non-GET request —
+  // also falls through to Express's own 404.
   app.use((req, res, next) => {
     if (req.method === "GET" && !req.path.startsWith("/api/")) {
+      // If the path has a file extension (e.g. .js, .css, .png, .woff2),
+      // it's a static asset miss — let it 404 with the correct status code.
+      const hasExtension = /\.\w{2,10}$/.test(req.path);
+      if (hasExtension) {
+        next();
+        return;
+      }
       res.sendFile(path.join(publicDir, "index.html"));
       return;
     }

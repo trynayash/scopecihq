@@ -22,9 +22,22 @@ export function securityHeaders() {
     res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
 
     // Content Security Policy
+    // Google Fonts requires:
+    //   style-src-elem  → https://fonts.googleapis.com  (stylesheet)
+    //   font-src        → https://fonts.gstatic.com     (woff2 files)
+    // All other external origins remain blocked.
     res.setHeader(
       "Content-Security-Policy",
-      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' https: data:; connect-src 'self' https:; frame-ancestors 'none';"
+      [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline'",
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "img-src 'self' data: https:",
+        "font-src 'self' https://fonts.gstatic.com data:",
+        "connect-src 'self' https:",
+        "frame-ancestors 'none'",
+      ].join("; ") + ";"
     );
 
     // Cross-origin policies

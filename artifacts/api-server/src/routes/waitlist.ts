@@ -1,8 +1,19 @@
 import { Router, type IRouter } from "express";
 import { db, waitlistSignupsTable } from "@workspace/db";
 import { CreateWaitlistSignupBody, CreateWaitlistSignupResponse } from "@workspace/api-zod";
+import { rateLimiter } from "../middlewares/rate-limit.js";
 
 const router: IRouter = Router();
+
+/**
+ * Rate limiter: 10 requests per minute per IP for public waitlist signup.
+ * Protects against automated scrapers and registration spam.
+ */
+export const waitlistRateLimiter = rateLimiter({
+  windowMs: 60 * 1000,
+  max: 10,
+  message: "Too many waitlist submissions from this IP. Please wait a moment and try again.",
+});
 
 /**
  * drizzle-orm wraps the driver's error in a `DrizzleQueryError`, so the `pg`
@@ -17,7 +28,14 @@ function hasPgErrorCode(error: unknown, code: string, depth = 0): boolean {
   return "cause" in error ? hasPgErrorCode(error.cause, code, depth + 1) : false;
 }
 
-router.post("/waitlist", async (req, res): Promise<void> => {
+router.post("/waitlist", waitlistRateLimiter, async (req, res): Promise<void> => {
+  // Bot Honeypot Protection: drop automated bot submissions silently
+  if (req.body?.hp || req.body?.website_url_hp || req.body?.company_role) {
+    req.log.warn({ body: req.body }, "Honeypot triggered on waitlist submission; dropping");
+    res.status(201).json({ id: 0, email: "bot@discarded.local", agency: null, createdAt: new Date() });
+    return;
+  }
+
   const parsed = CreateWaitlistSignupBody.safeParse(req.body);
   if (!parsed.success) {
     req.log.warn({ errors: parsed.error.flatten() }, "Invalid waitlist signup");
@@ -45,10 +63,6 @@ router.post("/waitlist", async (req, res): Promise<void> => {
         referrer: typeof referrer === "string" ? referrer.slice(0, 2000) : null,
       })
       .returning();
-
-    // TODO: Send confirmation email here when an SMTP provider is configured.
-    // Suggested subject: "You're on the ScopeCI early access list"
-    // See DEPLOYMENT_CONTEXT.md section 6 for the suggested body copy.
 
     res.status(201).json(CreateWaitlistSignupResponse.parse(signup));
   } catch (error: unknown) {

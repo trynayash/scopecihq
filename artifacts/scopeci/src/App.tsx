@@ -1517,9 +1517,13 @@ function AdminWaitlist() {
     setLoading(true);
     setError('');
     try {
+      const headers = {
+        Authorization: `Bearer ${secret}`,
+        'x-admin-key': secret,
+      };
       const [signupsRes, statsRes] = await Promise.all([
-        fetch(`${BASE}/api/admin/waitlist?key=${encodeURIComponent(secret)}`),
-        fetch(`${BASE}/api/admin/waitlist/stats?key=${encodeURIComponent(secret)}`),
+        fetch(`${BASE}/api/admin/waitlist`, { headers }),
+        fetch(`${BASE}/api/admin/waitlist/stats`, { headers }),
       ]);
       if (signupsRes.status === 401 || statsRes.status === 401) {
         setError('Invalid admin key.');

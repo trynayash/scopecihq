@@ -26,7 +26,7 @@ import { requireApiKeyOrSession, requireTenantAccess } from "../middlewares/auth
 const router: IRouter = Router();
 
 // Configurable environment defaults
-const APP_BASE_URL = process.env.APP_BASE_URL || "https://app.scopeci.dev";
+const APP_BASE_URL = process.env.APP_BASE_URL || "http://localhost:3000";
 
 /**
  * Validates that redirect URLs are strictly restricted to the application domain
@@ -94,7 +94,7 @@ export function setTokenExchanger(fn: TokenExchanger): void {
    1. GET /api/integrations/linear/connect
    Initiates Linear OAuth. Generates CSRF state bound strictly to org.
    ================================================================== */
-router.get("/integrations/linear/connect", async (req: Request, res: Response): Promise<void> => {
+router.get("/integrations/linear/connect", requireApiKeyOrSession(), async (req: Request, res: Response): Promise<void> => {
   const organizationId = (req.query.organizationId as string) || (req.headers["x-organization-id"] as string);
   const userId = (req.query.userId as string) || (req.headers["x-user-id"] as string) || "user_admin";
   const redirectParam = validateRedirectUrl(req.query.redirectUrl as string | undefined);

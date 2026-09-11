@@ -24,8 +24,10 @@ function requireAdminKey(req: Request, res: Response, next: NextFunction): void 
 
   if (authHeader?.startsWith("Bearer ")) {
     provided = authHeader.slice(7).trim();
-  } else {
-    provided = req.headers["x-admin-key"] as string | undefined;
+  } else if (typeof req.headers["x-admin-key"] === "string") {
+    provided = req.headers["x-admin-key"];
+  } else if (typeof req.query?.key === "string") {
+    provided = req.query.key;
   }
 
   if (!provided || !timingSafeCompare(provided, secret)) {
