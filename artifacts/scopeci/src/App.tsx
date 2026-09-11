@@ -19,7 +19,6 @@ import {
   Circle,
   Inbox,
   Lock,
-  Scale,
   ServerCog,
   X,
 } from 'lucide-react';
@@ -370,9 +369,6 @@ function CommercialReviewSurface() {
     <figure className="surface" ref={ref} data-testid="product-preview">
       <div className="window">
         <div className="window-bar">
-          <span className="window-dots" aria-hidden="true">
-            <i /><i /><i />
-          </span>
           <span className="window-path mono">
             <VendorMark name="github" size={12} />
             northstar / api
@@ -394,7 +390,7 @@ function CommercialReviewSurface() {
                 <span>feature/org-permissions</span>
                 <span className="pr-arrow" aria-hidden="true">&#8594;</span>
                 <span>main</span>
-                <span className="pr-dot" aria-hidden="true" />
+                <span className="pr-sep" aria-hidden="true">·</span>
                 <span>14 files</span>
                 <span className="pos">+386</span>
                 <span className="neg">&#8722;22</span>
@@ -414,7 +410,7 @@ function CommercialReviewSurface() {
               </li>
               <li className={resolved ? 'is-failed' : 'is-running'}>
                 <span className="check-icon" aria-hidden="true">
-                  {resolved ? <X size={10} /> : <span className="spinner" />}
+                  {resolved ? <X size={10} /> : <span className="check-pending" aria-hidden="true">…</span>}
                 </span>
                 <span className="check-name">scopeci / commercial</span>
                 <span className="check-result">
@@ -457,7 +453,6 @@ function CommercialReviewSurface() {
               className={`verdict mono ${resolved ? 'is-blocked' : ''}`}
               data-testid="status-commercial-review"
             >
-              <span className="verdict-dot" aria-hidden="true" />
               {resolved ? 'Not authorized' : 'Reviewing'}
             </p>
             <p className="verdict-note">
@@ -493,32 +488,6 @@ function CommercialReviewSurface() {
         </div>
       </div>
 
-      {/* Three annotations, drawn from the same record the surface shows:
-          the contract clause, the cost, and the consequence. */}
-      <span className={`float-card float-sow ${step >= 2 ? 'is-shown' : ''}`} aria-hidden="true">
-        <span className="float-icon is-alert"><FileSignature size={14} /></span>
-        <span className="float-body">
-          <strong>SOW §4.2</strong>
-          <em>No match in approved scope</em>
-        </span>
-      </span>
-
-      <span className={`float-card float-impact ${step >= 6 ? 'is-shown' : ''}`} aria-hidden="true">
-        <span className="float-icon is-forest"><Scale size={14} /></span>
-        <span className="float-body">
-          <strong>Estimated impact</strong>
-          <em>18–24 hrs · $2,700–$3,600</em>
-        </span>
-      </span>
-
-      <span className={`float-card float-block ${step >= 5 ? 'is-shown' : ''}`} aria-hidden="true">
-        <span className="float-icon is-alert"><X size={14} /></span>
-        <span className="float-body">
-          <strong>Merge blocked</strong>
-          <em>scopeci / commercial</em>
-        </span>
-      </span>
-
       <figcaption className="sr-only">
         A ScopeCI commercial review of pull request #1842, Add organization-level
         permissions. Build and unit tests pass, but the commercial check resolves to
@@ -539,16 +508,15 @@ function Hero() {
     <section className="hero" id="top" aria-labelledby="hero-title">
       <div className="container hero-inner">
         <Reveal className="hero-lead">
-          <p className="hero-badge mono">Commercial CI/CD for software agencies</p>
+          <p className="eyebrow">Commercial CI/CD for software agencies</p>
 
           <div className="hero-lead-grid">
             <div className="hero-headline">
               <h1 className="hero-title" id="hero-title">
                 Ship only work your client <em>approved.</em>
               </h1>
-              <p className="hero-note mono">
-                <StackMarks size={17} />
-                Built for software agencies using GitHub + Linear/Jira.
+              <p className="hero-note">
+                For agencies on GitHub, Linear, and Jira.
               </p>
             </div>
 
@@ -632,7 +600,7 @@ function TheGap() {
 
         <Reveal className="split-body" delay={80}>
           <ol className="chain" aria-label="Where work travels, from signed scope to production">
-            {GAP_CHAIN.map((node, index) => {
+            {GAP_CHAIN.map((node) => {
               const isControl = node.name === 'ScopeCI';
               return (
                 <li
@@ -644,19 +612,12 @@ function TheGap() {
                   <span className="chain-rail" aria-hidden="true">
                     <span className="chain-node" />
                   </span>
-                  <span className="chain-index mono" aria-hidden="true">
-                    {String(index + 1).padStart(2, '0')}
-                  </span>
                   <span className="chain-mark" aria-hidden="true">
                     <StageMark mark={node.mark} />
                   </span>
                   <span className="chain-name">{node.name}</span>
-                  {isControl ? (
-                    <span className="chain-tag mono">{node.detail}</span>
-                  ) : (
-                    <span className="chain-detail mono">{node.detail}</span>
-                  )}
-                  <span className="chain-domain mono">{node.domain}</span>
+                  <span className="chain-detail">{node.detail}</span>
+                  <span className="chain-domain">{node.domain}</span>
                 </li>
               );
             })}
@@ -703,11 +664,10 @@ function WhatScopeCIDoes() {
           {CAPABILITIES.map((item, index) => (
             <Reveal as="div" key={item.num} delay={index * 70}>
               <article className="capability" data-testid={`article-work-${item.num}`}>
-                <span className="capability-num mono">{item.num}</span>
                 <div className="capability-body">
                   <h3>{item.title}</h3>
                   <p>{item.body}</p>
-                  <p className="capability-detail mono">{item.detail}</p>
+                  <p className="capability-detail">{item.detail}</p>
                 </div>
               </article>
             </Reveal>
@@ -864,10 +824,7 @@ function Evidence() {
               {/* The seam carries the finding that connects the two sides. */}
               <div className="ledger-seam">
                 <span className="seam-line" aria-hidden="true" />
-                <span className="seam-badge mono">
-                  <AlertTriangle size={11} aria-hidden="true" />
-                  Scope expansion
-                </span>
+                <span className="seam-label">Scope expansion</span>
                 <span className="seam-line" aria-hidden="true" />
               </div>
 
