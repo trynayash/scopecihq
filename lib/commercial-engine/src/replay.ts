@@ -168,8 +168,16 @@ export async function replayFixture(fixtureArg: string): Promise<ReplayResult> {
   };
 }
 
-// CLI Execution
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+// CLI Execution — only run when executed directly as the replay CLI script (not when bundled/imported)
+const isDirectCliExecution =
+  typeof process !== 'undefined' &&
+  Boolean(process.argv?.[1]) &&
+  (path.basename(process.argv[1]).startsWith('replay.') ||
+    process.argv[1].endsWith('replay.ts') ||
+    process.argv[1].endsWith('replay.js')) &&
+  path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
+
+if (isDirectCliExecution) {
   const fixtureArg = process.argv[2] || 'scope-expansion';
   console.log(`\n============================================================`);
   console.log(`         SCOPECI REPLAY EVALUATION — FIXTURE REPLAY         `);

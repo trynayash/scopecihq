@@ -1,3 +1,4 @@
+import path from 'path';
 import { evaluateCommercialScope } from './evaluator.js';
 import { applyChangeOrderApproval, applyHumanOverride } from './transitions.js';
 import { formatEvaluationSummary, formatGitHubPRComment } from './formatter.js';
@@ -236,5 +237,14 @@ export function runSimulator(): { results: TestResult[]; allPassed: boolean } {
   return { results, allPassed };
 }
 
-// Auto-run if invoked directly
-runSimulator();
+// CLI Execution — only run when executed directly as the simulator CLI script (not when imported)
+const isDirectSimulatorRun =
+  typeof process !== 'undefined' &&
+  Boolean(process.argv?.[1]) &&
+  (path.basename(process.argv[1]).startsWith('simulator.') ||
+    process.argv[1].endsWith('simulator.ts') ||
+    process.argv[1].endsWith('simulator.js'));
+
+if (isDirectSimulatorRun) {
+  runSimulator();
+}
