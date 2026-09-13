@@ -1,0 +1,11 @@
+.replit
+.replitignore
+.local
+.cache
+attached_assets
+screenshots
+DEPLOYMENT_CONTEXT.md
+REPLIT_HERO_CONTEXT.md
+.env
+.env.*
+!.env.example

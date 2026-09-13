@@ -155,8 +155,17 @@ function usePageMeta(title: string, description: string) {
     setMeta('meta[name="description"]', description);
     setMeta('meta[property="og:title"]', title);
     setMeta('meta[property="og:description"]', description);
+    setMeta('meta[property="og:url"]', window.location.origin + window.location.pathname);
+    setMeta(
+      'meta[property="og:image"]',
+      `${window.location.origin}${BASE}/assets/logo-with-bg-and-wordmark.png`,
+    );
     setMeta('meta[name="twitter:title"]', title);
     setMeta('meta[name="twitter:description"]', description);
+    setMeta(
+      'meta[name="twitter:image"]',
+      `${window.location.origin}${BASE}/assets/logo-with-bg-and-wordmark.png`,
+    );
 
     let canonical = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
     if (!canonical) {
@@ -503,53 +512,59 @@ function CommercialReviewSurface() {
 /* Sections                                                            */
 /* ------------------------------------------------------------------ */
 
+function HeroGradientBars() {
+  return (
+    <div className="hero-gradient-bars" aria-hidden="true">
+      {Array.from({ length: 23 }, (_, index) => (
+        <span key={index} />
+      ))}
+    </div>
+  );
+}
+
 function Hero() {
   return (
     <section className="hero" id="top" aria-labelledby="hero-title">
+      <HeroGradientBars />
       <div className="container hero-inner">
         <Reveal className="hero-lead">
-          <p className="eyebrow">Commercial CI/CD for software agencies</p>
-
-          <div className="hero-lead-grid">
-            <div className="hero-headline">
-              <h1 className="hero-title" id="hero-title">
-                Ship only work your client <em>approved.</em>
-              </h1>
-              <p className="hero-note">
-                For agencies on GitHub, Linear, and Jira.
-              </p>
-            </div>
-
-            <div className="hero-aside">
-              <p className="hero-lede">
-                ScopeCI connects your contract, project tracker, and GitHub workflow so
-                unapproved client work gets caught before it reaches production.
-              </p>
-              <div className="hero-actions">
-                <a
-                  className="button button-primary"
-                  href={anchor('waitlist')}
-                  data-testid="button-join-waitlist-hero"
-                  onClick={() => track('hero_cta_click')}
-                >
-                  Join the waitlist
-                  <ArrowRight size={15} aria-hidden="true" />
-                </a>
-                <a
-                  className="button button-ghost"
-                  href={anchor('how-it-works')}
-                  data-testid="link-see-how-it-works"
-                >
-                  See how it works
-                  <ArrowDown size={15} aria-hidden="true" />
-                </a>
-              </div>
-            </div>
+          <div className="hero-trust">
+            <span className="stack-marks" aria-hidden="true">
+              <VendorMark name="github" size={14} />
+              <VendorMark name="linear" size={14} />
+              <VendorMark name="jira" size={14} />
+            </span>
+            <span>For agencies on GitHub, Linear, and Jira.</span>
           </div>
-        </Reveal>
 
-        <Reveal className="hero-stage" delay={110}>
-          <CommercialReviewSurface />
+          <h1 className="hero-title" id="hero-title">
+            Ship only work your client <em>approved.</em>
+          </h1>
+
+          <p className="hero-lede">
+            ScopeCI connects your contract, project tracker, and GitHub workflow so
+            unapproved client work gets caught before it reaches production.
+          </p>
+
+          <div className="hero-actions">
+            <a
+              className="button button-primary"
+              href={anchor('waitlist')}
+              data-testid="button-join-waitlist-hero"
+              onClick={() => track('hero_cta_click')}
+            >
+              Join the waitlist
+              <ArrowRight size={15} aria-hidden="true" />
+            </a>
+            <a
+              className="button button-ghost"
+              href={anchor('how-it-works')}
+              data-testid="link-see-how-it-works"
+            >
+              See how it works
+              <ArrowDown size={15} aria-hidden="true" />
+            </a>
+          </div>
         </Reveal>
       </div>
     </section>
@@ -650,8 +665,25 @@ const CAPABILITIES = [
 ] as const;
 
 function WhatScopeCIDoes() {
+  const [sectionRef, inView] = useInView<HTMLElement>('-15% 0px -15% 0px');
+  const [activeCapability, setActiveCapability] = useState(0);
+  const selectedCapability = CAPABILITIES[activeCapability];
+
+  useEffect(() => {
+    if (!inView || prefersReducedMotion()) return;
+    const timer = window.setInterval(() => {
+      setActiveCapability((current) => (current + 1) % CAPABILITIES.length);
+    }, 3600);
+    return () => window.clearInterval(timer);
+  }, [inView]);
+
   return (
-    <section className="section section-does" id="how-it-works" aria-labelledby="does-title">
+    <section
+      className="section section-does"
+      id="how-it-works"
+      ref={sectionRef}
+      aria-labelledby="does-title"
+    >
       <div className="container split">
         <Reveal className="split-lede">
           <p className="eyebrow">What ScopeCI does</p>
@@ -662,16 +694,60 @@ function WhatScopeCIDoes() {
 
         <div className="split-body capability-list">
           {CAPABILITIES.map((item, index) => (
-            <Reveal as="div" key={item.num} delay={index * 70}>
-              <article className="capability" data-testid={`article-work-${item.num}`}>
+            <div key={item.num}>
+              <button
+                type="button"
+                className={`capability ${activeCapability === index ? 'is-active' : ''}`}
+                aria-pressed={activeCapability === index}
+                onClick={() => {
+                  setActiveCapability(index);
+                  track(`capability_${item.num}_selected`);
+                }}
+                data-testid={`article-work-${item.num}`}
+              >
+                <span className="capability-index mono">{item.num}</span>
                 <div className="capability-body">
                   <h3>{item.title}</h3>
                   <p>{item.body}</p>
                   <p className="capability-detail">{item.detail}</p>
                 </div>
-              </article>
-            </Reveal>
+                <ArrowRight className="capability-arrow" size={16} aria-hidden="true" />
+              </button>
+            </div>
           ))}
+
+          <div
+            key={selectedCapability.num}
+            className="capability-demo"
+            aria-live="polite"
+          >
+            <div className="capability-demo-copy">
+              <p className="mono capability-demo-label">Illustrative flow · {selectedCapability.num}</p>
+              <h3>{selectedCapability.title}</h3>
+              <p>{selectedCapability.body}</p>
+            </div>
+            <div className="capability-demo-flow" aria-label="Illustrative ScopeCI workflow">
+              <span className="demo-chip">
+                <FileSignature size={13} aria-hidden="true" />
+                SOW
+              </span>
+              <span className="demo-connector" aria-hidden="true" />
+              <span className="demo-chip">
+                <VendorMark name="linear" size={13} />
+                ENG-184
+              </span>
+              <span className="demo-connector" aria-hidden="true" />
+              <span className="demo-chip">
+                <VendorMark name="github" size={13} />
+                PR #1842
+              </span>
+              <span className="demo-connector" aria-hidden="true" />
+              <span className={`demo-chip demo-verdict is-${activeCapability}`}>
+                {activeCapability === 2 ? <Check size={13} aria-hidden="true" /> : <Lock size={13} aria-hidden="true" />}
+                {activeCapability === 2 ? 'Merge gate' : activeCapability === 1 ? 'Trace linked' : 'Scope baseline'}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
     </section>
