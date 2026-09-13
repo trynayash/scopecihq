@@ -1,0 +1,2 @@
+- [Development database schema](development-database-schema.md) — apply the checked-in Drizzle schema before validating async waitlist or analytics writes.
+- [Vite HTML metadata](vite-html-metadata.md) — root-relative link hrefs in Vite HTML can be parsed as local assets; generate deployment-specific canonical URLs at runtime.
