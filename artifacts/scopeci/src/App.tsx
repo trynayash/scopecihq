@@ -19,6 +19,7 @@ import {
   Circle,
   Inbox,
   Lock,
+  ShieldCheck,
   ServerCog,
   X,
 } from 'lucide-react';
@@ -665,6 +666,7 @@ const CAPABILITIES = [
 ] as const;
 
 const CAPABILITY_INTERVAL = 4800;
+const CAPABILITY_ICONS = [FileSignature, GitBranch, ShieldCheck] as const;
 
 function WhatScopeCIDoes() {
   const [sectionRef, inView] = useInView<HTMLElement>('-15% 0px -15% 0px');
@@ -695,7 +697,7 @@ function WhatScopeCIDoes() {
         </Reveal>
 
         <div
-          className={`split-body capability-list ${isCapabilityPaused ? 'is-paused' : ''}`}
+          className={`split-body capability-list ${inView ? 'is-visible' : ''} ${isCapabilityPaused ? 'is-paused' : ''}`}
           onMouseEnter={() => setIsCapabilityPaused(true)}
           onMouseLeave={() => setIsCapabilityPaused(false)}
           onFocusCapture={() => setIsCapabilityPaused(true)}
@@ -705,8 +707,14 @@ function WhatScopeCIDoes() {
             }
           }}
         >
-          {CAPABILITIES.map((item, index) => (
-            <div className="capability-wrap" key={item.num}>
+          {CAPABILITIES.map((item, index) => {
+            const CapabilityIcon = CAPABILITY_ICONS[index];
+            return (
+            <div
+              className="capability-wrap"
+              key={item.num}
+              style={{ '--capability-enter-delay': `${index * 90}ms` } as React.CSSProperties}
+            >
               <button
                 type="button"
                 className={`capability ${activeCapability === index ? 'is-active' : ''}`}
@@ -720,14 +728,20 @@ function WhatScopeCIDoes() {
               >
                 <span className="capability-index mono">{item.num}</span>
                 <div className="capability-body">
-                  <h3>{item.title}</h3>
+                  <div className="capability-heading">
+                    <h3>{item.title}</h3>
+                    <span className="capability-glyph" aria-hidden="true">
+                      <CapabilityIcon size={15} strokeWidth={1.7} />
+                    </span>
+                  </div>
                   <p>{item.body}</p>
                   <p className="capability-detail">{item.detail}</p>
                 </div>
                 <ArrowRight className="capability-arrow" size={16} aria-hidden="true" />
               </button>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </section>
@@ -1019,17 +1033,36 @@ const DIFFERENTIATORS = [
   {
     title: 'Works with your stack',
     body: 'Keep GitHub, Linear, Jira and the workflows your team already uses.',
-    marks: true,
+    glyph: 'stack',
   },
   {
     title: 'Commercially aware',
     body: 'Know whether engineering work is contractually approved before time disappears into it.',
+    glyph: 'contract',
   },
   {
     title: 'Engineering-native',
     body: 'ScopeCI lives close to the work — from issue to pull request to merge.',
+    glyph: 'merge',
   },
 ] as const;
+
+function DifferentiatorGlyph({ type }: { type: (typeof DIFFERENTIATORS)[number]['glyph'] }) {
+  if (type === 'stack') {
+    return (
+      <span className="diff-glyph diff-glyph-stack" aria-hidden="true">
+        <StackMarks size={15} />
+      </span>
+    );
+  }
+
+  const Icon = type === 'contract' ? FileSignature : GitPullRequest;
+  return (
+    <span className={`diff-glyph diff-glyph-${type}`} aria-hidden="true">
+      <Icon size={15} strokeWidth={1.7} />
+    </span>
+  );
+}
 
 function Differentiator() {
   return (
@@ -1041,9 +1074,9 @@ function Differentiator() {
         <Reveal className="diff-grid" delay={70}>
           {DIFFERENTIATORS.map((item) => (
             <div className="diff-item" key={item.title}>
+              <DifferentiatorGlyph type={item.glyph} />
               <h3>{item.title}</h3>
               <p>{item.body}</p>
-              {'marks' in item && item.marks ? <StackMarks size={16} /> : null}
             </div>
           ))}
         </Reveal>

@@ -789,6 +789,7 @@ img.vendor-mark { width: auto; height: 1em; object-fit: contain; }
   gap: 16px;
   min-height: 64px;
   border-bottom: 1px solid var(--rule);
+  transition: background-color 0.3s var(--ease), border-color 0.3s var(--ease);
 }
 .chain-rail { position: relative; display: flex; justify-content: center; align-self: stretch; }
 .chain-rail::before {
@@ -813,7 +814,17 @@ img.vendor-mark { width: auto; height: 1em; object-fit: contain; }
   align-items: center;
   gap: 8px;
   min-width: 38px;
+  min-height: 32px;
+  padding-inline: 7px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   color: var(--ink-2);
+  transition: background-color 0.3s var(--ease), border-color 0.3s var(--ease), color 0.3s var(--ease);
+}
+.chain-row:hover { background: rgba(223, 239, 225, 0.28); }
+.chain-row:hover .chain-mark {
+  border-color: var(--rule);
+  background: rgba(248, 246, 240, 0.8);
 }
 .chain-row.is-control .chain-mark { color: var(--forest); }
 .chain-name { font-size: 15.5px; font-weight: 500; letter-spacing: -0.012em; }
@@ -826,11 +837,20 @@ img.vendor-mark { width: auto; height: 1em; object-fit: contain; }
 .chain-row.is-control {
   background: linear-gradient(to right, rgba(63, 138, 104, 0.07), transparent 78%);
 }
+.chain-row.is-control .chain-mark {
+  border-color: rgba(63, 138, 104, 0.24);
+  background: rgba(215, 234, 219, 0.68);
+  animation: control-mark-pulse 4.8s ease-in-out infinite;
+}
 .chain-row.is-control .chain-node { width: 3px; background: var(--forest); }
 .chain-row.is-control .chain-name { color: var(--forest); font-weight: 600; }
 .chain-row.is-control .chain-detail,
 .chain-row.is-control .chain-domain { color: var(--forest-2); }
 .chain-row.is-terminal .chain-node { background: var(--ink-2); }
+@keyframes control-mark-pulse {
+  0%, 78%, 100% { box-shadow: 0 0 0 0 rgba(63, 138, 104, 0); }
+  86% { box-shadow: 0 0 0 4px rgba(63, 138, 104, 0.08); }
+}
 
 /* ==================================================================
    What ScopeCI does
@@ -853,6 +873,13 @@ img.vendor-mark { width: auto; height: 1em; object-fit: contain; }
 }
 .capability-wrap {
   position: relative;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.56s var(--ease) var(--capability-enter-delay, 0ms), transform 0.56s var(--ease) var(--capability-enter-delay, 0ms);
+}
+.capability-list.is-visible .capability-wrap {
+  opacity: 1;
+  transform: none;
 }
 .capability-wrap + .capability-wrap::before {
   content: '';
@@ -936,6 +963,32 @@ img.vendor-mark { width: auto; height: 1em; object-fit: contain; }
   font-size: 20px;
   font-weight: 600;
   letter-spacing: -0.02em;
+}
+.capability-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.capability-glyph {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: rgba(248, 246, 240, 0.68);
+  color: var(--muted-2);
+  transform: translateY(1px);
+  transition: background-color 0.28s var(--ease), border-color 0.28s var(--ease), color 0.28s var(--ease), transform 0.28s var(--ease);
+}
+.capability:hover .capability-glyph,
+.capability.is-active .capability-glyph {
+  border-color: rgba(63, 138, 104, 0.3);
+  background: rgba(248, 246, 240, 0.88);
+  color: var(--forest);
+  transform: translateY(0);
 }
 .capability-body > p {
   max-width: 54ch;
@@ -1296,9 +1349,27 @@ img.vendor-mark { width: auto; height: 1em; object-fit: contain; }
 }
 .diff-item { padding: 22px 30px 4px 0; }
 .diff-item + .diff-item { padding-left: 30px; border-left: 1px solid var(--rule); }
-.diff-item h3 { font-size: 15px; font-weight: 600; letter-spacing: -0.015em; }
+.diff-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  min-height: 30px;
+  padding-inline: 8px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 8px;
+  background: rgba(248, 246, 240, 0.62);
+  color: var(--forest-2);
+  transition: transform 0.28s var(--ease), border-color 0.28s var(--ease), background-color 0.28s var(--ease);
+}
+.diff-glyph-stack { gap: 7px; color: var(--ink-2); }
+.diff-item:hover .diff-glyph {
+  transform: translateY(-2px);
+  border-color: rgba(63, 138, 104, 0.36);
+  background: var(--mint);
+}
+.diff-item h3 { margin-top: 15px; font-size: 15px; font-weight: 600; letter-spacing: -0.015em; }
 .diff-item p { margin-top: 9px; color: var(--muted); font-size: 14px; line-height: 1.6; }
-.diff-item .stack-marks { margin-top: 16px; gap: 15px; color: var(--ink-2); }
 
 /* ==================================================================
    Waitlist
@@ -1679,6 +1750,8 @@ img.vendor-mark { width: auto; height: 1em; object-fit: contain; }
     min-height: 0;
     padding-block: 22px 24px;
   }
+  .capability-glyph { width: 28px; height: 28px; }
+  .diff-item h3 { margin-top: 12px; }
 
   .state-panel-head { padding: 12px 15px; }
   .state-row {
