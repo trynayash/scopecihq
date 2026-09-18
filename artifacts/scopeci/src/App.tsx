@@ -664,18 +664,20 @@ const CAPABILITIES = [
   },
 ] as const;
 
+const CAPABILITY_INTERVAL = 4800;
+
 function WhatScopeCIDoes() {
   const [sectionRef, inView] = useInView<HTMLElement>('-15% 0px -15% 0px');
   const [activeCapability, setActiveCapability] = useState(0);
-  const selectedCapability = CAPABILITIES[activeCapability];
+  const [isCapabilityPaused, setIsCapabilityPaused] = useState(false);
 
   useEffect(() => {
-    if (!inView || prefersReducedMotion()) return;
+    if (!inView || isCapabilityPaused || prefersReducedMotion()) return;
     const timer = window.setInterval(() => {
       setActiveCapability((current) => (current + 1) % CAPABILITIES.length);
-    }, 3600);
+    }, CAPABILITY_INTERVAL);
     return () => window.clearInterval(timer);
-  }, [inView]);
+  }, [inView, isCapabilityPaused]);
 
   return (
     <section
@@ -692,9 +694,19 @@ function WhatScopeCIDoes() {
           </h2>
         </Reveal>
 
-        <div className="split-body capability-list">
+        <div
+          className={`split-body capability-list ${isCapabilityPaused ? 'is-paused' : ''}`}
+          onMouseEnter={() => setIsCapabilityPaused(true)}
+          onMouseLeave={() => setIsCapabilityPaused(false)}
+          onFocusCapture={() => setIsCapabilityPaused(true)}
+          onBlurCapture={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              setIsCapabilityPaused(false);
+            }
+          }}
+        >
           {CAPABILITIES.map((item, index) => (
-            <div key={item.num}>
+            <div className="capability-wrap" key={item.num}>
               <button
                 type="button"
                 className={`capability ${activeCapability === index ? 'is-active' : ''}`}
@@ -704,6 +716,7 @@ function WhatScopeCIDoes() {
                   track(`capability_${item.num}_selected`);
                 }}
                 data-testid={`article-work-${item.num}`}
+                style={{ '--capability-duration': `${CAPABILITY_INTERVAL}ms` } as React.CSSProperties}
               >
                 <span className="capability-index mono">{item.num}</span>
                 <div className="capability-body">
@@ -715,39 +728,6 @@ function WhatScopeCIDoes() {
               </button>
             </div>
           ))}
-
-          <div
-            key={selectedCapability.num}
-            className="capability-demo"
-            aria-live="polite"
-          >
-            <div className="capability-demo-copy">
-              <p className="mono capability-demo-label">Illustrative flow · {selectedCapability.num}</p>
-              <h3>{selectedCapability.title}</h3>
-              <p>{selectedCapability.body}</p>
-            </div>
-            <div className="capability-demo-flow" aria-label="Illustrative ScopeCI workflow">
-              <span className="demo-chip">
-                <FileSignature size={13} aria-hidden="true" />
-                SOW
-              </span>
-              <span className="demo-connector" aria-hidden="true" />
-              <span className="demo-chip">
-                <VendorMark name="linear" size={13} />
-                ENG-184
-              </span>
-              <span className="demo-connector" aria-hidden="true" />
-              <span className="demo-chip">
-                <VendorMark name="github" size={13} />
-                PR #1842
-              </span>
-              <span className="demo-connector" aria-hidden="true" />
-              <span className={`demo-chip demo-verdict is-${activeCapability}`}>
-                {activeCapability === 2 ? <Check size={13} aria-hidden="true" /> : <Lock size={13} aria-hidden="true" />}
-                {activeCapability === 2 ? 'Merge gate' : activeCapability === 1 ? 'Trace linked' : 'Scope baseline'}
-              </span>
-            </div>
-          </div>
         </div>
       </div>
     </section>
