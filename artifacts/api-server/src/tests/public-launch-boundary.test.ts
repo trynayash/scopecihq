@@ -140,12 +140,12 @@ async function runPublicLaunchBoundaryTests() {
         body: {
           email: testEmail,
           agency: "Vanguard Studio Partners",
-          utmSource: "linkedin",
+          utmSource: "newsletter",
           utmMedium: "sponsored_feed",
           utmCampaign: "agency_q3_launch",
           utmContent: "commercial_ci_card",
           utmTerm: "software_agency_sow",
-          referrer: "https://www.linkedin.com/feed/",
+          referrer: "https://news.ycombinator.com/",
         },
       });
 
@@ -160,9 +160,9 @@ async function runPublicLaunchBoundaryTests() {
 
       check(record !== undefined, "Waitlist signup persisted in database");
       check(record?.agency === "Vanguard Studio Partners", "Agency name stored");
-      check(record?.utmSource === "linkedin", "utmSource captured");
+      check(record?.utmSource === "newsletter", "utmSource captured");
       check(record?.utmCampaign === "agency_q3_launch", "utmCampaign captured");
-      check(record?.referrer === "https://www.linkedin.com/feed/", "Referrer captured");
+      check(record?.referrer === "https://news.ycombinator.com/", "Referrer captured");
     });
 
     // -------------------------------------------------------------
