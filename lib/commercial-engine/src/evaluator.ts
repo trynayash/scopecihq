@@ -52,7 +52,8 @@ function normalizeKeyword(str: string): string {
  * Phase 4 Commercial Intelligence Evaluator.
  *
  * Implements the full 30 Hard Requirements:
- * 1. Derives commercialConfidence from grounded evidence coverage, not raw LLM metadata.
+ * 1. Sets commercialConfidence to a fixed value for each scope category, never from an LLM. No model runs here,
+ *    so no model confidence is recorded.
  * 2. Prioritizes explicit contract exclusions over absence.
  * 3. Never treats keyword matching as semantic certainty.
  * 4. Consumes capabilities from CapabilityExtractor without coupling to commercial state.
@@ -586,7 +587,7 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
   }
 
   // ------------------------------------------------------------------
-  // Hard Requirement 1: Commercial Confidence Calculation (Non-LLM)
+  // Hard Requirement 1: Commercial Confidence (Non-LLM). A fixed value per scope category, not a measured probability.
   // ------------------------------------------------------------------
   let commercialConfidence: number;
   if (taxonomy === "EXPLICITLY_EXCLUDED") {
@@ -735,7 +736,6 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
     state,
     taxonomy,
     commercialConfidence,
-    modelConfidence: 0.91, // Model metadata recorded separately
     contractEvidence: contractEvidenceList,
     candidateDeliverables,
     issueEvidence: {
@@ -774,7 +774,6 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
     taxonomy,
     confidence: commercialConfidence,
     commercialConfidence,
-    modelConfidence: 0.91,
     evidence,
     evidenceBundle: bundle,
     identityHash,

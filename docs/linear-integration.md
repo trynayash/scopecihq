@@ -1,6 +1,8 @@
 # ScopeCI Linear Integration Guide (Phase 3)
 
-This document describes the production-ready Linear integration boundary for ScopeCI Alpha, connecting Linear issues into the Commercial Provenance Graph and enforcing four hard safeguards.
+This document describes the Linear integration boundary for ScopeCI Alpha, connecting Linear issues into the Commercial Provenance Graph and enforcing four hard safeguards.
+
+**Status today.** The OAuth connect and callback routes, token encryption, the Linear GraphQL client, webhook handling and sync are built and covered by `artifacts/api-server/src/tests/linear-integration.test.ts`. They are not live: the routes are switched off in production unless `ENABLE_INTEGRATION_ROUTES=true`, and the product app they redirect to does not exist yet.
 
 ---
 

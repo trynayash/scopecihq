@@ -513,7 +513,8 @@ export class WebhookService {
           policyMode: "OBSERVE",
           confidence: String(evaluation.confidence),
           commercialConfidence: String(evaluation.commercialConfidence),
-          modelConfidence: String(evaluation.modelConfidence || 0.91),
+          // The evaluator is rule based; there is no model confidence to record.
+          modelConfidence: evaluation.modelConfidence != null ? String(evaluation.modelConfidence) : null,
           evaluationIdentityHash: evaluation.identityHash,
           documentVersion: "doc_v1.0",
           issueSnapshotHash: evaluation.evidenceBundle?.issueEvidence ? "computed" : null,

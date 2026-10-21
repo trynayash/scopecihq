@@ -246,5 +246,7 @@ const isDirectSimulatorRun =
     process.argv[1].endsWith('simulator.js'));
 
 if (isDirectSimulatorRun) {
-  runSimulator();
+  // A failed case fails the CI step. Before this, the simulator printed FAIL and still exited 0.
+  const { allPassed } = runSimulator();
+  if (!allPassed) process.exitCode = 1;
 }

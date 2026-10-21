@@ -2,7 +2,9 @@
 
 ## 1. Overview
 
-ScopeCI operates as a GitHub App that monitors pull request activity, correlates code changes with contracted statement of work (SOW) baselines and Linear issues, and publishes commercial review evidence directly on GitHub pull requests.
+ScopeCI is designed to run as a GitHub App that monitors pull request activity, correlates code changes with contracted statement of work (SOW) baselines and Linear issues, and publishes commercial review evidence on GitHub pull requests.
+
+**Status today.** The webhook route, signature check, delivery log, diff collection, evaluation and database records are built and covered by `artifacts/api-server/src/tests/github-app.test.ts`. The only GitHub API client in the code is `MockGitHubClient`, which keeps check runs and comments in memory. Nothing is posted to real pull requests yet, and the GitHub and Linear routes are switched off in production unless `ENABLE_INTEGRATION_ROUTES=true`. The sections below describe the intended behaviour.
 
 In **Phase 2 (Alpha)**, ScopeCI runs strictly in **Observe Mode**:
 - GitHub Check Runs are published under `scopeci / commercial` with conclusion `neutral`.

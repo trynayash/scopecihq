@@ -106,10 +106,9 @@ async function runTests() {
       },
     });
 
-    assert.strictEqual(evalResult.commercialConfidence, 0.95, "Commercial confidence must be derived from grounded evidence");
-    assert.strictEqual(evalResult.modelConfidence, 0.91, "Model confidence recorded separately as model metadata");
-    assert.notStrictEqual(evalResult.commercialConfidence, evalResult.modelConfidence);
-    pass("commercialConfidence is derived deterministically and kept separate from modelConfidence");
+    assert.strictEqual(evalResult.commercialConfidence, 0.95, "Clearly in scope with a matched deliverable carries the fixed 0.95");
+    assert.strictEqual(evalResult.modelConfidence, undefined, "No model runs, so no model confidence is recorded");
+    pass("commercialConfidence is a fixed rule based value and no model confidence is invented");
   } catch (e) {
     fail("Commercial confidence separation failed", e);
   }

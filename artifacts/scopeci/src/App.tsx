@@ -23,7 +23,7 @@ import {
   ServerCog,
   X,
 } from 'lucide-react';
-import { SiGithub, SiJira, SiLinear } from 'react-icons/si';
+import { SiGithub, SiLinear } from 'react-icons/si';
 import { useCreateWaitlistSignup } from '@workspace/api-client-react';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
@@ -38,7 +38,7 @@ const ICON_MARK = '/assets/logo-icon.png';
 
 const PAGE_TITLE = 'ScopeCI — Commercial CI/CD for Software Agencies';
 const PAGE_DESCRIPTION =
-  'ScopeCI connects your contracts, project work and GitHub workflow to catch commercially unauthorized engineering work before it ships.';
+  'ScopeCI is being built to check pull requests against what a client signed, so agencies catch unapproved work before it ships. It is not available yet; join the waitlist.';
 
 const PRIVACY_TITLE = 'Privacy Policy — ScopeCI';
 const PRIVACY_DESCRIPTION =
@@ -268,15 +268,16 @@ function Reveal({
 /* ------------------------------------------------------------------ */
 
 /**
- * Official GitHub / Linear / Jira marks (Simple Icons paths via react-icons),
- * drawn in `currentColor` so they sit inside the ScopeCI palette. They are
- * shown to state compatibility only — no partnership is implied.
+ * Official GitHub / Linear marks (Simple Icons paths via react-icons),
+ * drawn in `currentColor` so they sit inside the ScopeCI palette. They name the
+ * tools ScopeCI is being built for. No partnership is implied. Jira is not
+ * supported, so its mark is not shown.
  */
 function VendorMark({
   name,
   size = 14,
 }: {
-  name: 'github' | 'linear' | 'jira' | 'scopeci';
+  name: 'github' | 'linear' | 'scopeci';
   size?: number;
 }) {
   if (name === 'scopeci') {
@@ -291,7 +292,7 @@ function VendorMark({
       />
     );
   }
-  const Mark = name === 'github' ? SiGithub : name === 'linear' ? SiLinear : SiJira;
+  const Mark = name === 'github' ? SiGithub : SiLinear;
   return <Mark className="vendor-mark" size={size} aria-hidden="true" focusable="false" />;
 }
 
@@ -300,7 +301,6 @@ function StackMarks({ size = 15 }: { size?: number }) {
     <span className="stack-marks" aria-hidden="true">
       <VendorMark name="github" size={size} />
       <VendorMark name="linear" size={size} />
-      <VendorMark name="jira" size={size} />
     </span>
   );
 }
@@ -533,9 +533,8 @@ function Hero() {
             <span className="stack-marks" aria-hidden="true">
               <VendorMark name="github" size={14} />
               <VendorMark name="linear" size={14} />
-              <VendorMark name="jira" size={14} />
             </span>
-            <span>For agencies on GitHub, Linear, and Jira.</span>
+            <span>In development, for agencies on GitHub and Linear.</span>
           </div>
 
           <h1 className="hero-title" id="hero-title">
@@ -543,8 +542,9 @@ function Hero() {
           </h1>
 
           <p className="hero-lede">
-            ScopeCI connects your contract, project tracker, and GitHub workflow so
-            unapproved client work gets caught before it reaches production.
+            ScopeCI is being built to connect your contract, your Linear issues and
+            your GitHub pull requests, so unapproved client work gets caught before it
+            reaches production. It is not available yet.
           </p>
 
           <div className="hero-actions">
@@ -575,7 +575,7 @@ function Hero() {
 const GAP_CHAIN = [
   { name: 'Signed SOW', detail: 'what was sold', domain: 'Commercial', mark: 'sow' },
   { name: 'Client request', detail: 'new work enters', domain: 'Commercial', mark: 'request' },
-  { name: 'Linear / Jira', detail: 'work is planned', domain: 'Engineering', mark: 'tracker' },
+  { name: 'Linear', detail: 'work is planned', domain: 'Engineering', mark: 'tracker' },
   { name: 'GitHub', detail: 'what was built', domain: 'Engineering', mark: 'github' },
   { name: 'ScopeCI', detail: 'Commercial authorization', domain: 'Control', mark: 'scopeci' },
   { name: 'Production', detail: 'approved work ships', domain: 'Release', mark: 'production' },
@@ -588,12 +588,7 @@ function StageMark({ mark }: { mark: string }) {
     return <VendorMark name={mark} size={15} />;
   }
   if (mark === 'tracker') {
-    return (
-      <>
-        <VendorMark name="linear" size={15} />
-        <VendorMark name="jira" size={15} />
-      </>
-    );
+    return <VendorMark name="linear" size={15} />;
   }
   if (mark === 'sow') return <FileSignature size={15} aria-hidden="true" />;
   if (mark === 'request') return <Inbox size={15} aria-hidden="true" />;
@@ -649,7 +644,7 @@ const CAPABILITIES = [
     num: '01',
     title: 'Understand the contract',
     body: 'Turn signed SOWs and project agreements into a structured scope baseline.',
-    detail: 'Deliverables, exclusions, assumptions, limits and milestones.',
+    detail: 'Clauses, deliverables, and what is included or excluded.',
   },
   {
     num: '02',
@@ -661,7 +656,7 @@ const CAPABILITIES = [
     num: '03',
     title: 'Control the merge',
     body: 'Require commercial approval before unauthorized work ships.',
-    detail: "Warn, review or enforce based on the agency's policy.",
+    detail: "Observe, review or enforce, set by the agency's policy.",
   },
 ] as const;
 
@@ -690,7 +685,7 @@ function WhatScopeCIDoes() {
     >
       <div className="container split">
         <Reveal className="split-lede">
-          <p className="eyebrow">What ScopeCI does</p>
+          <p className="eyebrow">What ScopeCI is being built to do</p>
           <h2 className="section-title" id="does-title">
             A commercial control layer for engineering.
           </h2>
@@ -751,7 +746,7 @@ function WhatScopeCIDoes() {
 /* The same work item, and the commercial state it carries at each stage. */
 const WORK_STATES = [
   { stage: 'Signed SOW', ref: '§4.2 Authentication', state: 'approved', mark: 'sow' },
-  { stage: 'Linear / Jira', ref: 'ENG-184', state: 'review', mark: 'tracker' },
+  { stage: 'Linear', ref: 'ENG-184', state: 'review', mark: 'tracker' },
   { stage: 'GitHub', ref: 'PR #1842', state: 'needs', mark: 'github' },
   { stage: 'Commercial check', ref: 'scopeci / commercial', state: 'blocked', mark: 'scopeci' },
   { stage: 'Approval', ref: 'Change order', state: 'needs', mark: 'approval' },
@@ -1032,7 +1027,7 @@ function CommercialCheck() {
 const DIFFERENTIATORS = [
   {
     title: 'Works with your stack',
-    body: 'Keep GitHub, Linear, Jira and the workflows your team already uses.',
+    body: 'Keep GitHub, Linear and the workflows your team already uses. Jira is not supported.',
     glyph: 'stack',
   },
   {
