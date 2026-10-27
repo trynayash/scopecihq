@@ -18,6 +18,8 @@ tags:
     description: Signing in with GitHub and out again
   - name: projects
     description: Projects, their confirmed scope, connected repository and checked pull requests
+  - name: workspace
+    description: Workspace members and invites
 paths:
   /healthz:
     get:
@@ -168,6 +170,177 @@ paths:
       responses:
         "204":
           description: Signed out
+  /session/workspace:
+    put:
+      operationId: switchWorkspace
+      tags: [session]
+      summary: Work in another workspace the signed-in person belongs to
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SwitchWorkspaceInput"
+      responses:
+        "200":
+          description: The workspace now in use
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionOrganization"
+        "404":
+          description: Not a workspace this person belongs to
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /workspace:
+    get:
+      operationId: getWorkspace
+      tags: [workspace]
+      summary: The current workspace, its members and, for owners, its open invites
+      responses:
+        "200":
+          description: The workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceInfo"
+        "401":
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateWorkspace
+      tags: [workspace]
+      summary: Rename the workspace (owners only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkspaceUpdateInput"
+      responses:
+        "200":
+          description: The workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceInfo"
+        "403":
+          description: Only owners can do this
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /workspace/invites:
+    post:
+      operationId: createInvite
+      tags: [workspace]
+      summary: Make a single-use invite link, valid for seven days (owners only)
+      responses:
+        "201":
+          description: The invite; its link is only shown this once
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InviteCreated"
+        "403":
+          description: Only owners can do this
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /workspace/invites/{inviteId}:
+    delete:
+      operationId: revokeInvite
+      tags: [workspace]
+      summary: Cancel an invite that hasn't been used (owners only)
+      parameters:
+        - name: inviteId
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 36
+      responses:
+        "204":
+          description: Cancelled
+        "404":
+          description: No such open invite
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /workspace/members/{userId}:
+    delete:
+      operationId: removeMember
+      tags: [workspace]
+      summary: Remove someone from the workspace (owners only)
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 36
+      responses:
+        "204":
+          description: Removed
+        "404":
+          description: Not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The workspace would be left without an owner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /invites/{token}:
+    get:
+      operationId: getInvite
+      tags: [workspace]
+      summary: Which workspace an invite link is for
+      parameters:
+        - $ref: "#/components/parameters/InviteToken"
+      responses:
+        "200":
+          description: The invite
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvitePreview"
+        "404":
+          description: The link is wrong, used, cancelled or expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /invites/{token}/accept:
+    post:
+      operationId: acceptInvite
+      tags: [workspace]
+      summary: Join the workspace an invite link is for, and switch to it
+      parameters:
+        - $ref: "#/components/parameters/InviteToken"
+      responses:
+        "200":
+          description: The workspace joined
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionOrganization"
+        "404":
+          description: The link is wrong, used, cancelled or expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /projects:
     get:
       operationId: listProjects
@@ -446,6 +619,13 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 components:
   parameters:
+    InviteToken:
+      name: token
+      in: path
+      required: true
+      schema:
+        type: string
+        maxLength: 100
     ProjectId:
       name: projectId
       in: path
@@ -739,10 +919,16 @@ components:
           oneOf:
             - $ref: "#/components/schemas/SessionOrganization"
             - type: "null"
+        workspaces:
+          type: array
+          description: Every workspace the person belongs to; empty when signed out
+          items:
+            $ref: "#/components/schemas/SessionOrganization"
       required:
         - signInAvailable
         - user
         - organization
+        - workspaces
     SessionUser:
       type: object
       properties:
@@ -766,9 +952,13 @@ components:
           type: string
         name:
           type: string
+        role:
+          type: string
+          enum: [OWNER, MEMBER]
       required:
         - id
         - name
+        - role
     PolicyMode:
       type: string
       enum: [OBSERVE, REVIEW, ENFORCE]
@@ -1088,3 +1278,121 @@ components:
           maxLength: 10000
       required:
         - evaluationId
+    SwitchWorkspaceInput:
+      type: object
+      properties:
+        organizationId:
+          type: string
+          maxLength: 36
+      required:
+        - organizationId
+    WorkspaceUpdateInput:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+      required:
+        - name
+    WorkspaceMember:
+      type: object
+      properties:
+        userId:
+          type: string
+        login:
+          type: string
+        name:
+          type: ["string", "null"]
+        avatarUrl:
+          type: ["string", "null"]
+        role:
+          type: string
+          enum: [OWNER, MEMBER]
+        joinedAt:
+          type: string
+          format: date-time
+        you:
+          type: boolean
+      required:
+        - userId
+        - login
+        - name
+        - avatarUrl
+        - role
+        - joinedAt
+        - you
+    WorkspaceInvite:
+      type: object
+      properties:
+        id:
+          type: string
+        createdBy:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - createdBy
+        - createdAt
+        - expiresAt
+    WorkspaceInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+          enum: [OWNER, MEMBER]
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceMember"
+        invites:
+          type: array
+          description: Open invites; only shown to owners
+          items:
+            $ref: "#/components/schemas/WorkspaceInvite"
+      required:
+        - id
+        - name
+        - role
+        - members
+        - invites
+    InviteCreated:
+      type: object
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - url
+        - expiresAt
+    InvitePreview:
+      type: object
+      properties:
+        workspaceName:
+          type: string
+        invitedBy:
+          type: ["string", "null"]
+        expiresAt:
+          type: string
+          format: date-time
+        alreadyMember:
+          type: boolean
+      required:
+        - workspaceName
+        - invitedBy
+        - expiresAt
+        - alreadyMember

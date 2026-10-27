@@ -73,38 +73,87 @@ export interface Account {
   role: string;
 }
 
-/** The signed-in person and their organization, or null. */
+/**
+ * The signed-in person and the workspace they are working in, or null. The
+ * session remembers a chosen workspace; if they are no longer a member of
+ * it (or never chose one), it falls back to the first they joined.
+ */
 export async function loadAccount(req: Request): Promise<Account | null> {
   const token = readCookie(req, SESSION_COOKIE);
   if (!token || token.length > 100) return null;
 
-  const [row] = await db
+  const [session] = await db
     .select({
       sessionId: userSessionsTable.id,
       lastSeenAt: userSessionsTable.lastSeenAt,
+      chosen: userSessionsTable.organizationId,
       userId: usersTable.id,
       login: usersTable.login,
       name: usersTable.name,
       avatarUrl: usersTable.avatarUrl,
+    })
+    .from(userSessionsTable)
+    .innerJoin(usersTable, eq(usersTable.id, userSessionsTable.userId))
+    .where(and(eq(userSessionsTable.tokenHash, hashToken(token)), gt(userSessionsTable.expiresAt, new Date())))
+    .limit(1);
+  if (!session) return null;
+
+  const memberships = await db
+    .select({
       organizationId: organizationsTable.id,
       organizationName: organizationsTable.name,
       role: organizationMembersTable.role,
     })
-    .from(userSessionsTable)
-    .innerJoin(usersTable, eq(usersTable.id, userSessionsTable.userId))
-    .innerJoin(organizationMembersTable, eq(organizationMembersTable.userId, usersTable.id))
+    .from(organizationMembersTable)
     .innerJoin(organizationsTable, eq(organizationsTable.id, organizationMembersTable.organizationId))
-    .where(and(eq(userSessionsTable.tokenHash, hashToken(token)), gt(userSessionsTable.expiresAt, new Date())))
-    .orderBy(organizationMembersTable.createdAt)
-    .limit(1);
-  if (!row) return null;
+    .where(eq(organizationMembersTable.userId, session.userId))
+    .orderBy(organizationMembersTable.createdAt);
+  const membership = memberships.find((m) => m.organizationId === session.chosen) ?? memberships[0];
+  if (!membership) return null;
 
-  if (Date.now() - row.lastSeenAt.getTime() > TOUCH_EVERY_MS) {
-    await db.update(userSessionsTable).set({ lastSeenAt: new Date() }).where(eq(userSessionsTable.id, row.sessionId));
+  if (Date.now() - session.lastSeenAt.getTime() > TOUCH_EVERY_MS) {
+    await db.update(userSessionsTable).set({ lastSeenAt: new Date() }).where(eq(userSessionsTable.id, session.sessionId));
   }
 
-  const { sessionId: _s, lastSeenAt: _l, ...account } = row;
-  return account;
+  return {
+    userId: session.userId,
+    login: session.login,
+    name: session.name,
+    avatarUrl: session.avatarUrl,
+    ...membership,
+  };
+}
+
+/** Every workspace the person belongs to, oldest membership first. */
+export async function listWorkspaces(userId: string) {
+  return db
+    .select({ id: organizationsTable.id, name: organizationsTable.name, role: organizationMembersTable.role })
+    .from(organizationMembersTable)
+    .innerJoin(organizationsTable, eq(organizationsTable.id, organizationMembersTable.organizationId))
+    .where(eq(organizationMembersTable.userId, userId))
+    .orderBy(organizationMembersTable.createdAt);
+}
+
+/** The app's own origin, for links that leave the browser (OAuth callbacks, invites). */
+export function appOrigin(req: Request): string {
+  if (process.env.APP_BASE_URL) {
+    try {
+      return new URL(process.env.APP_BASE_URL).origin;
+    } catch {
+      // fall through to the request's own host
+    }
+  }
+  return `${req.protocol}://${req.get("host")}`;
+}
+
+/** Points the current session at a workspace the person belongs to. */
+export async function chooseWorkspace(req: Request, organizationId: string): Promise<void> {
+  const token = readCookie(req, SESSION_COOKIE);
+  if (!token) return;
+  await db
+    .update(userSessionsTable)
+    .set({ organizationId })
+    .where(eq(userSessionsTable.tokenHash, hashToken(token)));
 }
 
 export function accountOf(res: Response): Account {

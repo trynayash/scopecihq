@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { Router, type IRouter, type Request } from "express";
+import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { organizationMembersTable, organizationsTable, usersTable } from "@workspace/db/schema";
@@ -8,8 +8,10 @@ import { timingSafeCompare } from "../middlewares/auth.js";
 import { rateLimiter } from "../middlewares/rate-limit.js";
 import { encryptedTokenColumns } from "../lib/github-token.js";
 import {
+  appOrigin,
   createSession,
   destroySession,
+  listWorkspaces,
   loadAccount,
   readCookie,
   sameOriginWrites,
@@ -31,17 +33,6 @@ function signInAvailable(): boolean {
   if (!oauthConfig()) return false;
   // Tokens are stored encrypted; production must not fall back to the test key.
   return process.env.NODE_ENV !== "production" || Boolean(process.env.GITHUB_TOKEN_ENCRYPTION_KEY);
-}
-
-function appOrigin(req: Request): string {
-  if (process.env.APP_BASE_URL) {
-    try {
-      return new URL(process.env.APP_BASE_URL).origin;
-    } catch {
-      // fall through to the request's own host
-    }
-  }
-  return `${req.protocol}://${req.get("host")}`;
 }
 
 /** Only our own app pages, so the sign-in flow can't be used as an open redirect. */
@@ -141,7 +132,10 @@ router.get("/session", async (req, res): Promise<void> => {
       user: account
         ? { id: account.userId, login: account.login, name: account.name, avatarUrl: account.avatarUrl }
         : null,
-      organization: account ? { id: account.organizationId, name: account.organizationName } : null,
+      organization: account
+        ? { id: account.organizationId, name: account.organizationName, role: account.role }
+        : null,
+      workspaces: account ? await listWorkspaces(account.userId) : [],
     }),
   );
 });

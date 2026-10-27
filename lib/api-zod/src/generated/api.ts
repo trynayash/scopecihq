@@ -232,8 +232,14 @@ export const GetSessionResponse = zod.object({
 }),zod.null()]),
   "organization": zod.union([zod.object({
   "id": zod.string(),
-  "name": zod.string()
-}),zod.null()])
+  "name": zod.string(),
+  "role": zod.enum(['OWNER', 'MEMBER'])
+}),zod.null()]),
+  "workspaces": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "role": zod.enum(['OWNER', 'MEMBER'])
+})).describe('Every workspace the person belongs to; empty when signed out')
 })
 
 
@@ -241,6 +247,157 @@ export const GetSessionResponse = zod.object({
  * @summary Sign out
  */
 export const EndSessionResponse = zod.void()
+
+
+/**
+ * @summary Work in another workspace the signed-in person belongs to
+ */
+export const switchWorkspaceBodyOrganizationIdMax = 36;
+
+
+
+export const SwitchWorkspaceBody = zod.object({
+  "organizationId": zod.string().max(switchWorkspaceBodyOrganizationIdMax)
+})
+
+export const SwitchWorkspaceResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "role": zod.enum(['OWNER', 'MEMBER'])
+})
+
+
+/**
+ * @summary The current workspace, its members and, for owners, its open invites
+ */
+export const GetWorkspaceResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "role": zod.enum(['OWNER', 'MEMBER']),
+  "members": zod.array(zod.object({
+  "userId": zod.string(),
+  "login": zod.string(),
+  "name": zod.string().nullable(),
+  "avatarUrl": zod.string().nullable(),
+  "role": zod.enum(['OWNER', 'MEMBER']),
+  "joinedAt": zod.coerce.date(),
+  "you": zod.boolean()
+})),
+  "invites": zod.array(zod.object({
+  "id": zod.string(),
+  "createdBy": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "expiresAt": zod.coerce.date()
+})).describe('Open invites; only shown to owners')
+})
+
+
+/**
+ * @summary Rename the workspace (owners only)
+ */
+export const updateWorkspaceBodyNameMax = 120;
+
+
+
+export const UpdateWorkspaceBody = zod.object({
+  "name": zod.string().min(1).max(updateWorkspaceBodyNameMax)
+})
+
+export const UpdateWorkspaceResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "role": zod.enum(['OWNER', 'MEMBER']),
+  "members": zod.array(zod.object({
+  "userId": zod.string(),
+  "login": zod.string(),
+  "name": zod.string().nullable(),
+  "avatarUrl": zod.string().nullable(),
+  "role": zod.enum(['OWNER', 'MEMBER']),
+  "joinedAt": zod.coerce.date(),
+  "you": zod.boolean()
+})),
+  "invites": zod.array(zod.object({
+  "id": zod.string(),
+  "createdBy": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "expiresAt": zod.coerce.date()
+})).describe('Open invites; only shown to owners')
+})
+
+
+/**
+ * @summary Make a single-use invite link, valid for seven days (owners only)
+ */
+export const CreateInviteResponse = zod.object({
+  "id": zod.string(),
+  "url": zod.string(),
+  "expiresAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Cancel an invite that hasn't been used (owners only)
+ */
+export const revokeInvitePathInviteIdMax = 36;
+
+
+
+export const RevokeInviteParams = zod.object({
+  "inviteId": zod.coerce.string().max(revokeInvitePathInviteIdMax)
+})
+
+export const RevokeInviteResponse = zod.void()
+
+
+/**
+ * @summary Remove someone from the workspace (owners only)
+ */
+export const removeMemberPathUserIdMax = 36;
+
+
+
+export const RemoveMemberParams = zod.object({
+  "userId": zod.coerce.string().max(removeMemberPathUserIdMax)
+})
+
+export const RemoveMemberResponse = zod.void()
+
+
+/**
+ * @summary Which workspace an invite link is for
+ */
+export const getInvitePathTokenMax = 100;
+
+
+
+export const GetInviteParams = zod.object({
+  "token": zod.coerce.string().max(getInvitePathTokenMax)
+})
+
+export const GetInviteResponse = zod.object({
+  "workspaceName": zod.string(),
+  "invitedBy": zod.string().nullable(),
+  "expiresAt": zod.coerce.date(),
+  "alreadyMember": zod.boolean()
+})
+
+
+/**
+ * @summary Join the workspace an invite link is for, and switch to it
+ */
+export const acceptInvitePathTokenMax = 100;
+
+
+
+export const AcceptInviteParams = zod.object({
+  "token": zod.coerce.string().max(acceptInvitePathTokenMax)
+})
+
+export const AcceptInviteResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "role": zod.enum(['OWNER', 'MEMBER'])
+})
 
 
 /**

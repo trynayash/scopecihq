@@ -236,15 +236,26 @@ export interface SessionUser {
   avatarUrl: string | null;
 }
 
+export type SessionOrganizationRole = typeof SessionOrganizationRole[keyof typeof SessionOrganizationRole];
+
+
+export const SessionOrganizationRole = {
+  OWNER: 'OWNER',
+  MEMBER: 'MEMBER',
+} as const;
+
 export interface SessionOrganization {
   id: string;
   name: string;
+  role: SessionOrganizationRole;
 }
 
 export interface SessionInfo {
   signInAvailable: boolean;
   user: SessionUser | null;
   organization: SessionOrganization | null;
+  /** Every workspace the person belongs to; empty when signed out */
+  workspaces: SessionOrganization[];
 }
 
 /**
@@ -466,6 +477,78 @@ export interface ChangeOrderUpdateInput {
   subject?: string;
   /** @maxLength 10000 */
   body?: string;
+}
+
+export interface SwitchWorkspaceInput {
+  /** @maxLength 36 */
+  organizationId: string;
+}
+
+export interface WorkspaceUpdateInput {
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  name: string;
+}
+
+export type WorkspaceMemberRole = typeof WorkspaceMemberRole[keyof typeof WorkspaceMemberRole];
+
+
+export const WorkspaceMemberRole = {
+  OWNER: 'OWNER',
+  MEMBER: 'MEMBER',
+} as const;
+
+export interface WorkspaceMember {
+  userId: string;
+  login: string;
+  /** @nullable */
+  name: string | null;
+  /** @nullable */
+  avatarUrl: string | null;
+  role: WorkspaceMemberRole;
+  joinedAt: string;
+  you: boolean;
+}
+
+export interface WorkspaceInvite {
+  id: string;
+  /** @nullable */
+  createdBy: string | null;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export type WorkspaceInfoRole = typeof WorkspaceInfoRole[keyof typeof WorkspaceInfoRole];
+
+
+export const WorkspaceInfoRole = {
+  OWNER: 'OWNER',
+  MEMBER: 'MEMBER',
+} as const;
+
+export interface WorkspaceInfo {
+  id: string;
+  name: string;
+  role: WorkspaceInfoRole;
+  members: WorkspaceMember[];
+  /** Open invites; only shown to owners */
+  invites: WorkspaceInvite[];
+}
+
+export interface InviteCreated {
+  id: string;
+  url: string;
+  expiresAt: string;
+}
+
+export interface InvitePreview {
+  workspaceName: string;
+  /** @nullable */
+  invitedBy: string | null;
+  expiresAt: string;
+  alreadyMember: boolean;
 }
 
 export type GetDemoGithubPrParams = {

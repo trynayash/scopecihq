@@ -45,6 +45,8 @@ export const userSessionsTable = pgTable(
       .references(() => usersTable.id, { onDelete: "cascade" }),
     // SHA-256 of the cookie value; the cookie itself is never stored.
     tokenHash: varchar("token_hash", { length: 64 }).notNull().unique(),
+    // The workspace this session is working in; null means the first one joined.
+    organizationId: uuid("organization_id").references(() => organizationsTable.id, { onDelete: "set null" }),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -69,6 +71,30 @@ export const organizationMembersTable = pgTable(
     uniqueIndex("org_member_uidx").on(table.organizationId, table.userId),
     index("org_member_user_idx").on(table.userId),
   ],
+);
+
+/* ==================================================================
+   Invites: a single-use link an owner shares to add someone to a
+   workspace. Only the SHA-256 of the link's token is stored.
+   ================================================================== */
+
+export const organizationInvitesTable = pgTable(
+  "organization_invites",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizationsTable.id, { onDelete: "cascade" }),
+    tokenHash: varchar("token_hash", { length: 64 }).notNull().unique(),
+    role: varchar("role", { length: 20 }).default("MEMBER").notNull(),
+    createdByUserId: uuid("created_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    acceptedByUserId: uuid("accepted_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("org_invite_org_idx").on(table.organizationId)],
 );
 
 /* ==================================================================

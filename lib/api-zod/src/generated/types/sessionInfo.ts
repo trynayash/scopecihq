@@ -12,4 +12,6 @@ export interface SessionInfo {
   signInAvailable: boolean;
   user: SessionUser | null;
   organization: SessionOrganization | null;
+  /** Every workspace the person belongs to; empty when signed out */
+  workspaces: SessionOrganization[];
 }

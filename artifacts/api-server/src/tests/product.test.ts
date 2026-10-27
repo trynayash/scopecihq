@@ -6,6 +6,7 @@ import { db } from "@workspace/db";
 import {
   commercialEvaluationsTable,
   githubInstallationsTable,
+  organizationInvitesTable,
   organizationMembersTable,
   prDiffAnalysesTable,
   projectsTable,
@@ -660,6 +661,102 @@ async function run() {
     await scenario("Later pull requests building the approved work are covered too", async () => {
       const result: any = await deliver(prPayload({ id: 7001, full_name: "harbor-agency/storefront" }, 12, "f".repeat(40), "synchronize"));
       assert.strictEqual(result.evaluationState, "APPROVED_CHANGE");
+    });
+
+    let eveWorkspace = "";
+    let danaWorkspace = "";
+    await scenario("An owner renames the workspace and invites someone with a single-use link", async () => {
+      const renamed = await call(server, "/api/workspace", { method: "PATCH", body: { name: "Harbor Agency" }, cookie: dana });
+      assert.strictEqual(renamed.status, 200);
+      assert.strictEqual(renamed.body.name, "Harbor Agency");
+      danaWorkspace = renamed.body.id;
+      eveWorkspace = (await call(server, "/api/session", { cookie: eve })).body.organization.id;
+
+      const invite = await call(server, "/api/workspace/invites", { method: "POST", cookie: dana });
+      assert.strictEqual(invite.status, 201);
+      assert.match(invite.body.url, /^http:\/\/localhost:3000\/app\/invite\/[A-Za-z0-9_-]{43}$/);
+      const token = invite.body.url.split("/").pop();
+      const stored = await db.query.organizationInvitesTable.findFirst({ where: eq(organizationInvitesTable.id, invite.body.id) });
+      assert.notStrictEqual(stored?.tokenHash, token, "only a hash of the token is stored");
+
+      const preview = await call(server, `/api/invites/${token}`, { cookie: eve });
+      assert.strictEqual(preview.body.workspaceName, "Harbor Agency");
+      assert.strictEqual(preview.body.invitedBy, "dana");
+      assert.strictEqual(preview.body.alreadyMember, false);
+
+      // Someone already in the workspace opening the link doesn't use it up.
+      const member = await call(server, `/api/invites/${token}/accept`, { method: "POST", cookie: dana });
+      assert.strictEqual(member.status, 200);
+      assert.strictEqual(member.body.role, "OWNER");
+
+      const joined = await call(server, `/api/invites/${token}/accept`, { method: "POST", cookie: eve });
+      assert.strictEqual(joined.status, 200);
+      assert.deepStrictEqual(joined.body, { id: danaWorkspace, name: "Harbor Agency", role: "MEMBER" });
+
+      const session = await call(server, "/api/session", { cookie: eve });
+      assert.strictEqual(session.body.organization.id, danaWorkspace, "joining switches to the workspace");
+      assert.strictEqual(session.body.workspaces.length, 2);
+      const projects = await call(server, "/api/projects", { cookie: eve });
+      assert.ok(projects.body.projects.some((p: any) => p.id === projectId), "the new member sees the team's projects");
+
+      const used = await call(server, `/api/invites/${token}`, { cookie: eve });
+      assert.strictEqual(used.status, 404, "a used link stops working");
+    });
+
+    await scenario("Only owners manage the team; members can switch between their workspaces", async () => {
+      assert.strictEqual((await call(server, "/api/workspace/invites", { method: "POST", cookie: eve })).status, 403);
+      assert.strictEqual(
+        (await call(server, "/api/workspace", { method: "PATCH", body: { name: "Mine now" }, cookie: eve })).status,
+        403,
+      );
+      const team = await call(server, "/api/workspace", { cookie: eve });
+      assert.deepStrictEqual(
+        team.body.members.map((m: any) => `${m.login}:${m.role}:${m.you}`),
+        ["dana:OWNER:false", "eve:MEMBER:true"],
+      );
+      assert.deepStrictEqual(team.body.invites, [], "members don't see invites");
+
+      const back = await call(server, "/api/session/workspace", { method: "PUT", body: { organizationId: eveWorkspace }, cookie: eve });
+      assert.strictEqual(back.status, 200);
+      assert.ok(!(await call(server, "/api/projects", { cookie: eve })).body.projects.some((p: any) => p.id === projectId));
+      const notMine = await call(server, "/api/session/workspace", {
+        method: "PUT",
+        body: { organizationId: crypto.randomUUID() },
+        cookie: eve,
+      });
+      assert.strictEqual(notMine.status, 404);
+      await call(server, "/api/session/workspace", { method: "PUT", body: { organizationId: danaWorkspace }, cookie: eve });
+    });
+
+    await scenario("Removing a member cuts their access; the last owner can't be removed", async () => {
+      const team = await call(server, "/api/workspace", { cookie: dana });
+      const eveId = team.body.members.find((m: any) => m.login === "eve").userId;
+      const danaId = team.body.members.find((m: any) => m.login === "dana").userId;
+      assert.strictEqual((await call(server, `/api/workspace/members/${danaId}`, { method: "DELETE", cookie: dana })).status, 409);
+      assert.strictEqual((await call(server, `/api/workspace/members/${eveId}`, { method: "DELETE", cookie: dana })).status, 204);
+
+      assert.strictEqual((await call(server, `/api/projects/${projectId}`, { cookie: eve })).status, 404);
+      const session = await call(server, "/api/session", { cookie: eve });
+      assert.strictEqual(session.body.organization.id, eveWorkspace, "falls back to their own workspace");
+    });
+
+    await scenario("Cancelled and expired invites can't be used", async () => {
+      const cancelled = await call(server, "/api/workspace/invites", { method: "POST", cookie: dana });
+      const cancelledToken = cancelled.body.url.split("/").pop();
+      assert.strictEqual(
+        (await call(server, `/api/workspace/invites/${cancelled.body.id}`, { method: "DELETE", cookie: dana })).status,
+        204,
+      );
+      assert.strictEqual((await call(server, `/api/invites/${cancelledToken}/accept`, { method: "POST", cookie: eve })).status, 404);
+
+      const expired = await call(server, "/api/workspace/invites", { method: "POST", cookie: dana });
+      await db
+        .update(organizationInvitesTable)
+        .set({ expiresAt: new Date(Date.now() - 1000) })
+        .where(eq(organizationInvitesTable.id, expired.body.id));
+      const expiredToken = expired.body.url.split("/").pop();
+      assert.strictEqual((await call(server, `/api/invites/${expiredToken}/accept`, { method: "POST", cookie: eve })).status, 404);
+      assert.strictEqual((await call(server, "/api/invites/not-a-real-token", { cookie: eve })).status, 404);
     });
 
     await scenario("A connected repository without a confirmed scope gets a neutral note", async () => {

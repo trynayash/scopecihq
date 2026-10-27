@@ -1429,6 +1429,43 @@ img.vendor-mark { width: auto; height: 1em; object-fit: contain; }
 .co-hours { margin-top: 10px; max-width: 420px; }
 .co-hours .field label { font-size: 13.5px; }
 
+.app-workspace-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-workspace-select {
+  max-width: 220px;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--ink-2);
+  font-size: 14px;
+}
+.app-team-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  color: var(--ink-2);
+  font-size: 14px;
+}
+.app-team-link:hover { color: var(--ink); }
+.app-name-row { max-width: 520px; }
+.member-list { display: grid; gap: 4px; }
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--rule);
+}
+.member-row:first-child { border-top: 0; }
+.member-row img { flex: none; border-radius: 50%; }
+.member-name { display: grid; gap: 2px; min-width: 0; }
+.member-name strong { font-size: 15px; font-weight: 600; }
+.member-name .mono { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.invite-link { margin-top: 12px; }
+.invite-list { margin-top: 14px; }
+
 .app-settings-row { margin-bottom: 4px; }
 .policy-options { display: grid; gap: 8px; margin-top: 6px; }
 .policy-options legend { margin-bottom: 8px; color: var(--ink-2); font-size: 14px; font-weight: 500; }
@@ -1540,11 +1577,15 @@ img.vendor-mark { width: auto; height: 1em; object-fit: contain; }
   .try-row { grid-template-columns: minmax(0, 1fr); }
   .try-step { padding: 18px 16px; }
   .try-step .button { justify-self: stretch; }
-  .app-account-name { display: none; }
+  .app-account { gap: 10px; }
+  .app-account-name img { display: none; }
+  .app-workspace-select { max-width: 130px; }
+  .app-workspace-name { max-width: 110px; }
   .app-archive { margin-left: 0; }
 }
 
 @media (max-width: 400px) {
+  .app-header-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   :root { --gutter: 16px; }
   .trace { flex-direction: column; align-items: flex-start; gap: 0; }
   .trace li + li { margin-left: 0; margin-top: 22px; }

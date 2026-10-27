@@ -6,6 +6,7 @@ import adminRouter from "./admin";
 import demoRouter from "./demo";
 import sessionRouter from "./session";
 import projectsRouter from "./projects";
+import workspaceRouter from "./workspace";
 import githubRouter from "./github";
 import linearRouter from "./linear";
 import { logger } from "../lib/logger";
@@ -20,6 +21,7 @@ router.use(adminRouter);        // already protected by requireAdminKey
 router.use(demoRouter);         // public "try it" demo; stores nothing
 router.use(sessionRouter);      // sign in with GitHub; reports when sign-in isn't configured
 router.use(projectsRouter);     // the signed-in app; every route needs a session
+router.use(workspaceRouter);    // members, invites and switching workspaces
 
 // Integration routes — gated in production.
 // In development/test these are always available so existing workflows and

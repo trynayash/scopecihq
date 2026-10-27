@@ -1,7 +1,7 @@
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Link, Route, Switch, useLocation, useParams } from 'wouter';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, ExternalLink, Lock, LogOut, Plus } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ClipboardCopy, ExternalLink, Lock, LogOut, Plus, Users } from 'lucide-react';
 import { SiGithub } from 'react-icons/si';
 import {
   getGetProjectQueryKey,
@@ -9,7 +9,17 @@ import {
   getListGitHubRepositoriesQueryKey,
   getListProjectPullRequestsQueryKey,
   getListProjectsQueryKey,
+  getGetWorkspaceQueryKey,
+  getGetInviteQueryKey,
+  useAcceptInvite,
   useArchiveProject,
+  useCreateInvite,
+  useGetInvite,
+  useGetWorkspace,
+  useRemoveMember,
+  useRevokeInvite,
+  useSwitchWorkspace,
+  useUpdateWorkspace,
   useCreateProject,
   useEndSession,
   useGetProject,
@@ -79,7 +89,53 @@ function relativeTime(value: string | Date): string {
 /* Shell                                                               */
 /* ------------------------------------------------------------------ */
 
-function AppHeader({ user, organization }: { user?: SessionUser; organization?: SessionOrganization | null }) {
+function WorkspaceSwitcher({ current, workspaces }: { current: SessionOrganization; workspaces: SessionOrganization[] }) {
+  const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
+  const switchTo = useSwitchWorkspace();
+  if (workspaces.length < 2) return <span className="app-workspace-name">{current.name}</span>;
+  return (
+    <>
+      <label className="sr-only" htmlFor="workspace-switcher">
+        Workspace
+      </label>
+      <select
+        id="workspace-switcher"
+        className="app-workspace-select"
+        value={current.id}
+        disabled={switchTo.isPending}
+        onChange={(e) =>
+          switchTo.mutate(
+            { data: { organizationId: e.target.value } },
+            {
+              onSuccess: () => {
+                // Everything on screen belonged to the other workspace.
+                queryClient.invalidateQueries();
+                navigate('/');
+              },
+            },
+          )
+        }
+      >
+        {workspaces.map((w) => (
+          <option key={w.id} value={w.id}>
+            {w.name}
+          </option>
+        ))}
+      </select>
+    </>
+  );
+}
+
+function AppHeader({
+  user,
+  organization,
+  workspaces = [],
+}: {
+  user?: SessionUser;
+  organization?: SessionOrganization | null;
+  workspaces?: SessionOrganization[];
+}) {
   const queryClient = useQueryClient();
   const endSession = useEndSession();
   const signOut = () =>
@@ -103,11 +159,15 @@ function AppHeader({ user, organization }: { user?: SessionUser; organization?: 
           <div className="app-account">
             <span className="app-account-name">
               {user.avatarUrl && <img src={user.avatarUrl} alt="" width="24" height="24" />}
-              <span>{organization?.name ?? user.login}</span>
+              {organization ? <WorkspaceSwitcher current={organization} workspaces={workspaces} /> : <span>{user.login}</span>}
             </span>
+            <Link href="/team" className="app-team-link" data-testid="link-team">
+              <Users size={14} aria-hidden="true" />
+              <span className="app-header-label">Team</span>
+            </Link>
             <button type="button" className="button button-quiet button-sm" onClick={signOut} disabled={endSession.isPending}>
               <LogOut size={14} aria-hidden="true" />
-              Sign out
+              <span className="app-header-label">Sign out</span>
             </button>
           </div>
         )}
@@ -116,13 +176,23 @@ function AppHeader({ user, organization }: { user?: SessionUser; organization?: 
   );
 }
 
-function Frame({ children, user, organization }: { children: ReactNode; user?: SessionUser; organization?: SessionOrganization | null }) {
+function Frame({
+  children,
+  user,
+  organization,
+  workspaces,
+}: {
+  children: ReactNode;
+  user?: SessionUser;
+  organization?: SessionOrganization | null;
+  workspaces?: SessionOrganization[];
+}) {
   return (
     <div className="site app">
       <a className="skip-link" href="#main">
         Skip to content
       </a>
-      <AppHeader user={user} organization={organization} />
+      <AppHeader user={user} organization={organization} workspaces={workspaces} />
       <main id="main" className="app-main">
         <div className="container app-inner">{children}</div>
       </main>
@@ -194,15 +264,17 @@ export default function AppPage() {
       </Frame>
     );
   }
-  const { user, organization, signInAvailable } = session.data;
+  const { user, organization, workspaces, signInAvailable } = session.data;
   if (!user) return <SignIn available={signInAvailable} />;
 
   return (
-    <Frame user={user} organization={organization}>
+    <Frame user={user} organization={organization} workspaces={workspaces}>
       <Switch>
         <Route path="/" component={ProjectsHome} />
         <Route path="/projects/new" component={NewProject} />
         <Route path="/projects/:projectId" component={ProjectPage} />
+        <Route path="/team" component={TeamPage} />
+        <Route path="/invite/:token" component={InvitePage} />
         <Route>
           <p className="app-empty">
             Nothing here. <Link href="/">Back to your projects</Link>
@@ -1041,6 +1113,257 @@ function SettingsSection({ project }: { project: Project }) {
           </button>
         </div>
       </form>
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Team                                                                */
+/* ------------------------------------------------------------------ */
+
+function TeamPage() {
+  usePageMeta('Team — ScopeCI', 'Who is in this ScopeCI workspace.');
+  const queryClient = useQueryClient();
+  const workspace = useGetWorkspace({ query: { queryKey: getGetWorkspaceQueryKey() } });
+  const rename = useUpdateWorkspace();
+  const createInvite = useCreateInvite();
+  const revoke = useRevokeInvite();
+  const remove = useRemoveMember();
+  const [name, setName] = useState('');
+  const [link, setLink] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (workspace.data) setName(workspace.data.name);
+  }, [workspace.data?.name]);
+
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: getGetWorkspaceQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey() });
+  };
+  const fail = (fallback: string) => (err: unknown) => setError(errorMessage(err, fallback));
+
+  if (workspace.isPending) return <p className="app-loading">Loading…</p>;
+  if (workspace.isError || !workspace.data) {
+    return (
+      <p className="form-error" role="alert">
+        {errorMessage(workspace.error, "We couldn't load the team.")}
+      </p>
+    );
+  }
+  const team = workspace.data;
+  const owner = team.role === 'OWNER';
+
+  const submitName = (event: FormEvent) => {
+    event.preventDefault();
+    if (!name.trim()) return setError('Give the workspace a name.');
+    setError('');
+    rename.mutate({ data: { name: name.trim().slice(0, 120) } }, { onSuccess: () => { setStatus('Saved.'); refresh(); }, onError: fail("We couldn't rename it.") });
+  };
+
+  const invite = () =>
+    createInvite.mutate(undefined, {
+      onSuccess: (created) => {
+        setLink(created.url);
+        setCopied(false);
+        setError('');
+        refresh();
+      },
+      onError: fail("We couldn't make an invite."),
+    });
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <>
+      <Link href="/" className="app-back">
+        <ArrowLeft size={14} aria-hidden="true" /> Projects
+      </Link>
+      <header className="app-page-head">
+        <div>
+          <h1>Team</h1>
+          <p className="try-lede">Everyone here sees and works on all of {team.name}'s projects.</p>
+        </div>
+      </header>
+
+      {owner && (
+        <section className="try-step" aria-labelledby="workspace-title">
+          <SectionHead title="Workspace name" id="workspace-title" />
+          <form onSubmit={submitName} onChange={() => setStatus('')}>
+            <div className="try-inline app-name-row">
+              <label className="sr-only" htmlFor="workspace-name">
+                Workspace name
+              </label>
+              <input id="workspace-name" value={name} maxLength={120} onChange={(e) => setName(e.target.value)} />
+              <button type="submit" className="button button-quiet" disabled={rename.isPending}>
+                Save
+              </button>
+            </div>
+            {status && (
+              <p className="try-help" role="status">
+                {status}
+              </p>
+            )}
+          </form>
+        </section>
+      )}
+
+      <section className="try-step" aria-labelledby="members-title">
+        <SectionHead title="Members" id="members-title" />
+        <ul className="member-list">
+          {team.members.map((member) => (
+            <li key={member.userId} className="member-row" data-testid="member-row">
+              {member.avatarUrl && <img src={member.avatarUrl} alt="" width="28" height="28" />}
+              <span className="member-name">
+                <strong>{member.name ?? member.login}</strong>
+                <span className="mono">
+                  @{member.login} · {member.role === 'OWNER' ? 'owner' : 'member'}
+                  {member.you ? ' · you' : ''}
+                </span>
+              </span>
+              {owner && !member.you && (
+                <button
+                  type="button"
+                  className="try-link app-archive"
+                  disabled={remove.isPending}
+                  onClick={() => {
+                    if (!window.confirm(`Remove ${member.login} from ${team.name}?`)) return;
+                    remove.mutate({ userId: member.userId }, { onSuccess: refresh, onError: fail("We couldn't remove them.") });
+                  }}
+                >
+                  Remove
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      {owner && (
+        <section className="try-step" aria-labelledby="invite-title">
+          <SectionHead title="Invite someone" id="invite-title" />
+          <p className="try-help">
+            Make a link and send it to them. It works once, for seven days, and they sign in with their own GitHub
+            account.
+          </p>
+          {link ? (
+            <div className="invite-link">
+              <label className="sr-only" htmlFor="invite-url">
+                Invite link
+              </label>
+              <div className="try-inline">
+                <input id="invite-url" className="mono" readOnly value={link} onFocus={(e) => e.target.select()} />
+                <button type="button" className="button button-quiet" onClick={copy}>
+                  <ClipboardCopy size={14} aria-hidden="true" />
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+              <p className="try-help">This link is only shown now. Make another one if it gets lost.</p>
+            </div>
+          ) : null}
+          <div className="app-actions">
+            <button type="button" className="button button-primary" onClick={invite} disabled={createInvite.isPending}>
+              {link ? 'Make another link' : 'Make an invite link'}
+            </button>
+          </div>
+          {team.invites.length > 0 && (
+            <ul className="member-list invite-list">
+              {team.invites.map((open) => (
+                <li key={open.id} className="member-row">
+                  <span className="member-name">
+                    <strong>Open invite</strong>
+                    <span className="mono">
+                      made {relativeTime(open.createdAt)}
+                      {open.createdBy ? ` by @${open.createdBy}` : ''} · expires{' '}
+                      {new Date(open.expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    className="try-link app-archive"
+                    disabled={revoke.isPending}
+                    onClick={() => revoke.mutate({ inviteId: open.id }, { onSuccess: refresh, onError: fail("We couldn't cancel it.") })}
+                  >
+                    Cancel
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+    </>
+  );
+}
+
+function InvitePage() {
+  usePageMeta('Join a workspace — ScopeCI', 'Accept an invite to a ScopeCI workspace.');
+  const { token = '' } = useParams<{ token: string }>();
+  const [, navigate] = useLocation();
+  const queryClient = useQueryClient();
+  const invite = useGetInvite(token, { query: { queryKey: getGetInviteQueryKey(token), retry: false } });
+  const accept = useAcceptInvite();
+  const [error, setError] = useState('');
+
+  const join = () =>
+    accept.mutate(
+      { token },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries();
+          navigate('/');
+        },
+        onError: (err) => setError(errorMessage(err, "We couldn't add you to the workspace.")),
+      },
+    );
+
+  if (invite.isPending) return <p className="app-loading">Checking the invite…</p>;
+  if (invite.isError || !invite.data) {
+    return (
+      <section className="app-signin">
+        <h1>This invite doesn't work</h1>
+        <p className="try-lede">{errorMessage(invite.error, 'The link may be wrong.')}</p>
+        <p className="try-help">
+          <Link href="/" className="try-link">
+            Go to your projects
+          </Link>
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="app-signin" aria-labelledby="invite-heading">
+      <h1 id="invite-heading">Join {invite.data.workspaceName}</h1>
+      <p className="try-lede">
+        {invite.data.invitedBy ? `@${invite.data.invitedBy} invited you` : 'You were invited'} to work on{' '}
+        {invite.data.workspaceName}'s projects in ScopeCI.
+        {invite.data.alreadyMember && " You're already a member; joining switches you to it."}
+      </p>
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+      <button type="button" className="button button-primary" onClick={join} disabled={accept.isPending} data-testid="button-join">
+        {accept.isPending ? 'Joining…' : `Join ${invite.data.workspaceName}`}
+        <ArrowRight size={15} aria-hidden="true" />
+      </button>
     </section>
   );
 }
