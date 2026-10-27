@@ -54,6 +54,7 @@ async function makeRequest(
     method?: string;
     headers?: Record<string, string>;
     body?: any;
+    rawBody?: string;
   } = {}
 ): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: any; text: string }> {
   const address = server.address();
@@ -62,7 +63,11 @@ async function makeRequest(
   const headers = { ...options.headers };
 
   let payload = "";
-  if (options.body) {
+  if (options.rawBody !== undefined) {
+    payload = options.rawBody;
+    headers["content-type"] = "application/json";
+    headers["content-length"] = Buffer.byteLength(payload).toString();
+  } else if (options.body) {
     payload = JSON.stringify(options.body);
     headers["content-type"] = "application/json";
     headers["content-length"] = Buffer.byteLength(payload).toString();
@@ -253,11 +258,74 @@ async function runPublicLaunchBoundaryTests() {
       check(authHeaderRes.status === 200, "Valid x-admin-key grants stats access (200 OK)");
       check(typeof authHeaderRes.body?.total === "number", "Stats returns aggregate count");
 
-      // Valid key via query parameter for browser CSV download
-      const csvRes = await makeRequest(server, `/api/admin/waitlist/csv?key=${testSecret}`);
-      check(csvRes.status === 200, "Admin CSV export returns 200 OK");
+      // The key is never accepted in a query string: it would end up in
+      // browser history and proxy logs.
+      const queryKeyRes = await makeRequest(server, `/api/admin/waitlist/csv?key=${testSecret}`);
+      check(queryKeyRes.status === 401, `Admin key in a query string is refused (got ${queryKeyRes.status})`);
+      check(String(anonRes.headers["cache-control"]).includes("no-store"), "Admin responses are not cacheable");
+    });
+
+    // -------------------------------------------------------------
+    // Criterion 6b: Admin session cookie (sign in, use, delete, sign out)
+    // -------------------------------------------------------------
+    await testScenario("Criterion 6b: Admin signs in once and gets an httpOnly, SameSite=Strict session", async () => {
+      const wrongRes = await makeRequest(server, "/api/admin/session", {
+        method: "POST",
+        headers: { "x-forwarded-for": "198.51.100.60" },
+        body: { key: "not-the-key" },
+      });
+      check(wrongRes.status === 401, `Wrong key is refused (got ${wrongRes.status})`);
+      check(wrongRes.headers["set-cookie"] === undefined, "Wrong key sets no cookie");
+
+      const signInRes = await makeRequest(server, "/api/admin/session", {
+        method: "POST",
+        headers: { "x-forwarded-for": "198.51.100.60" },
+        body: { key: testSecret },
+      });
+      check(signInRes.status === 204, `Correct key signs in (got ${signInRes.status})`);
+      const setCookie = signInRes.headers["set-cookie"]?.[0] ?? "";
+      check(setCookie.startsWith("scopeci_admin="), "Session cookie is set");
+      check(/HttpOnly/i.test(setCookie), "Session cookie is HttpOnly");
+      check(/SameSite=Strict/i.test(setCookie), "Session cookie is SameSite=Strict");
+      check(!setCookie.includes(testSecret), "Session cookie does not contain the admin key");
+
+      const cookie = setCookie.split(";")[0];
+      const sessionRes = await makeRequest(server, "/api/admin/session", { headers: { cookie } });
+      check(sessionRes.status === 204, "Session check passes with the cookie");
+
+      const csvRes = await makeRequest(server, "/api/admin/waitlist/csv", { headers: { cookie } });
+      check(csvRes.status === 200, "Admin CSV export returns 200 OK with the session cookie");
       check(csvRes.headers["content-type"]?.includes("text/csv") === true, "Content-Type is text/csv");
       check(csvRes.text.includes("email,agency,utm_source"), "CSV contains expected header columns");
+
+      const forged = `${Date.now() + 60_000}.${"A".repeat(43)}`;
+      const forgedRes = await makeRequest(server, "/api/admin/waitlist", { headers: { cookie: `scopeci_admin=${forged}` } });
+      check(forgedRes.status === 401, "A forged session cookie is refused");
+
+      // Remove a signup, as a privacy removal request would.
+      const doomedEmail = `remove-me-${Date.now()}@studio.agency`;
+      await makeRequest(server, "/api/waitlist", {
+        method: "POST",
+        headers: { "x-forwarded-for": "198.51.100.61" },
+        body: { email: doomedEmail },
+      });
+      const [doomed] = await db.select().from(waitlistSignupsTable).where(eq(waitlistSignupsTable.email, doomedEmail));
+      check(doomed !== undefined, "Signup to remove exists");
+
+      const anonDelete = await makeRequest(server, `/api/admin/waitlist/${doomed.id}`, { method: "DELETE" });
+      check(anonDelete.status === 401, "Anonymous delete is refused");
+
+      const deleteRes = await makeRequest(server, `/api/admin/waitlist/${doomed.id}`, { method: "DELETE", headers: { cookie } });
+      check(deleteRes.status === 204, `Admin delete returns 204 (got ${deleteRes.status})`);
+      const [gone] = await db.select().from(waitlistSignupsTable).where(eq(waitlistSignupsTable.email, doomedEmail));
+      check(gone === undefined, "Signup is gone from the database");
+
+      const againRes = await makeRequest(server, `/api/admin/waitlist/${doomed.id}`, { method: "DELETE", headers: { cookie } });
+      check(againRes.status === 404, "Deleting it twice returns 404");
+
+      const signOutRes = await makeRequest(server, "/api/admin/session", { method: "DELETE", headers: { cookie } });
+      check(signOutRes.status === 204, "Sign out returns 204");
+      check(/Max-Age=0/.test(signOutRes.headers["set-cookie"]?.[0] ?? ""), "Sign out expires the cookie");
     });
 
     // -------------------------------------------------------------
@@ -486,6 +554,53 @@ async function runPublicLaunchBoundaryTests() {
           // File may not exist in compiled form
         }
       }
+    });
+
+    // -------------------------------------------------------------
+    // Criterion 15: API errors are JSON, never Express HTML pages
+    // -------------------------------------------------------------
+    await testScenario("Criterion 15: Unknown API routes and malformed bodies answer in JSON", async () => {
+      const missingRes = await makeRequest(server, "/api/does-not-exist");
+      check(missingRes.status === 404, `Unknown API route returns 404 (got ${missingRes.status})`);
+      check(missingRes.body?.error === "Not found.", "Unknown API route returns a JSON error");
+
+      const malformedRes = await makeRequest(server, "/api/waitlist", {
+        method: "POST",
+        headers: { "x-forwarded-for": "198.51.100.70" },
+        rawBody: "{not json",
+      });
+      check(malformedRes.status === 400, `Malformed JSON returns 400 (got ${malformedRes.status})`);
+      check(typeof malformedRes.body?.error === "string", "Malformed JSON returns a JSON error");
+      check(!malformedRes.text.includes("<pre>"), "No HTML stack trace in the response");
+    });
+
+    // -------------------------------------------------------------
+    // Criterion 16: Rate limiter can't be dodged with X-Forwarded-For
+    // -------------------------------------------------------------
+    await testScenario("Criterion 16: A client-written X-Forwarded-For does not reset the rate limit", async () => {
+      // A proxy appends the address it saw, so the client's own value sits on
+      // the left. Rotating it per request must not earn a fresh allowance.
+      const results = [];
+      for (let i = 0; i < 12; i++) {
+        results.push(
+          await makeRequest(server, "/api/waitlist", {
+            method: "POST",
+            headers: { "x-forwarded-for": `10.0.${i}.1, 203.0.113.9` },
+            body: { email: `spoof-${Date.now()}-${i}@test.com` },
+          }),
+        );
+      }
+      check(results.some((res) => res.status === 429), "Rotating the left-most X-Forwarded-For still hits 429");
+    });
+
+    // -------------------------------------------------------------
+    // Criterion 17: Analytics only accepts events the site sends
+    // -------------------------------------------------------------
+    await testScenario("Criterion 17: /api/events rejects event names the site never sends", async () => {
+      const knownRes = await makeRequest(server, "/api/events", { method: "POST", body: { event: "page_view" } });
+      check(knownRes.status === 202, `Known event accepted (got ${knownRes.status})`);
+      const unknownRes = await makeRequest(server, "/api/events", { method: "POST", body: { event: "x".repeat(70) } });
+      check(unknownRes.status === 400, `Unknown event refused (got ${unknownRes.status})`);
     });
 
   } finally {

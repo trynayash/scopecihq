@@ -77,6 +77,24 @@ components:
         agency:
           type: ["string", "null"]
           maxLength: 160
+        # Attribution captured from the landing URL. No maxLength here on
+        # purpose: an over-long campaign tag must not turn a valid signup into
+        # a 400, so the server truncates these instead.
+        utmSource:
+          type: ["string", "null"]
+        utmMedium:
+          type: ["string", "null"]
+        utmCampaign:
+          type: ["string", "null"]
+        utmContent:
+          type: ["string", "null"]
+        utmTerm:
+          type: ["string", "null"]
+        referrer:
+          type: ["string", "null"]
+        website_url_hp:
+          type: ["string", "null"]
+          description: Anti-spam field rendered hidden in the form. People leave it empty; a value means a bot filled it.
       required:
         - email
     WaitlistSignup:

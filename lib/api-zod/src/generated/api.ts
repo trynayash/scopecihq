@@ -30,7 +30,14 @@ export const createWaitlistSignupBodyAgencyMax = 160;
 
 export const CreateWaitlistSignupBody = zod.object({
   "email": zod.string().email().min(createWaitlistSignupBodyEmailMin).max(createWaitlistSignupBodyEmailMax),
-  "agency": zod.string().max(createWaitlistSignupBodyAgencyMax).nullish()
+  "agency": zod.string().max(createWaitlistSignupBodyAgencyMax).nullish(),
+  "utmSource": zod.string().nullish(),
+  "utmMedium": zod.string().nullish(),
+  "utmCampaign": zod.string().nullish(),
+  "utmContent": zod.string().nullish(),
+  "utmTerm": zod.string().nullish(),
+  "referrer": zod.string().nullish(),
+  "website_url_hp": zod.string().nullish().describe('Anti-spam field rendered hidden in the form. People leave it empty; a value means a bot filled it.')
 })
 
 export const CreateWaitlistSignupResponse = zod.object({

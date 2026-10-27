@@ -21,13 +21,9 @@ export function rateLimiter(options: RateLimitOptions) {
     windowMs,
     max,
     message = "Too many requests, please try again later.",
-    keyGenerator = (req) => {
-      const forwarded = req.headers["x-forwarded-for"];
-      if (typeof forwarded === "string") {
-        return forwarded.split(",")[0].trim();
-      }
-      return req.ip || req.socket.remoteAddress || "unknown";
-    },
+    // `req.ip` honours the app's "trust proxy" setting. Reading the first
+    // X-Forwarded-For entry directly would trust a value the client wrote.
+    keyGenerator = (req) => req.ip || req.socket.remoteAddress || "unknown",
   } = options;
 
   const hits = new Map<string, RequestRecord>();

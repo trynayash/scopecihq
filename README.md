@@ -28,7 +28,8 @@ A few details worth knowing:
 
 - GitHub webhooks are verified by signature, and every delivery is logged so a repeated delivery is handled once.
 - Linear OAuth tokens are encrypted with AES-256-GCM before they are stored.
-- Waitlist signups go to a `waitlist_signups` table, with a unique email, rate limiting and a honeypot field. Admins can export them as CSV.
+- Waitlist signups go to a `waitlist_signups` table, with a unique email, rate limiting and a honeypot field.
+- The admin page at `/admin/waitlist` signs in with `ADMIN_SECRET` and keeps an httpOnly, SameSite=Strict session cookie for 12 hours, so the secret never sits in browser storage or a URL. From there you can filter signups, export them as CSV, and remove one when someone asks to be deleted. Scripts can still send the secret as `Authorization: Bearer <key>`.
 
 ## Running it locally
 

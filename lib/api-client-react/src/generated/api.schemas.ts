@@ -20,6 +20,23 @@ export interface WaitlistSignupInput {
      * @nullable
      */
   agency?: string | null;
+  /** @nullable */
+  utmSource?: string | null;
+  /** @nullable */
+  utmMedium?: string | null;
+  /** @nullable */
+  utmCampaign?: string | null;
+  /** @nullable */
+  utmContent?: string | null;
+  /** @nullable */
+  utmTerm?: string | null;
+  /** @nullable */
+  referrer?: string | null;
+  /**
+     * Anti-spam field rendered hidden in the form. People leave it empty; a value means a bot filled it.
+     * @nullable
+     */
+  website_url_hp?: string | null;
 }
 
 export interface WaitlistSignup {
