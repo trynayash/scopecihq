@@ -17,7 +17,10 @@ import {
 } from "@workspace/db/schema";
 import {
   evaluateCommercialScope,
+  extractScopeBoundaries,
   type CommercialEvaluation,
+  type ContractClause,
+  type Deliverable,
   type LinearIssue,
   type ScopeBaseline,
 } from "@workspace/commercial-engine";
@@ -77,6 +80,59 @@ export function verifyWebhookSignature(
   } catch {
     return false;
   }
+}
+
+type ClauseRow = {
+  id: string;
+  clauseNumber: string;
+  title: string;
+  legalText: string;
+  boundaryType: string;
+};
+
+type DeliverableRow = {
+  id: string;
+  clauseId: string | null;
+  name: string;
+  boundarySummary: string;
+  allocatedHours: number | null;
+  allocatedBudget: number | null;
+};
+
+/**
+ * Clause rows store wording, not lists, so read the inclusions and exclusions
+ * out of the legal text the same way an uploaded SOW is read. A row stored as
+ * an EXCLUSION is excluded as a whole even when its wording has no "excludes"
+ * phrase to pick up.
+ */
+function toDomainClause(row: ClauseRow): ContractClause {
+  const { inclusions, exclusions } = extractScopeBoundaries(row.legalText);
+  const isExclusion = row.boundaryType === "EXCLUSION";
+  return {
+    id: row.id,
+    clauseRef: row.clauseNumber,
+    title: row.title,
+    legalText: row.legalText,
+    inclusions: isExclusion ? [] : inclusions,
+    exclusions: isExclusion && exclusions.length === 0 ? [row.title.toLowerCase()] : exclusions,
+  };
+}
+
+/** Keywords follow the SOW parser: the clause's inclusions plus the longer words of the name. */
+function toDomainDeliverable(row: DeliverableRow, clauses: ContractClause[]): Deliverable {
+  const clause = clauses.find((c) => c.id === row.clauseId);
+  const nameWords = row.name.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3);
+  return {
+    id: row.id,
+    clauseId: row.clauseId || "",
+    title: row.name,
+    scopeBoundary: row.boundarySummary,
+    keywords: Array.from(new Set([...(clause?.inclusions ?? []), ...nameWords])),
+    estimatedHours: row.allocatedHours
+      ? { min: row.allocatedHours, max: row.allocatedHours }
+      : { min: 0, max: 0 },
+    budgetAllocated: row.allocatedBudget ?? 0,
+  };
 }
 
 export class WebhookService {
@@ -432,6 +488,7 @@ export class WebhookService {
       }
 
       // Construct domain ScopeBaseline
+      const domainClauses = baselineRecord ? baselineRecord.clauses.map(toDomainClause) : [];
       const domainBaseline: ScopeBaseline = baselineRecord
         ? {
             id: baselineRecord.id,
@@ -440,23 +497,8 @@ export class WebhookService {
             title: "Contract Scope Baseline",
             description: "Active contractual scope specification",
             status: "active",
-            clauses: baselineRecord.clauses.map((c) => ({
-              id: c.id,
-              clauseRef: c.clauseNumber,
-              title: c.title,
-              legalText: c.legalText,
-              inclusions: [],
-              exclusions: [],
-            })),
-            deliverables: baselineRecord.deliverables.map((d) => ({
-              id: d.id,
-              clauseId: d.clauseId || "",
-              title: d.name,
-              scopeBoundary: d.boundarySummary,
-              keywords: ["auth", "login"],
-              estimatedHours: { min: 8, max: 16 },
-              budgetAllocated: d.allocatedBudget || 5000,
-            })),
+            clauses: domainClauses,
+            deliverables: baselineRecord.deliverables.map((d) => toDomainDeliverable(d, domainClauses)),
             createdAt: baselineRecord.createdAt.toISOString(),
           }
         : {

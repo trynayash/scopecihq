@@ -8,18 +8,20 @@
   "pullRequestId": "pr_1842",
   "detectedDelta": [
     "Explicitly excluded by contract §4.2: organization_rbac",
-    "Explicitly excluded by contract §4.2: team_invitations"
+    "Explicitly excluded by contract §4.2: granular permission matrices (src/auth/permissions.ts, PR #1842 title, ENG-184 title)",
+    "Explicitly excluded by contract §4.2: team invitations (src/routes/teams.ts, PR #1842 title)"
   ],
   "estimatedHours": {
-    "min": 18,
-    "max": 24
+    "min": 20,
+    "max": 20
   },
   "commercialValue": {
     "currency": "USD",
-    "min": 2700,
-    "max": 3600,
+    "min": 3000,
+    "max": 3000,
     "status": "available"
   },
   "recommendedAction": "REQUEST_CHANGE_APPROVAL",
-  "checkConclusion": "action_required"
+  "checkConclusion": "action_required",
+  "estimateSource": "LINEAR_ISSUE_ESTIMATE"
 }

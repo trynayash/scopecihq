@@ -10,6 +10,7 @@ import type {
   DecisionExplanation,
   Deliverable,
   DetectedCapability,
+  EstimateSource,
   EvaluationEvidence,
   EvaluationIdentity,
   EvaluationStatus,
@@ -25,6 +26,12 @@ import type {
 } from "./types.js";
 import { DEFAULT_POLICY_CONFIG } from "./types.js";
 import { CapabilityExtractor } from "./capability-extractor.js";
+import {
+  type ContractPhraseMatch,
+  matchContractPhrases,
+  phraseNamesCapability,
+  textCoversMatch,
+} from "./contract-matcher.js";
 
 export interface Phase4EvaluationInput {
   baseline?: ScopeBaseline;
@@ -40,9 +47,9 @@ export interface Phase4EvaluationInput {
   promptVersion?: string;
 }
 
-export const EVALUATOR_VERSION = "scopeci-evaluator-v4.0";
-export const ESTIMATION_RULES_VERSION = "est_rules_2026_09_v1";
-export const SCOPE_TAXONOMY_VERSION = "scope_tax_2026_09_v1";
+export const EVALUATOR_VERSION = "scopeci-evaluator-v4.1";
+export const ESTIMATION_RULES_VERSION = "est_rules_2026_10_v2";
+export const SCOPE_TAXONOMY_VERSION = "scope_tax_2026_10_v2";
 
 function normalizeKeyword(str: string): string {
   return str.toLowerCase().replace(/[\s_\-]+/g, "");
@@ -59,7 +66,8 @@ function normalizeKeyword(str: string): string {
  * 4. Consumes capabilities from CapabilityExtractor without coupling to commercial state.
  * 5. Backs every claim with specific evidence IDs.
  * 6. Never invents commercial value ($ amounts) without configured rates.
- * 7. Keeps estimation independent of scope classification.
+ * 7. Keeps estimation independent of scope classification. Hours come only from the linked
+ *    issue's own estimate; without one the work is reported as not estimated.
  * 8. Rejects superseded or expired baselines with INSUFFICIENT_EVIDENCE / REVIEW_REQUIRED.
  * 9. Evaluates Change Orders strictly in relationship to contract and baseline versions.
  * 10. Computes 12-component semantic identity hash.
@@ -158,6 +166,7 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
       scopeDelta: [{ statement: reasonText, evidenceIdRefs: [], nature: "AMBIGUITY" }],
       impact: {
         estimatedHours: { min: 0, max: 0 },
+        estimateSource: "NOT_ESTIMATED",
         commercialValue: { currency: "USD", min: 0, max: 0, status: "unavailable" },
       },
       decisionExplanation: explanation,
@@ -186,6 +195,7 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
       identityHash,
       detectedDelta: [reasonText],
       estimatedHours: { min: 0, max: 0 },
+      estimateSource: "NOT_ESTIMATED",
       commercialValue: { currency: "USD", min: 0, max: 0, status: "unavailable" },
       recommendedAction: "MANUAL_PM_REVIEW",
       checkConclusion: resolveCheckConclusion("REVIEW_REQUIRED", policyMode),
@@ -284,6 +294,7 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
       scopeDelta: scopeDeltaStatements,
       impact: {
         estimatedHours: { min: 0, max: 0 },
+        estimateSource: "NOT_ESTIMATED",
         commercialValue: { currency: "USD", min: 0, max: 0, status: "unavailable" },
       },
       decisionExplanation: explanation,
@@ -303,6 +314,7 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
       identityHash,
       detectedDelta,
       estimatedHours: { min: 0, max: 0 },
+      estimateSource: "NOT_ESTIMATED",
       commercialValue: { currency: "USD", min: 0, max: 0, status: "unavailable" },
       recommendedAction: "MANUAL_PM_REVIEW",
       checkConclusion: resolveCheckConclusion("REVIEW_REQUIRED", policyMode),
@@ -325,6 +337,25 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
   for (const cap of detectedCapabilities) {
     evidenceIds.push(cap.id);
   }
+
+  // Nothing new is built when a PR only touches tests, docs, dependencies or
+  // build files, or only deletes files.
+  const removalOnly =
+    pullRequest.changedFiles.length > 0 && pullRequest.changedFiles.every((f) => f.status === "deleted");
+  const maintenanceOnly =
+    technicalCategories.isTestOnly ||
+    technicalCategories.isDocumentationOnly ||
+    technicalCategories.isDependencyUpdate ||
+    technicalCategories.isBuildScriptOnly ||
+    removalOnly;
+
+  // The SOW's own wording, matched against paths, titles and the issue. This
+  // is what catches work the capability vocabulary has no name for.
+  const phraseMatches = matchContractPhrases({ baseline, pullRequest, issue, maintenanceOnly });
+  // Best evidence first: it is the one named when the work is in scope.
+  const inclusionMatches = phraseMatches
+    .filter((m) => m.kind === "inclusion")
+    .sort((a, b) => Number(b.strong) - Number(a.strong) || b.coverage - a.coverage);
 
   // ------------------------------------------------------------------
   // Hard Requirement 13: Multi-Deliverable Candidate Matching
@@ -366,21 +397,23 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
   for (const clause of baseline.clauses) {
     // Check if deliverable references this clause
     const isDeliverableClause = primaryDeliverable?.clauseId === clause.id;
-    // Check if clause mentions any detected capability
-    const mentionsExclusion = clause.exclusions.some((exc) => {
-      const e = normalizeKeyword(exc);
-      return detectedCapabilities.some((cap) => {
-        const c = normalizeKeyword(cap.name);
-        return e === c || e.includes(c) || c.includes(e);
-      });
-    });
-    const mentionsInclusion = clause.inclusions.some((inc) => {
-      const i = normalizeKeyword(inc);
-      return detectedCapabilities.some((cap) => {
-        const c = normalizeKeyword(cap.name);
-        return i === c || i.includes(c) || c.includes(i);
-      });
-    });
+    // Check if clause mentions any detected capability, or its wording matched the PR
+    const mentionsExclusion =
+      clause.exclusions.some((exc) => {
+        const e = normalizeKeyword(exc);
+        return detectedCapabilities.some((cap) => {
+          const c = normalizeKeyword(cap.name);
+          return e === c || e.includes(c) || c.includes(e);
+        });
+      }) || phraseMatches.some((m) => m.kind === "exclusion" && m.clause.id === clause.id);
+    const mentionsInclusion =
+      clause.inclusions.some((inc) => {
+        const i = normalizeKeyword(inc);
+        return detectedCapabilities.some((cap) => {
+          const c = normalizeKeyword(cap.name);
+          return i === c || i.includes(c) || c.includes(i);
+        });
+      }) || inclusionMatches.some((m) => m.clause.id === clause.id);
 
     if (isDeliverableClause || mentionsExclusion || mentionsInclusion) {
       relevantClauses.push(clause);
@@ -405,11 +438,33 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
   const approvedCOs = approvedChangeOrders.filter((co) => co.status === "APPROVED");
   const changeOrderCoveredCapabilities: DetectedCapability[] = [];
   const explicitlyExcludedCapabilities: Array<{ capability: DetectedCapability; clause: ContractClause }> = [];
+  const weaklyExcludedCapabilities: Array<{ capability: DetectedCapability; clause: ContractClause }> = [];
   const clearlyInScopeCapabilities: DetectedCapability[] = [];
   const ambiguousCapabilities: DetectedCapability[] = [];
   const uncontractedCapabilities: DetectedCapability[] = [];
+  // SOW items already accounted for by a capability, so phrase matching doesn't report them twice.
+  const reportedExclusions = new Set<string>();
 
   for (const cap of detectedCapabilities) {
+    // Hard Requirement 2: Check Explicit Exclusion (Stronger than absence)
+    let explicitExclusion: { clause: ContractClause; exclusion: string } | undefined;
+    for (const cl of baseline.clauses) {
+      const exclusion = cl.exclusions.find((exc) => {
+        const e = normalizeKeyword(exc);
+        const c = normalizeKeyword(cap.name);
+        if (e === c || e.includes(c) || c.includes(e)) return true;
+        const tokens = cap.name.toLowerCase().split(/[\s_\-]+/).filter((t) => t.length > 2);
+        return tokens.some((t) => e.includes(t) && (t === "rbac" || t === "roles" || t === "permissions" || t === "sso" || t === "saml" || t === "invitations"));
+      });
+      if (exclusion) {
+        explicitExclusion = { clause: cl, exclusion };
+        break;
+      }
+    }
+    if (explicitExclusion) {
+      reportedExclusions.add(`${explicitExclusion.clause.id}::${explicitExclusion.exclusion}`);
+    }
+
     // 1. Check Change Order coverage
     const coMatch = approvedCOs.find((co) =>
       co.authorizedSubsystems.some((sub) => {
@@ -423,24 +478,9 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
       continue;
     }
 
-    // 2. Hard Requirement 2: Check Explicit Exclusion (Stronger than absence)
-    let explicitExclusionClause: ContractClause | undefined;
-    for (const cl of baseline.clauses) {
-      const isExcluded = cl.exclusions.some((exc) => {
-        const e = normalizeKeyword(exc);
-        const c = normalizeKeyword(cap.name);
-        if (e === c || e.includes(c) || c.includes(e)) return true;
-        const tokens = cap.name.toLowerCase().split(/[\s_\-]+/).filter((t) => t.length > 2);
-        return tokens.some((t) => e.includes(t) && (t === "rbac" || t === "roles" || t === "permissions" || t === "sso" || t === "saml" || t === "invitations"));
-      });
-      if (isExcluded) {
-        explicitExclusionClause = cl;
-        break;
-      }
-    }
-
-    if (explicitExclusionClause) {
-      explicitlyExcludedCapabilities.push({ capability: cap, clause: explicitExclusionClause });
+    // 2. Explicit exclusion
+    if (explicitExclusion) {
+      explicitlyExcludedCapabilities.push({ capability: cap, clause: explicitExclusion.clause });
       continue;
     }
 
@@ -457,7 +497,9 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
           const c = normalizeKeyword(cap.name);
           return i === c || i.includes(c) || c.includes(i);
         })
-      );
+      ) ||
+      // The SOW's wording for it, e.g. "member invitations" for team_invitations.
+      baseline.clauses.some((cl) => cl.inclusions.some((inc) => phraseNamesCapability(inc, cap.name)));
 
     if (isExplicitlyIncluded) {
       clearlyInScopeCapabilities.push(cap);
@@ -471,16 +513,44 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
       cap.name.includes("utility") ||
       cap.name.includes("helper") ||
       cap.name.includes("logging") ||
-      technicalCategories.isTestOnly ||
-      technicalCategories.isDocumentationOnly ||
-      technicalCategories.isDependencyUpdate ||
-      technicalCategories.isBuildScriptOnly
+      maintenanceOnly
     ) {
       ambiguousCapabilities.push(cap);
     } else {
       uncontractedCapabilities.push(cap);
     }
   }
+
+  // Exclusions found through the SOW's wording. Matched in changed files or
+  // titles, they are excluded work; matched only in a description, they are a
+  // question for a person.
+  const phraseCapabilities: DetectedCapability[] = [];
+  for (const match of phraseMatches) {
+    if (match.kind !== "exclusion" || reportedExclusions.has(`${match.clause.id}::${match.phrase}`)) continue;
+
+    const capability = capabilityFromMatch(match, phraseCapabilities.length + 1);
+    phraseCapabilities.push(capability);
+    evidenceIds.push(capability.id);
+
+    const coversMatch = (co: ChangeOrder) =>
+      textCoversMatch([co.title, co.reason, ...co.authorizedSubsystems].join(" "), match);
+    if (approvedCOs.some(coversMatch)) {
+      changeOrderCoveredCapabilities.push(capability);
+    } else if (match.strong) {
+      explicitlyExcludedCapabilities.push({ capability, clause: match.clause });
+    } else {
+      weaklyExcludedCapabilities.push({ capability, clause: match.clause });
+    }
+  }
+  const allCapabilities = [...detectedCapabilities, ...phraseCapabilities];
+
+  // In scope needs something in the contract to point at, not just the
+  // absence of a red flag.
+  const linkedDeliverable = issue.deliverableId
+    ? baseline.deliverables.find((d) => d.id === issue.deliverableId)
+    : undefined;
+  const hasPositiveEvidence =
+    clearlyInScopeCapabilities.length > 0 || inclusionMatches.length > 0 || Boolean(linkedDeliverable);
 
   // ------------------------------------------------------------------
   // Commercial Decision Reasoning (Conservative 6-State Taxonomy)
@@ -489,7 +559,6 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
   let taxonomy: ScopeTaxonomy = "CLEARLY_IN_SCOPE";
   let reviewReasonCode: ReviewReasonCode | undefined = undefined;
   let recommendedAction: CommercialEvaluation["recommendedAction"] = "PROCEED";
-  let estimatedHours = { min: 0, max: 0 };
   let primaryReason = "";
 
   if (explicitlyExcludedCapabilities.length > 0) {
@@ -497,10 +566,10 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
     state = "CHANGE_REQUIRED";
     taxonomy = "EXPLICITLY_EXCLUDED";
     recommendedAction = "REQUEST_CHANGE_APPROVAL";
-    estimatedHours = { min: 18, max: 24 };
 
     for (const { capability, clause } of explicitlyExcludedCapabilities) {
-      const deltaMsg = `Explicitly excluded by contract ${clause.clauseRef}: ${capability.name}`;
+      const where = capability.extractionMethod === "CONTRACT_PHRASE_MATCH" ? ` (${capability.evidenceText})` : "";
+      const deltaMsg = `Explicitly excluded by contract ${clause.clauseRef}: ${capability.name}${where}`;
       detectedDelta.push(deltaMsg);
       scopeDeltaStatements.push({
         statement: deltaMsg,
@@ -510,24 +579,52 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
     }
 
     primaryReason = `Contract ${explicitlyExcludedCapabilities[0].clause.clauseRef} explicitly excludes ${explicitlyExcludedCapabilities.map((e) => e.capability.name).join(", ")}. Change Order authorization required.`;
-  } else if (uncontractedCapabilities.length > 0) {
-    // Clearly Out of Scope: Multi-signal verified expansion (Hard Requirement 23)
-    state = "CHANGE_REQUIRED";
-    taxonomy = "CLEARLY_OUT_OF_SCOPE";
-    recommendedAction = "REQUEST_CHANGE_APPROVAL";
-    estimatedHours = { min: 12, max: 20 };
+  } else if (
+    weaklyExcludedCapabilities.length > 0 ||
+    uncontractedCapabilities.length > 0 ||
+    ambiguousCapabilities.length > 0
+  ) {
+    // Something the SOW doesn't settle. A person decides (Hard Requirement 2 & 21):
+    // not being mentioned is never the same as being out of scope.
+    state = "REVIEW_REQUIRED";
+    taxonomy = "AMBIGUOUS";
+    reviewReasonCode =
+      ambiguousCapabilities.length > 0 || weaklyExcludedCapabilities.length > 0
+        ? "AMBIGUOUS_SCOPE"
+        : "MISSING_CONTRACT_EVIDENCE";
+    recommendedAction = "MANUAL_PM_REVIEW";
 
-    for (const cap of uncontractedCapabilities) {
-      const deltaMsg = `Uncontracted capability detected: ${cap.name}`;
+    const reasons: string[] = [];
+    for (const { capability, clause } of weaklyExcludedCapabilities) {
+      const deltaMsg = `Only mentioned in ${capability.evidenceText}: ${capability.name}, which contract ${clause.clauseRef} excludes; no new code shows it`;
       detectedDelta.push(deltaMsg);
-      scopeDeltaStatements.push({
-        statement: deltaMsg,
-        evidenceIdRefs: [cap.id],
-        nature: "EXPANSION",
-      });
+      scopeDeltaStatements.push({ statement: deltaMsg, evidenceIdRefs: [capability.id, clause.id], nature: "AMBIGUITY" });
+      reasons.push(`${capability.name} is excluded by ${clause.clauseRef} but no new code shows it`);
+    }
+    for (const cap of uncontractedCapabilities) {
+      const deltaMsg = `Not mentioned in the SOW: ${cap.name}`;
+      detectedDelta.push(deltaMsg);
+      scopeDeltaStatements.push({ statement: deltaMsg, evidenceIdRefs: [cap.id], nature: "AMBIGUITY" });
+    }
+    if (uncontractedCapabilities.length > 0) {
+      uncertainties.push(
+        "The SOW neither includes nor excludes this capability, so a person has to decide whether it is contracted work."
+      );
+      reasons.push(`${uncontractedCapabilities.map((c) => c.name).join(", ")} ${uncontractedCapabilities.length === 1 ? "is" : "are"} not mentioned in the SOW`);
+    }
+    for (const cap of ambiguousCapabilities) {
+      const deltaMsg = `Ambiguous scope requirement: ${cap.name} (utility/helper not explicitly defined in baseline)`;
+      detectedDelta.push(deltaMsg);
+      scopeDeltaStatements.push({ statement: deltaMsg, evidenceIdRefs: [cap.id], nature: "AMBIGUITY" });
+    }
+    if (ambiguousCapabilities.length > 0) {
+      uncertainties.push(
+        "Uncontracted utility / helper function may be an implicit engineering dependency or out-of-scope addition."
+      );
+      reasons.push(`${ambiguousCapabilities.map((c) => c.name).join(", ")} may be an implementation detail`);
     }
 
-    primaryReason = `Pull Request introduces uncontracted architectural capabilities (${uncontractedCapabilities.map((c) => c.name).join(", ")}) not present in active scope baseline.`;
+    primaryReason = `Needs a decision: ${reasons.join("; ")}.`;
   } else if (changeOrderCoveredCapabilities.length > 0) {
     // Authorized Change (Hard Requirement 9)
     state = "APPROVED_CHANGE";
@@ -546,44 +643,42 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
     }
 
     primaryReason = `Work item authorized under approved Change Order: ${activeCO?.title || "Authorized Change Order"}`;
-  } else if (ambiguousCapabilities.length > 0) {
-    // Ambiguous Scope: Conservative preference for REVIEW_REQUIRED (Hard Requirement 2 & 21)
-    state = "REVIEW_REQUIRED";
-    taxonomy = "AMBIGUOUS";
-    reviewReasonCode = "AMBIGUOUS_SCOPE";
-    recommendedAction = "MANUAL_PM_REVIEW";
-    estimatedHours = { min: 4, max: 8 };
-
-    for (const cap of ambiguousCapabilities) {
-      const deltaMsg = `Ambiguous scope requirement: ${cap.name} (utility/helper not explicitly defined in baseline)`;
-      detectedDelta.push(deltaMsg);
-      scopeDeltaStatements.push({
-        statement: deltaMsg,
-        evidenceIdRefs: [cap.id],
-        nature: "AMBIGUITY",
-      });
-    }
-
-    uncertainties.push(
-      "Uncontracted utility / helper function may be an implicit engineering dependency or out-of-scope addition."
-    );
-    primaryReason = `Capabilities (${ambiguousCapabilities.map((c) => c.name).join(", ")}) are unmentioned in the SOW baseline and require human review.`;
-  } else {
+  } else if (hasPositiveEvidence || maintenanceOnly) {
     // Clearly In Scope
     state = "IN_SCOPE";
     taxonomy = "CLEARLY_IN_SCOPE";
     recommendedAction = "PROCEED";
-    estimatedHours = { min: 0, max: 0 };
 
-    const inScopeStatement = `All modified subsystems are verified within contracted deliverables for ${primaryDeliverable?.title || baseline.title}.`;
+    const inScopeStatement = describeInScope({
+      inclusionMatches,
+      inScopeCapabilities: clearlyInScopeCapabilities,
+      deliverableTitle: (linkedDeliverable ?? primaryDeliverable)?.title,
+      issueId: linkedDeliverable ? issue.id : undefined,
+    });
     detectedDelta.push(inScopeStatement);
     scopeDeltaStatements.push({
       statement: inScopeStatement,
-      evidenceIdRefs: clearlyInScopeCapabilities.map((c) => c.id),
+      evidenceIdRefs: [
+        ...clearlyInScopeCapabilities.map((c) => c.id),
+        ...new Set(inclusionMatches.map((m) => m.clause.id)),
+      ],
       nature: "COMPLIANT",
     });
 
-    primaryReason = `Work is compliant with ${primaryDeliverable?.title || "Scope Baseline"}.`;
+    primaryReason = inScopeStatement;
+  } else {
+    // Nothing excluded, but nothing in the contract covers it either.
+    state = "REVIEW_REQUIRED";
+    taxonomy = "INSUFFICIENT_EVIDENCE";
+    reviewReasonCode = "MISSING_CONTRACT_EVIDENCE";
+    recommendedAction = "MANUAL_PM_REVIEW";
+
+    const statement =
+      "No clause or deliverable in the SOW matches the changed files, the pull request title or the linked issue.";
+    detectedDelta.push(statement);
+    scopeDeltaStatements.push({ statement, evidenceIdRefs: [], nature: "AMBIGUITY" });
+    missingEvidence.push("A contract clause or deliverable that covers this work");
+    primaryReason = statement;
   }
 
   // ------------------------------------------------------------------
@@ -596,13 +691,22 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
     commercialConfidence = 0.98; // Verified approved change order
   } else if (taxonomy === "CLEARLY_IN_SCOPE") {
     commercialConfidence = candidateDeliverables.length > 0 ? 0.95 : 0.88;
-  } else if (taxonomy === "CLEARLY_OUT_OF_SCOPE") {
-    commercialConfidence = 0.92;
   } else if (taxonomy === "AMBIGUOUS") {
     commercialConfidence = 0.75; // Explicitly lower confidence for ambiguous utility
   } else {
     commercialConfidence = 0.60;
   }
+
+  // ------------------------------------------------------------------
+  // Hard Requirement 7: Effort. The linked issue's own estimate is the only
+  // figure grounded in the team's data; without one the work is reported as
+  // not estimated rather than given a number.
+  // ------------------------------------------------------------------
+  const needsDecision = state === "CHANGE_REQUIRED" || state === "REVIEW_REQUIRED";
+  const issueEstimate = issue.estimateHours && issue.estimateHours > 0 ? issue.estimateHours : 0;
+  const estimateSource: EstimateSource = needsDecision && issueEstimate > 0 ? "LINEAR_ISSUE_ESTIMATE" : "NOT_ESTIMATED";
+  const estimatedHours =
+    estimateSource === "LINEAR_ISSUE_ESTIMATE" ? { min: issueEstimate, max: issueEstimate } : { min: 0, max: 0 };
 
   // ------------------------------------------------------------------
   // Hard Requirement 6: Commercial Value Grounding (No Invented Rates)
@@ -621,7 +725,8 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
       max: estimatedHours.max * config.hourlyRate,
       status: "available",
     };
-  } else if (estimatedHours.max === 0) {
+  } else if (!needsDecision) {
+    // In scope or already authorised: there is no unapproved work to value.
     commercialValue = {
       currency: "USD",
       min: 0,
@@ -629,7 +734,7 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
       status: "available",
     };
   } else {
-    // Unconfigured hourly rate -> value is unavailable, never invented
+    // No estimate or no configured hourly rate -> value is unavailable, never invented
     commercialValue = {
       currency: "USD",
       min: 0,
@@ -657,7 +762,8 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
     tone: "ok",
   });
 
-  const matchedClause = relevantClauses[0];
+  const matchedClause =
+    state === "CHANGE_REQUIRED" ? explicitlyExcludedCapabilities[0].clause : relevantClauses[0];
   if (state === "CHANGE_REQUIRED") {
     evidence.push({
       source: "SOW",
@@ -753,10 +859,11 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
       primaryModules: Array.from(new Set(pullRequest.changedFiles.map((f) => f.module))),
       changedFiles: pullRequest.changedFiles.map((f) => f.path),
     },
-    detectedCapabilities,
+    detectedCapabilities: allCapabilities,
     scopeDelta: scopeDeltaStatements,
     impact: {
       estimatedHours,
+      estimateSource,
       commercialValue,
     },
     decisionExplanation: explanation,
@@ -779,6 +886,7 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
     identityHash,
     detectedDelta,
     estimatedHours,
+    estimateSource,
     commercialValue,
     recommendedAction,
     checkConclusion: resolveCheckConclusion(state, policyMode),
@@ -787,6 +895,45 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
     evaluatorVersion: EVALUATOR_VERSION,
     evaluatedAt,
   };
+}
+
+/** Turns an exclusion matched through SOW wording into grounded capability evidence. */
+function capabilityFromMatch(match: ContractPhraseMatch, index: number): DetectedCapability {
+  const [strongest] = match.evidence;
+  const locations = match.evidence.slice(0, 4).map((e) => e.location);
+  const more = match.evidence.length - locations.length;
+  return {
+    id: `cap_sow_${index}`,
+    name: match.matchedPart,
+    description: `Matches "${match.phrase}", excluded by ${match.clause.clauseRef} ${match.clause.title}`,
+    sourceQuality: strongest?.sourceQuality ?? "INFERRED",
+    evidenceLocation: strongest?.location ?? `PR evidence`,
+    evidenceText: more > 0 ? `${locations.join(", ")} and ${more} more` : locations.join(", "),
+    confidence: Number(match.coverage.toFixed(2)),
+    extractionMethod: "CONTRACT_PHRASE_MATCH",
+  };
+}
+
+/** One sentence naming what in the contract the work was matched to. */
+function describeInScope(input: {
+  inclusionMatches: ContractPhraseMatch[];
+  inScopeCapabilities: DetectedCapability[];
+  deliverableTitle?: string;
+  issueId?: string;
+}): string {
+  const [first, ...rest] = input.inclusionMatches;
+  if (first) {
+    const more = rest.length > 0 ? `, and ${rest.length} more included item${rest.length === 1 ? "" : "s"}` : "";
+    return `Matches "${first.matchedPart}", included in ${first.clause.clauseRef} ${first.clause.title}${more}.`;
+  }
+  if (input.inScopeCapabilities.length > 0) {
+    const names = input.inScopeCapabilities.map((c) => c.name).join(", ");
+    return `${names} ${input.inScopeCapabilities.length === 1 ? "falls" : "fall"} within ${input.deliverableTitle || "the contracted deliverables"}.`;
+  }
+  if (input.issueId && input.deliverableTitle) {
+    return `${input.issueId} is linked to the contracted deliverable ${input.deliverableTitle}.`;
+  }
+  return "Only removes code or changes tests, documentation, dependencies or build files; no new scope.";
 }
 
 /**

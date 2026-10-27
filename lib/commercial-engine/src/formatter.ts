@@ -50,12 +50,10 @@ export function formatEvaluationSummary(
     lines.push('');
   }
 
-  if (evaluation.estimatedHours.max > 0) {
+  const estimate = describeEstimate(evaluation);
+  if (estimate) {
     lines.push(`Estimated impact:`);
-    lines.push(`  ${evaluation.estimatedHours.min}–${evaluation.estimatedHours.max} hours`);
-    lines.push('');
-    lines.push(`Commercial impact:`);
-    lines.push(`  $${evaluation.commercialValue.min.toLocaleString()}–$${evaluation.commercialValue.max.toLocaleString()} ${evaluation.commercialValue.currency}`);
+    lines.push(`  ${estimate}`);
     lines.push('');
   }
 
@@ -79,13 +77,8 @@ export function formatGitHubPRComment(
     return `| **${e.source}** | \`${e.value}\` | ${icon} ${e.result} |`;
   }).join('\n');
 
-  let impactSection = '';
-  if (evaluation.estimatedHours.max > 0) {
-    impactSection = `
-> **Estimated impact**: ${evaluation.estimatedHours.min}–${evaluation.estimatedHours.max} engineer hours  
-> **Commercial exposure**: $${evaluation.commercialValue.min.toLocaleString()}–$${evaluation.commercialValue.max.toLocaleString()} ${evaluation.commercialValue.currency}
-`;
-  }
+  const estimate = describeEstimate(evaluation);
+  const impactSection = estimate ? `\n> **Estimated impact**: ${estimate}\n` : '';
 
   return `### 🔍 ScopeCI Commercial Review — ${stateBadge}
 
@@ -98,6 +91,27 @@ ${evaluation.detectedDelta.length > 0 ? `**Detected Delta:**\n${evaluation.detec
 **Policy Mode**: \`${evaluation.policyMode}\`  
 **Required Action**: **${formatActionLabel(evaluation.recommendedAction)}**
 `;
+}
+
+/**
+ * One line on effort and value, saying where the number comes from. Returns
+ * undefined when there is nothing to estimate (in scope, approved).
+ */
+export function describeEstimate(evaluation: CommercialEvaluation): string | undefined {
+  const needsDecision = evaluation.state === 'CHANGE_REQUIRED' || evaluation.state === 'REVIEW_REQUIRED';
+  if (evaluation.estimateSource !== 'LINEAR_ISSUE_ESTIMATE' || evaluation.estimatedHours.max <= 0) {
+    return needsDecision ? 'not estimated (the linked issue has no estimate)' : undefined;
+  }
+
+  const { min, max } = evaluation.estimatedHours;
+  const hours = min === max ? `${max} hours` : `${min}–${max} hours`;
+  const source = `from the estimate on ${evaluation.issueId ?? 'the linked issue'}`;
+  const { commercialValue: value } = evaluation;
+  const money =
+    value.status === 'available' && value.max > 0
+      ? `$${value.min.toLocaleString()}${value.max !== value.min ? `–$${value.max.toLocaleString()}` : ''} ${value.currency} at the configured hourly rate`
+      : 'no value shown because no hourly rate is configured';
+  return `${hours}, ${source}; ${money}`;
 }
 
 function getStateBadge(state: CommercialEvaluation['state']): string {

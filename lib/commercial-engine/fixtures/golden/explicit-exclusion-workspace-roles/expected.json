@@ -1,0 +1,23 @@
+{
+  "state": "CHANGE_REQUIRED",
+  "taxonomy": "EXPLICITLY_EXCLUDED",
+  "commercialConfidence": 0.96,
+  "issueId": "LED-7",
+  "pullRequestId": "pr_7",
+  "detectedDelta": [
+    "Explicitly excluded by contract §2.1: workspace member roles (src/workspaces/members.ts, src/workspaces/role-matrix.ts, PR #7 title, branch feat/led-7-member-roles and 1 more)"
+  ],
+  "estimatedHours": {
+    "min": 12,
+    "max": 12
+  },
+  "estimateSource": "LINEAR_ISSUE_ESTIMATE",
+  "commercialValue": {
+    "currency": "USD",
+    "min": 1800,
+    "max": 1800,
+    "status": "available"
+  },
+  "recommendedAction": "REQUEST_CHANGE_APPROVAL",
+  "checkConclusion": "action_required"
+}

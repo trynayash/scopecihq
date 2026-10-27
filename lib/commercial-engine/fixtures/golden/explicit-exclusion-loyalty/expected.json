@@ -1,0 +1,23 @@
+{
+  "state": "CHANGE_REQUIRED",
+  "taxonomy": "EXPLICITLY_EXCLUDED",
+  "commercialConfidence": 0.96,
+  "issueId": "HP-12",
+  "pullRequestId": "pr_41",
+  "detectedDelta": [
+    "Explicitly excluded by contract §3.1: loyalty points programme (src/loyalty/points.ts, src/loyalty/rewards-page.tsx, PR #41 title, branch feat/hp-12-loyalty-points and 1 more)"
+  ],
+  "estimatedHours": {
+    "min": 16,
+    "max": 16
+  },
+  "estimateSource": "LINEAR_ISSUE_ESTIMATE",
+  "commercialValue": {
+    "currency": "USD",
+    "min": 2400,
+    "max": 2400,
+    "status": "available"
+  },
+  "recommendedAction": "REQUEST_CHANGE_APPROVAL",
+  "checkConclusion": "action_required"
+}

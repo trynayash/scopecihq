@@ -1,4 +1,4 @@
-import type { CommercialEvaluation } from "@workspace/commercial-engine";
+import { type CommercialEvaluation, describeEstimate } from "@workspace/commercial-engine";
 
 export const COMMENT_MARKER = "<!-- scopeci-commercial-review -->";
 
@@ -46,13 +46,8 @@ export function formatScopeCIComment(input: CommentFormatInput): string {
     deltaSection = `\n**Detected Scope Elements:**\n${evaluation.detectedDelta.map((d) => `- ${sanitizeMarkdown(d)}`).join("\n")}\n`;
   }
 
-  let commercialImpact = "";
-  if (evaluation.estimatedHours && evaluation.estimatedHours.max > 0) {
-    commercialImpact = `
-> **Estimated Engineering Scope**: ${evaluation.estimatedHours.min}–${evaluation.estimatedHours.max} hours  
-> **Commercial Context**: $${evaluation.commercialValue.min.toLocaleString()}–$${evaluation.commercialValue.max.toLocaleString()} ${evaluation.commercialValue.currency}
-`;
-  }
+  const estimate = describeEstimate(evaluation);
+  const commercialImpact = estimate ? `\n> **Estimated impact**: ${sanitizeMarkdown(estimate)}\n` : "";
 
   return `${COMMENT_MARKER}
 ### 🔍 ScopeCI Commercial Review — ${statusLabel}

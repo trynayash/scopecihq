@@ -1,0 +1,12 @@
+{
+  "id": "HP-15",
+  "identifier": "HP-15",
+  "title": "Wishlist",
+  "description": "Let customers save items for later.",
+  "status": "In Progress",
+  "estimateHours": 6,
+  "labels": [
+    "storefront"
+  ],
+  "updatedAt": "2026-10-12T09:00:00Z"
+}

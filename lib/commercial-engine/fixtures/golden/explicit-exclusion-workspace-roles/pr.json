@@ -1,0 +1,28 @@
+{
+  "id": "pr_7",
+  "number": 7,
+  "title": "Workspace member roles",
+  "body": "Closes LED-7.",
+  "baseBranch": "main",
+  "headBranch": "feat/led-7-member-roles",
+  "headSha": "e5f60718293a4b5c6d7e8f901234567890123456",
+  "filesChanged": 2,
+  "additions": 140,
+  "deletions": 0,
+  "changedFiles": [
+    {
+      "path": "src/workspaces/members.ts",
+      "module": "workspaces",
+      "status": "added",
+      "additions": 80,
+      "deletions": 0
+    },
+    {
+      "path": "src/workspaces/role-matrix.ts",
+      "module": "workspaces",
+      "status": "added",
+      "additions": 60,
+      "deletions": 0
+    }
+  ]
+}

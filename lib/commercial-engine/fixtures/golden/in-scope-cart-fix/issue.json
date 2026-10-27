@@ -1,0 +1,12 @@
+{
+  "id": "HP-14",
+  "identifier": "HP-14",
+  "title": "Cart rounds quantities wrong",
+  "description": "Shopping cart rounds 0.5 kg items down to zero.",
+  "status": "In Progress",
+  "estimateHours": 2,
+  "labels": [
+    "bug"
+  ],
+  "updatedAt": "2026-10-12T09:00:00Z"
+}
