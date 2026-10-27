@@ -1,4 +1,4 @@
-import { pool } from "@workspace/db";
+import { ensureSchema, pool } from "@workspace/db";
 import app from "./app";
 import { logger } from "./lib/logger";
 
@@ -14,6 +14,21 @@ const port = Number(rawPort);
 
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
+}
+
+// Create any missing tables and columns before taking traffic, so a deploy
+// never waits on a manual `drizzle-kit push`. It only adds, never drops. If
+// the database refuses (permissions, an outage), the server still starts:
+// the site and demo don't need the new tables, and the error is logged.
+if (process.env.SCOPECI_SCHEMA_SYNC !== "off") {
+  try {
+    const started = Date.now();
+    const { warnings } = await ensureSchema(pool);
+    for (const warning of warnings) logger.warn({ warning }, "Row level security not applied");
+    logger.info({ ms: Date.now() - started }, "Database schema is up to date");
+  } catch (err) {
+    logger.error({ err }, "Could not bring the database schema up to date");
+  }
 }
 
 const server = app.listen(port, (err) => {

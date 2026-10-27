@@ -44,7 +44,7 @@ export const githubInstallationsTable = pgTable(
     index("gh_install_org_idx").on(table.organizationId),
     index("gh_install_account_idx").on(table.githubAccountLogin),
   ]
-);
+).enableRLS();
 
 export const githubInstallationsRelations = relations(githubInstallationsTable, ({ one }) => ({
   organization: one(organizationsTable, {
@@ -85,7 +85,7 @@ export const webhookDeliveriesTable = pgTable(
     index("webhook_delivery_repo_idx").on(table.repositoryFullName),
     index("webhook_delivery_expires_idx").on(table.expiresAt),
   ]
-);
+).enableRLS();
 
 /* ==================================================================
    3. GitHub Check Runs
@@ -121,7 +121,7 @@ export const githubCheckRunsTable = pgTable(
     index("gh_check_run_sha_idx").on(table.headSha),
     index("gh_check_run_conclusion_idx").on(table.conclusion),
   ]
-);
+).enableRLS();
 
 export const githubCheckRunsRelations = relations(githubCheckRunsTable, ({ one }) => ({
   pullRequest: one(pullRequestsTable, {

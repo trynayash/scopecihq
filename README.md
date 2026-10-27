@@ -44,7 +44,7 @@ pnpm run simulate   # replays six scenarios through the evaluator; no database n
 The API needs a PostgreSQL database. Copy `.env.example` to `.env` and fill in `DATABASE_URL`, then:
 
 ```sh
-pnpm --filter @workspace/db run push                     # create the tables
+pnpm run db:ensure                                       # create the tables (the server also does this on start)
 pnpm run build
 PORT=3000 pnpm --filter @workspace/api-server run start  # serves the API and the built site
 ```

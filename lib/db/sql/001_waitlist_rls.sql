@@ -1,4 +1,8 @@
--- Run once in the Supabase SQL editor, after `pnpm --filter @workspace/db run push`.
+-- No longer needs running by hand: the schema now declares row level security
+-- on every table, and the API server enables it and revokes the Supabase API
+-- roles on start (lib/db/src/ensure-schema.ts). Kept for reference.
+--
+-- Originally run once in the Supabase SQL editor, after `pnpm --filter @workspace/db run push`.
 --
 -- Supabase serves every table in the `public` schema through PostgREST using the
 -- anon key, and that key is designed to ship in client code. Tables created by

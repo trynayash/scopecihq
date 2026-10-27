@@ -34,7 +34,7 @@ export const usersTable = pgTable(
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [uniqueIndex("users_github_uidx").on(table.githubUserId)],
-);
+).enableRLS();
 
 export const userSessionsTable = pgTable(
   "user_sessions",
@@ -52,7 +52,7 @@ export const userSessionsTable = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [index("user_sessions_user_idx").on(table.userId)],
-);
+).enableRLS();
 
 export const organizationMembersTable = pgTable(
   "organization_members",
@@ -71,7 +71,7 @@ export const organizationMembersTable = pgTable(
     uniqueIndex("org_member_uidx").on(table.organizationId, table.userId),
     index("org_member_user_idx").on(table.userId),
   ],
-);
+).enableRLS();
 
 /* ==================================================================
    Invites: a single-use link an owner shares to add someone to a
@@ -95,7 +95,7 @@ export const organizationInvitesTable = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [index("org_invite_org_idx").on(table.organizationId)],
-);
+).enableRLS();
 
 /* ==================================================================
    Projects: one client engagement. Holds the contract whose active
@@ -129,7 +129,7 @@ export const projectsTable = pgTable(
     // A repository feeds one project; Postgres lets any number of rows have none.
     uniqueIndex("project_repo_uidx").on(table.repositoryExternalId),
   ],
-);
+).enableRLS();
 
 export const usersRelations = relations(usersTable, ({ many }) => ({
   sessions: many(userSessionsTable),

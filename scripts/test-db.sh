@@ -30,10 +30,16 @@ for suite in db:test test:github test:linear test:phase4 test:security test:laun
   fresh seed
   run "$suite"
 done
-for suite in test:demo test:product; do
-  fresh
-  run "$suite"
-done
+fresh
+run test:demo
+
+# The product suite runs on a database built only by what the server does on
+# start (scripts db:ensure), so a deploy with no manual schema push works.
+psql "$ADMIN_URL" -q -v ON_ERROR_STOP=1 \
+  -c "drop database if exists \"$DB_NAME\" with (force)" \
+  -c "create database \"$DB_NAME\""
+pnpm run -s db:ensure > /dev/null
+run test:product
 
 if [ ${#failed[@]} -gt 0 ]; then
   echo "Failed: ${failed[*]}"

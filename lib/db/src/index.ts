@@ -68,3 +68,4 @@ pool.on("error", (err) => {
 export const db = drizzle(pool, { schema });
 
 export * from "./schema";
+export { ensureSchema } from "./ensure-schema.js";

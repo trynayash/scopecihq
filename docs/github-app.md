@@ -57,13 +57,7 @@ After creating the App:
 
 `GITHUB_API_URL` and `GITHUB_WEB_URL` default to `https://api.github.com` and `https://github.com`; set them for GitHub Enterprise Server.
 
-Then create the new tables (users, sessions, organization members, projects, and the new columns) in the production database:
-
-```sh
-DATABASE_URL=... pnpm --filter @workspace/db run push
-```
-
-The changes only add tables and nullable columns, so existing data is untouched.
+There is no database step: on every start the server creates any missing tables, columns, constraints and indexes, and never drops or changes anything (`lib/db/src/ensure-schema.ts`; run it alone with `pnpm run db:ensure`). It also keeps row level security on for every ScopeCI table, so Supabase's public API can't read them. Set `SCOPECI_SCHEMA_SYNC=off` to turn this off.
 
 ## 3. Check it works
 
