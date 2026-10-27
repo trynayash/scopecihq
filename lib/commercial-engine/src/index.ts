@@ -6,6 +6,7 @@ export * from './sow-decomposer.js';
 export * from './capability-extractor.js';
 export * from './scope-checklist.js';
 export * from './change-order.js';
+export * from './work-item.js';
 export * from './replay.js';
 export * from './prompts/v1/sow-decomposition.js';
 export * from './fixtures/false-positives.js';

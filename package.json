@@ -17,7 +17,8 @@
     "replay:evaluation": "node --env-file-if-exists=.env node_modules/.pnpm/tsx@4.23.4/node_modules/tsx/dist/cli.mjs lib/commercial-engine/src/replay.ts",
     "test:phase4": "node --env-file-if-exists=.env node_modules/.pnpm/tsx@4.23.4/node_modules/tsx/dist/cli.mjs artifacts/api-server/src/tests/phase4-commercial-intelligence.test.ts",
     "test:launch": "node --env-file-if-exists=.env node_modules/.pnpm/tsx@4.23.4/node_modules/tsx/dist/cli.mjs artifacts/api-server/src/tests/public-launch-boundary.test.ts",
-    "test:demo": "node --env-file-if-exists=.env node_modules/.pnpm/tsx@4.23.4/node_modules/tsx/dist/cli.mjs artifacts/api-server/src/tests/demo.test.ts"
+    "test:demo": "node --env-file-if-exists=.env node_modules/.pnpm/tsx@4.23.4/node_modules/tsx/dist/cli.mjs artifacts/api-server/src/tests/demo.test.ts",
+    "test:product": "node --env-file-if-exists=.env node_modules/.pnpm/tsx@4.23.4/node_modules/tsx/dist/cli.mjs artifacts/api-server/src/tests/product.test.ts"
   },
   "pnpm": {
     "overrides": {

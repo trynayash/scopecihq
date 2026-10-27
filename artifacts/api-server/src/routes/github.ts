@@ -1,7 +1,8 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { WebhookService } from "../github/webhook-service.js";
-import { MockGitHubClient } from "../github/github-client.js";
-import { MockIssueProvider } from "../github/issue-provider.js";
+import { MockGitHubClient, type IGitHubClient } from "../github/github-client.js";
+import { GitHubAppClient, appConfigFromEnv } from "../github/app-client.js";
+import { MockIssueProvider, NoIssueProvider } from "../github/issue-provider.js";
 import { logger } from "../lib/logger.js";
 
 const router: IRouter = Router();
@@ -11,10 +12,16 @@ const defaultSecret = process.env.GITHUB_WEBHOOK_SECRET || "mock_scopeci_webhook
 export const defaultGitHubClient = new MockGitHubClient();
 export const defaultIssueProvider = new MockIssueProvider();
 
+// The real App client when its credentials are set; the in-memory one for
+// local development and the test suites.
+const appConfig = appConfigFromEnv();
+const gitHubClient: IGitHubClient = appConfig ? new GitHubAppClient(appConfig) : defaultGitHubClient;
+
 export let activeWebhookService = new WebhookService({
   webhookSecret: defaultSecret,
-  gitHubClient: defaultGitHubClient,
-  issueProvider: defaultIssueProvider,
+  gitHubClient,
+  // The mock's sample issues must never reach real pull requests.
+  issueProvider: appConfig ? new NoIssueProvider() : defaultIssueProvider,
 });
 
 export function setWebhookService(service: WebhookService): void {

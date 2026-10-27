@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   commercialEvaluationsTable,
@@ -11,25 +11,25 @@ import {
   prDiffAnalysesTable,
   prIssueLinksTable,
   projectLinksTable,
+  projectsTable,
   pullRequestsTable,
-  scopeBaselinesTable,
   webhookDeliveriesTable,
 } from "@workspace/db/schema";
 import {
+  describeEstimate,
+  draftChangeOrder,
   evaluateCommercialScope,
-  extractScopeBoundaries,
+  pullRequestAsWorkItem,
   type CommercialEvaluation,
-  type ContractClause,
-  type Deliverable,
   type LinearIssue,
-  type ScopeBaseline,
 } from "@workspace/commercial-engine";
 import { type IGitHubClient } from "./github-client.js";
 import { type IssueProvider } from "./issue-provider.js";
 import { extractIssueReferences } from "./extractor.js";
 import { normalizePullRequestDiff } from "./diff-collector.js";
-import { formatScopeCIComment } from "./comment-formatter.js";
+import { VERDICT_LABELS, formatScopeCIComment } from "./comment-formatter.js";
 import { logger } from "../lib/logger.js";
+import { loadActiveBaseline, toDomainBaseline } from "../lib/scope-store.js";
 
 export interface GitHubWebhookHeaders {
   deliveryId: string;
@@ -82,59 +82,6 @@ export function verifyWebhookSignature(
   }
 }
 
-type ClauseRow = {
-  id: string;
-  clauseNumber: string;
-  title: string;
-  legalText: string;
-  boundaryType: string;
-};
-
-type DeliverableRow = {
-  id: string;
-  clauseId: string | null;
-  name: string;
-  boundarySummary: string;
-  allocatedHours: number | null;
-  allocatedBudget: number | null;
-};
-
-/**
- * Clause rows store wording, not lists, so read the inclusions and exclusions
- * out of the legal text the same way an uploaded SOW is read. A row stored as
- * an EXCLUSION is excluded as a whole even when its wording has no "excludes"
- * phrase to pick up.
- */
-function toDomainClause(row: ClauseRow): ContractClause {
-  const { inclusions, exclusions } = extractScopeBoundaries(row.legalText);
-  const isExclusion = row.boundaryType === "EXCLUSION";
-  return {
-    id: row.id,
-    clauseRef: row.clauseNumber,
-    title: row.title,
-    legalText: row.legalText,
-    inclusions: isExclusion ? [] : inclusions,
-    exclusions: isExclusion && exclusions.length === 0 ? [row.title.toLowerCase()] : exclusions,
-  };
-}
-
-/** Keywords follow the SOW parser: the clause's inclusions plus the longer words of the name. */
-function toDomainDeliverable(row: DeliverableRow, clauses: ContractClause[]): Deliverable {
-  const clause = clauses.find((c) => c.id === row.clauseId);
-  const nameWords = row.name.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3);
-  return {
-    id: row.id,
-    clauseId: row.clauseId || "",
-    title: row.name,
-    scopeBoundary: row.boundarySummary,
-    keywords: Array.from(new Set([...(clause?.inclusions ?? []), ...nameWords])),
-    estimatedHours: row.allocatedHours
-      ? { min: row.allocatedHours, max: row.allocatedHours }
-      : { min: 0, max: 0 },
-    budgetAllocated: row.allocatedBudget ?? 0,
-  };
-}
-
 export class WebhookService {
   private secret: string;
   private gitHubClient: IGitHubClient;
@@ -172,6 +119,11 @@ export class WebhookService {
     if (eventType === "ping") {
       logger.info({ deliveryId }, "Received GitHub ping event; webhook active");
       return { shouldProcess: false, reason: "ping_acknowledged" };
+    }
+
+    if (eventType === "installation" || eventType === "installation_repositories") {
+      await this.handleInstallationEvent(eventType, payload);
+      return { shouldProcess: false, reason: "installation_updated" };
     }
 
     // Only process pull_request events in this pipeline
@@ -237,6 +189,45 @@ export class WebhookService {
   }
 
   /**
+   * Keeps installation records in step with GitHub: an uninstalled or
+   * suspended App stops checks, and a repository removed from the App is
+   * disconnected from its project so the app shows it as unconnected.
+   */
+  async handleInstallationEvent(eventType: string, payload: any): Promise<void> {
+    const installationId = payload.installation?.id ? String(payload.installation.id) : null;
+    if (!installationId) return;
+    const unlink = { githubInstallationId: null, repositoryExternalId: null, repositoryFullName: null, updatedAt: new Date() };
+
+    if (eventType === "installation") {
+      const action = payload.action;
+      if (action === "deleted" || action === "suspend") {
+        await db
+          .update(githubInstallationsTable)
+          .set({ suspendedAt: new Date(), updatedAt: new Date() })
+          .where(eq(githubInstallationsTable.installationId, installationId));
+      } else if (action === "unsuspend" || action === "new_permissions_accepted") {
+        await db
+          .update(githubInstallationsTable)
+          .set({ suspendedAt: null, updatedAt: new Date() })
+          .where(eq(githubInstallationsTable.installationId, installationId));
+      }
+      if (action === "deleted") {
+        await db.update(projectsTable).set(unlink).where(eq(projectsTable.githubInstallationId, installationId));
+      }
+      return;
+    }
+
+    const removed = (payload.repositories_removed ?? []) as Array<{ id?: unknown }>;
+    const ids = removed.flatMap((r) => (typeof r.id === "number" ? [String(r.id)] : []));
+    if (ids.length > 0) {
+      await db
+        .update(projectsTable)
+        .set(unlink)
+        .where(and(eq(projectsTable.githubInstallationId, installationId), inArray(projectsTable.repositoryExternalId, ids)));
+    }
+  }
+
+  /**
    * Asynchronous delivery processing.
    * Handles installation resolution, PR upsert, issue extraction, diff analysis,
    * commercial scope evaluation, check-run update, and PR comment.
@@ -270,10 +261,29 @@ export class WebhookService {
         const installRecord = await db.query.githubInstallationsTable.findFirst({
           where: eq(githubInstallationsTable.installationId, installationId),
         });
+        if (installRecord?.suspendedAt) {
+          await db
+            .update(webhookDeliveriesTable)
+            .set({ status: "IGNORED", errorMessage: "Installation suspended" })
+            .where(eq(webhookDeliveriesTable.deliveryId, deliveryId));
+          return { deliveryId, status: "ignored", action, prNumber };
+        }
         if (installRecord) {
           organizationId = installRecord.organizationId;
         }
       }
+
+      // A project in the app owns the repository when the installation is
+      // mapped; older setups map repositories through project links instead.
+      const project = organizationId
+        ? await db.query.projectsTable.findFirst({
+            where: and(
+              eq(projectsTable.organizationId, organizationId),
+              eq(projectsTable.repositoryExternalId, String(repoData.id)),
+              isNull(projectsTable.archivedAt),
+            ),
+          })
+        : undefined;
 
       // If installationId resolved organizationId, require projectLink to strictly belong to that organizationId
       let projectLink = await db.query.projectLinksTable.findFirst({
@@ -301,7 +311,7 @@ export class WebhookService {
         return { deliveryId, status: "unmapped", action, prNumber };
       }
 
-      if (!projectLink) {
+      if (!projectLink && !project) {
         logger.warn(
           { deliveryId, organizationId, repositoryFullName },
           "Repository is not mapped to any ScopeCI project_link"
@@ -321,7 +331,8 @@ export class WebhookService {
         .insert(pullRequestsTable)
         .values({
           organizationId,
-          projectLinkId: projectLink.id,
+          projectLinkId: projectLink?.id ?? null,
+          projectId: project?.id ?? null,
           externalProvider: "GITHUB",
           externalId: externalPrId,
           number: prNumber,
@@ -355,6 +366,7 @@ export class WebhookService {
             changedFiles: prData.changed_files || 0,
             commitsCount: prData.commits || 1,
             mergedAt: prData.merged_at ? new Date(prData.merged_at) : null,
+            projectId: project?.id ?? null,
             lastSeenAt: new Date(),
             updatedAt: new Date(),
           },
@@ -457,61 +469,50 @@ export class WebhookService {
         })
         .returning();
 
-      // 5. Query Active Scope Baseline for Organization (Tenant-Scoped via Contract)
-      let baselineRecord;
-      if (organizationId) {
+      // 5. The scope to check against: the project's confirmed baseline, or
+      // for older setups the organization's contract. Never another
+      // organization's, and never a guess when there is none.
+      const owner = repoData.owner?.login || repositoryFullName.split("/")[0];
+      const repo = repoData.name || repositoryFullName.split("/")[1];
+      const detailsUrl = project && process.env.APP_BASE_URL
+        ? `${process.env.APP_BASE_URL.replace(/\/+$/, "")}/app/projects/${project.id}`
+        : undefined;
+
+      let baselineRecord: Awaited<ReturnType<typeof loadActiveBaseline>>;
+      if (project) {
+        baselineRecord = project.contractId ? await loadActiveBaseline(project.contractId) : undefined;
+      } else {
         const contract = await db.query.contractsTable.findFirst({
           where: eq(contractsTable.organizationId, organizationId),
         });
-        if (contract) {
-          baselineRecord = await db.query.scopeBaselinesTable.findFirst({
-            where: and(
-              eq(scopeBaselinesTable.contractId, contract.id),
-              eq(scopeBaselinesTable.status, "ACTIVE")
-            ),
-            with: {
-              clauses: true,
-              deliverables: true,
-            },
-          });
-        }
+        baselineRecord = contract ? await loadActiveBaseline(contract.id) : undefined;
       }
 
       if (!baselineRecord) {
-        baselineRecord = await db.query.scopeBaselinesTable.findFirst({
-          where: eq(scopeBaselinesTable.status, "ACTIVE"),
-          with: {
-            clauses: true,
-            deliverables: true,
-          },
-        });
+        if (project && installationId) {
+          // Connected but not set up: say so on the pull request rather than stay silent.
+          await this.gitHubClient.createCheckRun({
+            installationId,
+            owner,
+            repo,
+            headSha,
+            name: "scopeci / commercial",
+            status: "completed",
+            conclusion: "neutral",
+            title: "ScopeCI: scope not confirmed yet",
+            summary: `This repository feeds the ScopeCI project "${project.name}", but its scope hasn't been confirmed. Pull requests are checked once it is.`,
+            detailsUrl,
+          });
+        }
+        await db
+          .update(webhookDeliveriesTable)
+          .set({ status: "IGNORED", errorMessage: "No confirmed scope for this repository" })
+          .where(eq(webhookDeliveriesTable.deliveryId, deliveryId));
+        return { deliveryId, status: "ignored", action, prNumber };
       }
 
-      // Construct domain ScopeBaseline
-      const domainClauses = baselineRecord ? baselineRecord.clauses.map(toDomainClause) : [];
-      const domainBaseline: ScopeBaseline = baselineRecord
-        ? {
-            id: baselineRecord.id,
-            version: baselineRecord.versionNumber,
-            contractId: baselineRecord.contractId,
-            title: "Contract Scope Baseline",
-            description: "Active contractual scope specification",
-            status: "active",
-            clauses: domainClauses,
-            deliverables: baselineRecord.deliverables.map((d) => toDomainDeliverable(d, domainClauses)),
-            createdAt: baselineRecord.createdAt.toISOString(),
-          }
-        : {
-            id: "baseline_default",
-            version: "v1",
-            contractId: "contract_default",
-            title: "Default Baseline",
-            description: "Initial Scope",
-            status: "active",
-            clauses: [],
-            deliverables: [],
-            createdAt: new Date().toISOString(),
-          };
+      const domainBaseline = toDomainBaseline(baselineRecord);
+      const policyMode = (project?.policyMode ?? "OBSERVE") as CommercialEvaluation["policyMode"];
 
       // 6. Invoke Commercial Engine (OBSERVE mode, HeadSha Invariant Enforced)
       const evaluation = evaluateCommercialScope({
@@ -536,8 +537,21 @@ export class WebhookService {
           })),
           detectedSubsystems: normalizedDiff.detectedSubsystems,
         },
-        issue: primaryIssue || undefined,
-        policyMode: "OBSERVE",
+        // A project's pull request is judged on its own when no issue is
+        // linked; older Linear-mapped setups still ask for the link.
+        issue: primaryIssue ?? (project ? pullRequestAsWorkItem() : undefined),
+        policyMode,
+        // A project prices work only at the rate it was given; older setups keep the default.
+        ...(project ? { hourlyRate: project.hourlyRate ?? 0 } : {}),
+      });
+
+      const projectName = project?.name ?? projectLink?.externalProjectName ?? repositoryFullName;
+      const changeOrder = draftChangeOrder({
+        evaluation,
+        pullRequestTitle: prRecord.title,
+        projectName,
+        clientName: project?.clientName ?? undefined,
+        hourlyRate: project?.hourlyRate ?? undefined,
       });
 
       // 7. Persist Evaluation with exact headSha
@@ -545,14 +559,14 @@ export class WebhookService {
         .insert(commercialEvaluationsTable)
         .values({
           pullRequestId: prRecord.id,
-          scopeBaselineId: baselineRecord?.id || domainBaseline.id,
+          scopeBaselineId: baselineRecord.id,
           prDiffAnalysisId: diffAnalysis.id,
           headSha,
           state: evaluation.state,
           evaluationStatus: "COMPLETED",
           scopeTaxonomy: evaluation.taxonomy,
           reviewReasonCode: evaluation.reviewReasonCode || null,
-          policyMode: "OBSERVE",
+          policyMode,
           confidence: String(evaluation.confidence),
           commercialConfidence: String(evaluation.commercialConfidence),
           // The evaluator is rule based; there is no model confidence to record.
@@ -574,18 +588,30 @@ export class WebhookService {
           estimatedValueMax: evaluation.commercialValue.max,
           currency: evaluation.commercialValue.currency,
           reason: evaluation.detectedDelta.join("; ") || "Commercial evaluation completed",
+          estimateSummary: describeEstimate(evaluation) ?? null,
+          changeOrderDraftJson: changeOrder ? { subject: changeOrder.subject, body: changeOrder.body } : null,
           evaluatorVersion: evaluation.evaluatorVersion || "scopeci-alpha-0.2.0",
         })
         .returning();
 
-      // 8. GitHub Check Run Idempotency (Update if existing check run for PR exists)
-      const owner = repoData.owner?.login || repositoryFullName.split("/")[0];
-      const repo = repoData.name || repositoryFullName.split("/")[1];
-
-      const checkSummary = `ScopeCI Commercial Review\n\nStatus: ${evaluation.state}\nEvidence: PR #${prNumber} (${headSha.substring(0, 7)})\nMode: OBSERVE\nConclusion: ${evaluation.checkConclusion}`;
+      // 8. One check run per commit: GitHub attaches a check run to the SHA it
+      // was created on, so a new push gets a new run and a redelivery for the
+      // same commit updates the existing one.
+      const checkTitle = `ScopeCI: ${VERDICT_LABELS[evaluation.state] ?? evaluation.state}`;
+      const estimateLine = describeEstimate(evaluation);
+      const checkSummary = [
+        evaluation.evidenceBundle?.decisionExplanation?.reason ?? evaluation.detectedDelta.join("; "),
+        estimateLine ? `Estimated impact: ${estimateLine}.` : "",
+        `Scope version ${baselineRecord.versionNumber}. Policy: ${policyMode}.`,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
 
       const existingCheckRun = await db.query.githubCheckRunsTable.findFirst({
-        where: eq(githubCheckRunsTable.pullRequestId, prRecord.id),
+        where: and(
+          eq(githubCheckRunsTable.pullRequestId, prRecord.id),
+          eq(githubCheckRunsTable.headSha, headSha),
+        ),
       });
 
       let checkRunResult;
@@ -597,8 +623,9 @@ export class WebhookService {
           checkRunId: existingCheckRun.githubCheckRunId,
           status: "completed",
           conclusion: evaluation.checkConclusion,
-          title: "ScopeCI Commercial Review",
+          title: checkTitle,
           summary: checkSummary,
+          detailsUrl,
         });
 
         await db
@@ -607,7 +634,7 @@ export class WebhookService {
             headSha,
             status: "completed",
             conclusion: evaluation.checkConclusion,
-            title: "ScopeCI Commercial Review",
+            title: checkTitle,
             summary: checkSummary,
             latestEvaluationId: evalRecord.id,
             updatedAt: new Date(),
@@ -622,8 +649,9 @@ export class WebhookService {
           name: "scopeci / commercial",
           status: "completed",
           conclusion: evaluation.checkConclusion,
-          title: "ScopeCI Commercial Review",
+          title: checkTitle,
           summary: checkSummary,
+          detailsUrl,
         });
 
         await db.insert(githubCheckRunsTable).values({
@@ -633,19 +661,21 @@ export class WebhookService {
           headSha,
           status: "completed",
           conclusion: evaluation.checkConclusion,
-          title: "ScopeCI Commercial Review",
+          title: checkTitle,
           summary: checkSummary,
+          detailsUrl: detailsUrl ?? null,
           latestEvaluationId: evalRecord.id,
         });
       }
 
       // 9. Post / Update PR Comment
       const commentBody = formatScopeCIComment({
-        projectName: projectLink.externalProjectName,
+        projectName,
         issueIdentifier: primaryIssue?.id,
         prNumber,
         headSha,
         evaluation,
+        detailsUrl,
       });
 
       await this.gitHubClient.createOrUpdateComment(

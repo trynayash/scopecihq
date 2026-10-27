@@ -32,6 +32,7 @@ import {
   phraseNamesCapability,
   textCoversMatch,
 } from "./contract-matcher.js";
+import { isPullRequestWorkItem } from "./work-item.js";
 
 export interface Phase4EvaluationInput {
   baseline?: ScopeBaseline;
@@ -743,15 +744,18 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
     };
   }
 
-  // Build legacy evidence array for backward compatibility
-  evidence.push({
-    source: "LINEAR",
-    mark: "linear",
-    label: "Work Item",
-    value: `${issue.id} · ${issue.title}`,
-    result: "linked",
-    tone: "ok",
-  });
+  // Build legacy evidence array for backward compatibility. A pull request
+  // standing in as its own work item has no issue to show.
+  if (!isPullRequestWorkItem(issue.id)) {
+    evidence.push({
+      source: "LINEAR",
+      mark: "linear",
+      label: "Work Item",
+      value: `${issue.id} · ${issue.title}`,
+      result: "linked",
+      tone: "ok",
+    });
+  }
 
   evidence.push({
     source: "GITHUB",

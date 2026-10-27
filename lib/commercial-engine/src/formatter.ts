@@ -1,4 +1,5 @@
 import type { CommercialEvaluation, PullRequest, LinearIssue, ScopeBaseline } from './types.js';
+import { isPullRequestWorkItem } from './work-item.js';
 
 /**
  * Formats a CommercialEvaluation for terminal / CLI output.
@@ -99,13 +100,17 @@ ${evaluation.detectedDelta.length > 0 ? `**Detected Delta:**\n${evaluation.detec
  */
 export function describeEstimate(evaluation: CommercialEvaluation): string | undefined {
   const needsDecision = evaluation.state === 'CHANGE_REQUIRED' || evaluation.state === 'REVIEW_REQUIRED';
+  const ownWorkItem = isPullRequestWorkItem(evaluation.issueId);
   if (evaluation.estimateSource !== 'LINEAR_ISSUE_ESTIMATE' || evaluation.estimatedHours.max <= 0) {
-    return needsDecision ? 'not estimated (the linked issue has no estimate)' : undefined;
+    if (!needsDecision) return undefined;
+    return ownWorkItem ? 'not estimated (no linked issue with an estimate)' : 'not estimated (the linked issue has no estimate)';
   }
 
   const { min, max } = evaluation.estimatedHours;
   const hours = min === max ? `${max} hours` : `${min}–${max} hours`;
-  const source = `from the estimate on ${evaluation.issueId ?? 'the linked issue'}`;
+  const source = ownWorkItem
+    ? 'from the hours given for this pull request'
+    : `from the estimate on ${evaluation.issueId ?? 'the linked issue'}`;
   const { commercialValue: value } = evaluation;
   const money =
     value.status === 'available' && value.max > 0

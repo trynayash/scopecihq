@@ -195,6 +195,10 @@ export const contractClausesTable = pgTable(
     boundaryType: varchar("boundary_type", { length: 50 }).notNull(), // INCLUSION, EXCLUSION, ASSUMPTION, LIMITATION, OTHER
     sourcePage: integer("source_page"),
     sourceLocation: varchar("source_location", { length: 255 }),
+    // A checklist confirmed in the app stores its items here; older rows
+    // leave these empty and have them read from the legal text instead.
+    inclusionsJson: jsonb("inclusions_json"),
+    exclusionsJson: jsonb("exclusions_json"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
@@ -377,6 +381,8 @@ export const pullRequestsTable = pgTable(
     projectLinkId: uuid("project_link_id").references(() => projectLinksTable.id, {
       onDelete: "set null",
     }),
+    // projects.id (accounts.ts); no foreign key so the two schema files don't import each other.
+    projectId: uuid("project_id"),
     externalProvider: varchar("external_provider", { length: 50 }).default("GITHUB").notNull(),
     externalId: varchar("external_id", { length: 255 }).notNull(),
     number: integer("number").notNull(),
@@ -404,6 +410,7 @@ export const pullRequestsTable = pgTable(
     index("pr_number_idx").on(table.number),
     index("pr_state_idx").on(table.state),
     index("pr_head_branch_idx").on(table.headBranch),
+    index("pr_project_idx").on(table.projectId),
   ]
 );
 
@@ -538,6 +545,8 @@ export const commercialEvaluationsTable = pgTable(
     estimatedValueMax: integer("estimated_value_max"),
     currency: varchar("currency", { length: 10 }).default("USD"),
     reason: text("reason").notNull(),
+    estimateSummary: text("estimate_summary"),
+    changeOrderDraftJson: jsonb("change_order_draft_json"),
     evaluatorVersion: varchar("evaluator_version", { length: 50 }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

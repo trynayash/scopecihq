@@ -112,3 +112,26 @@ export class MockIssueProvider implements IssueProvider {
     return this.teams.get(id) || null;
   }
 }
+
+/**
+ * Resolves nothing. Used with the real GitHub App until Linear is connected
+ * for a workspace, so a pull request that mentions "ENG-184" is never matched
+ * to the mock provider's sample issues and their made-up estimates.
+ */
+export class NoIssueProvider implements IssueProvider {
+  async resolveIssue(): Promise<LinearIssue | null> {
+    return null;
+  }
+
+  async fetchIssue(): Promise<LinearIssue | null> {
+    return null;
+  }
+
+  async fetchProject(): Promise<IssueProject | null> {
+    return null;
+  }
+
+  async fetchTeam(): Promise<IssueTeam | null> {
+    return null;
+  }
+}

@@ -14,6 +14,10 @@ tags:
     description: Early access signup operations
   - name: demo
     description: The public "try it with your SOW" demo. Nothing is stored.
+  - name: session
+    description: Signing in with GitHub and out again
+  - name: projects
+    description: Projects, their confirmed scope, connected repository and checked pull requests
 paths:
   /healthz:
     get:
@@ -145,7 +149,268 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /session:
+    get:
+      operationId: getSession
+      tags: [session]
+      summary: Who is signed in, and whether GitHub sign-in is set up on this server
+      responses:
+        "200":
+          description: The current session; user and organization are null when nobody is signed in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionInfo"
+    delete:
+      operationId: endSession
+      tags: [session]
+      summary: Sign out
+      responses:
+        "204":
+          description: Signed out
+  /projects:
+    get:
+      operationId: listProjects
+      tags: [projects]
+      summary: The signed-in organization's projects
+      responses:
+        "200":
+          description: Projects, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectList"
+        "401":
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createProject
+      tags: [projects]
+      summary: Start a project for one client engagement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectCreateInput"
+      responses:
+        "201":
+          description: The new project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /projects/{projectId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: getProject
+      tags: [projects]
+      summary: A project and its confirmed scope
+      responses:
+        "200":
+          description: The project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectDetail"
+        "404":
+          description: No such project in this organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateProject
+      tags: [projects]
+      summary: Change a project's name, client, hourly rate or how strict its check is
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectUpdateInput"
+      responses:
+        "200":
+          description: The updated project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such project in this organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: archiveProject
+      tags: [projects]
+      summary: Archive a project and stop checking its repository
+      responses:
+        "204":
+          description: Archived
+        "404":
+          description: No such project in this organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /projects/{projectId}/scope:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    put:
+      operationId: saveProjectScope
+      tags: [projects]
+      summary: Save a confirmed scope checklist as the project's new active baseline
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DemoScopeInput"
+      responses:
+        "200":
+          description: The saved scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedScope"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such project in this organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /projects/{projectId}/repository:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    put:
+      operationId: linkProjectRepository
+      tags: [projects]
+      summary: Check pull requests from this repository against the project's scope
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RepositoryLinkInput"
+      responses:
+        "200":
+          description: The updated project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "401":
+          description: Not signed in, or GitHub access expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The signed-in person can't see that installation or repository on GitHub
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The repository or GitHub account is already connected elsewhere
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: unlinkProjectRepository
+      tags: [projects]
+      summary: Stop checking this project's repository
+      responses:
+        "200":
+          description: The updated project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "404":
+          description: No such project in this organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /projects/{projectId}/pull-requests:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: listProjectPullRequests
+      tags: [projects]
+      summary: The latest result for each checked pull request, newest first
+      responses:
+        "200":
+          description: Checked pull requests
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PullRequestResultList"
+        "404":
+          description: No such project in this organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /github/repositories:
+    get:
+      operationId: listGitHubRepositories
+      tags: [projects]
+      summary: Repositories the signed-in person can see through the ScopeCI GitHub App
+      responses:
+        "200":
+          description: Repositories, and where to install the App for more
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitHubRepositoryList"
+        "401":
+          description: Not signed in, or GitHub access expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
+  parameters:
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      schema:
+        type: string
+        maxLength: 36
   schemas:
     HealthStatus:
       type: object
@@ -419,3 +684,286 @@ components:
       required:
         - subject
         - body
+    SessionInfo:
+      type: object
+      properties:
+        signInAvailable:
+          type: boolean
+        user:
+          oneOf:
+            - $ref: "#/components/schemas/SessionUser"
+            - type: "null"
+        organization:
+          oneOf:
+            - $ref: "#/components/schemas/SessionOrganization"
+            - type: "null"
+      required:
+        - signInAvailable
+        - user
+        - organization
+    SessionUser:
+      type: object
+      properties:
+        id:
+          type: string
+        login:
+          type: string
+        name:
+          type: ["string", "null"]
+        avatarUrl:
+          type: ["string", "null"]
+      required:
+        - id
+        - login
+        - name
+        - avatarUrl
+    SessionOrganization:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+      required:
+        - id
+        - name
+    PolicyMode:
+      type: string
+      enum: [OBSERVE, REVIEW, ENFORCE]
+      description: OBSERVE only reports; REVIEW asks for a decision on the check; ENFORCE fails the check on excluded work.
+    ProjectCreateInput:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 160
+        clientName:
+          type: ["string", "null"]
+          maxLength: 160
+        hourlyRate:
+          type: ["integer", "null"]
+          minimum: 0
+          maximum: 100000
+      required:
+        - name
+    ProjectUpdateInput:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 160
+        clientName:
+          type: ["string", "null"]
+          maxLength: 160
+        hourlyRate:
+          type: ["integer", "null"]
+          minimum: 0
+          maximum: 100000
+        policyMode:
+          $ref: "#/components/schemas/PolicyMode"
+    LinkedRepository:
+      type: object
+      properties:
+        fullName:
+          type: string
+        installationId:
+          type: string
+      required:
+        - fullName
+        - installationId
+    ProjectCounts:
+      type: object
+      properties:
+        checked:
+          type: integer
+        changeOrders:
+          type: integer
+        decisions:
+          type: integer
+      required:
+        - checked
+        - changeOrders
+        - decisions
+    Project:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        clientName:
+          type: ["string", "null"]
+        hourlyRate:
+          type: ["integer", "null"]
+        currency:
+          type: string
+        policyMode:
+          $ref: "#/components/schemas/PolicyMode"
+        repository:
+          oneOf:
+            - $ref: "#/components/schemas/LinkedRepository"
+            - type: "null"
+        scopeVersion:
+          type: ["string", "null"]
+        scopeSavedAt:
+          type: ["string", "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        counts:
+          $ref: "#/components/schemas/ProjectCounts"
+      required:
+        - id
+        - name
+        - clientName
+        - hourlyRate
+        - currency
+        - policyMode
+        - repository
+        - scopeVersion
+        - scopeSavedAt
+        - createdAt
+        - counts
+    ProjectList:
+      type: object
+      properties:
+        projects:
+          type: array
+          items:
+            $ref: "#/components/schemas/Project"
+      required:
+        - projects
+    SavedScope:
+      type: object
+      properties:
+        version:
+          type: string
+        savedAt:
+          type: string
+          format: date-time
+        title:
+          type: string
+        clauses:
+          type: array
+          items:
+            $ref: "#/components/schemas/DemoScopeClause"
+      required:
+        - version
+        - savedAt
+        - title
+        - clauses
+    ProjectDetail:
+      type: object
+      properties:
+        project:
+          $ref: "#/components/schemas/Project"
+        scope:
+          oneOf:
+            - $ref: "#/components/schemas/SavedScope"
+            - type: "null"
+      required:
+        - project
+        - scope
+    RepositoryLinkInput:
+      type: object
+      properties:
+        installationId:
+          type: integer
+          minimum: 1
+        repositoryId:
+          type: integer
+          minimum: 1
+      required:
+        - installationId
+        - repositoryId
+    PullRequestResult:
+      type: object
+      properties:
+        evaluationId:
+          type: string
+        number:
+          type: integer
+        title:
+          type: string
+        url:
+          type: string
+        branch:
+          type: ["string", "null"]
+        prState:
+          type: string
+          enum: [OPEN, CLOSED, MERGED]
+        headSha:
+          type: ["string", "null"]
+        verdict:
+          type: string
+          enum: [IN_SCOPE, REVIEW_REQUIRED, CHANGE_REQUIRED, APPROVED_CHANGE, BLOCKED, OVERRIDDEN]
+        reason:
+          type: string
+        estimate:
+          type: ["string", "null"]
+        changeOrder:
+          oneOf:
+            - $ref: "#/components/schemas/DemoChangeOrder"
+            - type: "null"
+        checkedAt:
+          type: string
+          format: date-time
+      required:
+        - evaluationId
+        - number
+        - title
+        - url
+        - branch
+        - prState
+        - headSha
+        - verdict
+        - reason
+        - estimate
+        - changeOrder
+        - checkedAt
+    PullRequestResultList:
+      type: object
+      properties:
+        pullRequests:
+          type: array
+          items:
+            $ref: "#/components/schemas/PullRequestResult"
+      required:
+        - pullRequests
+    GitHubRepository:
+      type: object
+      properties:
+        installationId:
+          type: integer
+        accountLogin:
+          type: string
+        id:
+          type: integer
+        fullName:
+          type: string
+        private:
+          type: boolean
+        linkedProjectId:
+          type: ["string", "null"]
+      required:
+        - installationId
+        - accountLogin
+        - id
+        - fullName
+        - private
+        - linkedProjectId
+    GitHubRepositoryList:
+      type: object
+      properties:
+        installUrl:
+          type: ["string", "null"]
+        repositories:
+          type: array
+          items:
+            $ref: "#/components/schemas/GitHubRepository"
+      required:
+        - installUrl
+        - repositories

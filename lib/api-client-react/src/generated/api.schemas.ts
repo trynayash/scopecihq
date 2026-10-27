@@ -227,6 +227,188 @@ export interface DemoEvaluation {
   changeOrder: DemoChangeOrder | null;
 }
 
+export interface SessionUser {
+  id: string;
+  login: string;
+  /** @nullable */
+  name: string | null;
+  /** @nullable */
+  avatarUrl: string | null;
+}
+
+export interface SessionOrganization {
+  id: string;
+  name: string;
+}
+
+export interface SessionInfo {
+  signInAvailable: boolean;
+  user: SessionUser | null;
+  organization: SessionOrganization | null;
+}
+
+/**
+ * OBSERVE only reports; REVIEW asks for a decision on the check; ENFORCE fails the check on excluded work.
+ */
+export type PolicyMode = typeof PolicyMode[keyof typeof PolicyMode];
+
+
+export const PolicyMode = {
+  OBSERVE: 'OBSERVE',
+  REVIEW: 'REVIEW',
+  ENFORCE: 'ENFORCE',
+} as const;
+
+export interface ProjectCreateInput {
+  /**
+     * @minLength 1
+     * @maxLength 160
+     */
+  name: string;
+  /**
+     * @maxLength 160
+     * @nullable
+     */
+  clientName?: string | null;
+  /**
+     * @minimum 0
+     * @maximum 100000
+     * @nullable
+     */
+  hourlyRate?: number | null;
+}
+
+export interface ProjectUpdateInput {
+  /**
+     * @minLength 1
+     * @maxLength 160
+     */
+  name?: string;
+  /**
+     * @maxLength 160
+     * @nullable
+     */
+  clientName?: string | null;
+  /**
+     * @minimum 0
+     * @maximum 100000
+     * @nullable
+     */
+  hourlyRate?: number | null;
+  policyMode?: PolicyMode;
+}
+
+export interface LinkedRepository {
+  fullName: string;
+  installationId: string;
+}
+
+export interface ProjectCounts {
+  checked: number;
+  changeOrders: number;
+  decisions: number;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  /** @nullable */
+  clientName: string | null;
+  /** @nullable */
+  hourlyRate: number | null;
+  currency: string;
+  policyMode: PolicyMode;
+  repository: LinkedRepository | null;
+  /** @nullable */
+  scopeVersion: string | null;
+  /** @nullable */
+  scopeSavedAt: string | null;
+  createdAt: string;
+  counts: ProjectCounts;
+}
+
+export interface ProjectList {
+  projects: Project[];
+}
+
+export interface SavedScope {
+  version: string;
+  savedAt: string;
+  title: string;
+  clauses: DemoScopeClause[];
+}
+
+export interface ProjectDetail {
+  project: Project;
+  scope: SavedScope | null;
+}
+
+export interface RepositoryLinkInput {
+  /** @minimum 1 */
+  installationId: number;
+  /** @minimum 1 */
+  repositoryId: number;
+}
+
+export type PullRequestResultPrState = typeof PullRequestResultPrState[keyof typeof PullRequestResultPrState];
+
+
+export const PullRequestResultPrState = {
+  OPEN: 'OPEN',
+  CLOSED: 'CLOSED',
+  MERGED: 'MERGED',
+} as const;
+
+export type PullRequestResultVerdict = typeof PullRequestResultVerdict[keyof typeof PullRequestResultVerdict];
+
+
+export const PullRequestResultVerdict = {
+  IN_SCOPE: 'IN_SCOPE',
+  REVIEW_REQUIRED: 'REVIEW_REQUIRED',
+  CHANGE_REQUIRED: 'CHANGE_REQUIRED',
+  APPROVED_CHANGE: 'APPROVED_CHANGE',
+  BLOCKED: 'BLOCKED',
+  OVERRIDDEN: 'OVERRIDDEN',
+} as const;
+
+export interface PullRequestResult {
+  evaluationId: string;
+  number: number;
+  title: string;
+  url: string;
+  /** @nullable */
+  branch: string | null;
+  prState: PullRequestResultPrState;
+  /** @nullable */
+  headSha: string | null;
+  verdict: PullRequestResultVerdict;
+  reason: string;
+  /** @nullable */
+  estimate: string | null;
+  changeOrder: DemoChangeOrder | null;
+  checkedAt: string;
+}
+
+export interface PullRequestResultList {
+  pullRequests: PullRequestResult[];
+}
+
+export interface GitHubRepository {
+  installationId: number;
+  accountLogin: string;
+  id: number;
+  fullName: string;
+  private: boolean;
+  /** @nullable */
+  linkedProjectId: string | null;
+}
+
+export interface GitHubRepositoryList {
+  /** @nullable */
+  installUrl: string | null;
+  repositories: GitHubRepository[];
+}
+
 export type GetDemoGithubPrParams = {
 /**
  * @maxLength 300

@@ -4,6 +4,8 @@ import waitlistRouter from "./waitlist";
 import eventsRouter from "./events";
 import adminRouter from "./admin";
 import demoRouter from "./demo";
+import sessionRouter from "./session";
+import projectsRouter from "./projects";
 import githubRouter from "./github";
 import linearRouter from "./linear";
 import { logger } from "../lib/logger";
@@ -16,6 +18,8 @@ router.use(waitlistRouter);
 router.use(eventsRouter);
 router.use(adminRouter);        // already protected by requireAdminKey
 router.use(demoRouter);         // public "try it" demo; stores nothing
+router.use(sessionRouter);      // sign in with GitHub; reports when sign-in isn't configured
+router.use(projectsRouter);     // the signed-in app; every route needs a session
 
 // Integration routes — gated in production.
 // In development/test these are always available so existing workflows and
@@ -42,7 +46,9 @@ function mountIntegration(name: string, integration: IRouter, requiredEnv: strin
 }
 
 if (!isProduction || integrationRoutesEnabled) {
-  mountIntegration("github", githubRouter, ["GITHUB_WEBHOOK_SECRET"]);
+  // Without the App's credentials the webhook would fall back to the in-memory
+  // client and silently post nothing, so production needs all three.
+  mountIntegration("github", githubRouter, ["GITHUB_WEBHOOK_SECRET", "GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY"]);
   mountIntegration("linear", linearRouter, [
     "LINEAR_CLIENT_ID",
     "LINEAR_CLIENT_SECRET",

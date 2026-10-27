@@ -254,10 +254,26 @@ async function runPhase2TestSuite(): Promise<void> {
   assert(prRowUpdated?.commitsCount === 5, "Commit count updated to 5 on synchronize");
   assert(prRowUpdated?.additions === 410, "Additions updated to 410 on synchronize");
 
-  // Verify Check Run was updated rather than duplicated (Check-run idempotency)
+  // GitHub attaches a check run to the commit it was created on, so the new
+  // head commit gets its own run; the first commit keeps its result.
   const checkRunsForPR = await db.select().from(githubCheckRunsTable).where(eq(githubCheckRunsTable.pullRequestId, prRow!.id));
-  assert(checkRunsForPR.length === 1, "Exactly one check run row exists for PR #1842 (Check-run idempotency)");
-  assert(checkRunsForPR[0].headSha === newSha, "Check Run headSha updated to new commit SHA");
+  assert(checkRunsForPR.length === 2, "One check run row per commit for PR #1842");
+  assert(checkRunsForPR.some((c) => c.headSha === newSha), "The new head commit has its own check run");
+  assert(checkRunsForPR.some((c) => c.headSha === goldenSha), "The first commit keeps its check run");
+
+  // A redelivery for the same commit updates that run instead of adding one.
+  const deliverySyncAgain = `del_sync_again_${Date.now()}`;
+  await service.precheckAndPersistDelivery(
+    { deliveryId: deliverySyncAgain, eventType: "pull_request", signature: sigSync },
+    rawBodySync,
+    payloadSync
+  );
+  await service.processPullRequestEvent(deliverySyncAgain, payloadSync);
+  const checkRunsAfterRedelivery = await db
+    .select()
+    .from(githubCheckRunsTable)
+    .where(and(eq(githubCheckRunsTable.pullRequestId, prRow!.id), eq(githubCheckRunsTable.headSha, newSha)));
+  assert(checkRunsAfterRedelivery.length === 1, "Exactly one check run for the same commit (check-run idempotency)");
 
   // -------------------------------------------------------------
   // Test 6: PR reopened
