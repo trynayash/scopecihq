@@ -30,6 +30,12 @@ export const KNOWN_EVENTS = new Set([
   "waitlist_success",
   "waitlist_duplicate",
   "waitlist_error",
+  "try_opened",
+  "try_sow_read",
+  "try_github_pr_loaded",
+  "try_evaluated",
+  "try_change_order_copied",
+  "try_waitlist_click",
 ]);
 
 /**

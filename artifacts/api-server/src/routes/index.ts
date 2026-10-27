@@ -3,6 +3,7 @@ import healthRouter from "./health";
 import waitlistRouter from "./waitlist";
 import eventsRouter from "./events";
 import adminRouter from "./admin";
+import demoRouter from "./demo";
 import githubRouter from "./github";
 import linearRouter from "./linear";
 import { logger } from "../lib/logger";
@@ -14,6 +15,7 @@ router.use(healthRouter);
 router.use(waitlistRouter);
 router.use(eventsRouter);
 router.use(adminRouter);        // already protected by requireAdminKey
+router.use(demoRouter);         // public "try it" demo; stores nothing
 
 // Integration routes — gated in production.
 // In development/test these are always available so existing workflows and

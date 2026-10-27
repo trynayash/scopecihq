@@ -48,3 +48,174 @@ export const CreateWaitlistSignupResponse = zod.object({
 })
 
 
+/**
+ * Splits the document into clauses and lists what each one includes and excludes, for the visitor to review and correct.
+ * @summary Read the scope out of a statement of work
+ */
+export const parseDemoSowBodyMarkdownMax = 40000;
+
+
+
+export const ParseDemoSowBody = zod.object({
+  "markdown": zod.string().min(1).max(parseDemoSowBodyMarkdownMax)
+})
+
+export const parseDemoSowResponseClausesItemClauseRefMax = 40;
+
+export const parseDemoSowResponseClausesItemTitleMax = 200;
+
+export const parseDemoSowResponseClausesItemIncludedItemMax = 300;
+
+export const parseDemoSowResponseClausesItemIncludedMax = 100;
+
+export const parseDemoSowResponseClausesItemExcludedItemMax = 300;
+
+export const parseDemoSowResponseClausesItemExcludedMax = 100;
+
+
+
+export const ParseDemoSowResponse = zod.object({
+  "title": zod.string(),
+  "clauses": zod.array(zod.object({
+  "clauseRef": zod.string().max(parseDemoSowResponseClausesItemClauseRefMax),
+  "title": zod.string().max(parseDemoSowResponseClausesItemTitleMax),
+  "included": zod.array(zod.string().max(parseDemoSowResponseClausesItemIncludedItemMax)).max(parseDemoSowResponseClausesItemIncludedMax),
+  "excluded": zod.array(zod.string().max(parseDemoSowResponseClausesItemExcludedItemMax)).max(parseDemoSowResponseClausesItemExcludedMax)
+})),
+  "warnings": zod.array(zod.string())
+})
+
+
+/**
+ * @summary Check a pull request against a reviewed scope
+ */
+export const evaluateDemoBodyScopeTitleMax = 200;
+
+export const evaluateDemoBodyScopeClausesItemClauseRefMax = 40;
+
+export const evaluateDemoBodyScopeClausesItemTitleMax = 200;
+
+export const evaluateDemoBodyScopeClausesItemIncludedItemMax = 300;
+
+export const evaluateDemoBodyScopeClausesItemIncludedMax = 100;
+
+export const evaluateDemoBodyScopeClausesItemExcludedItemMax = 300;
+
+export const evaluateDemoBodyScopeClausesItemExcludedMax = 100;
+
+export const evaluateDemoBodyScopeClausesMax = 60;
+
+export const evaluateDemoBodyPullRequestTitleMax = 300;
+
+export const evaluateDemoBodyPullRequestBranchMax = 200;
+
+export const evaluateDemoBodyPullRequestBodyMax = 5000;
+
+export const evaluateDemoBodyPullRequestFilesItemPathMax = 400;
+
+export const evaluateDemoBodyPullRequestFilesMax = 300;
+
+export const evaluateDemoBodyIssueOneIdMax = 40;
+
+export const evaluateDemoBodyIssueOneTitleMax = 300;
+
+export const evaluateDemoBodyIssueOneDescriptionMax = 5000;
+
+export const evaluateDemoBodyIssueOneEstimateHoursMin = 0;
+export const evaluateDemoBodyIssueOneEstimateHoursMax = 10000;
+
+export const evaluateDemoBodyEstimateHoursMin = 0;
+export const evaluateDemoBodyEstimateHoursMax = 10000;
+
+export const evaluateDemoBodyHourlyRateMin = 0;
+export const evaluateDemoBodyHourlyRateMax = 10000;
+
+export const evaluateDemoBodyProjectNameMax = 120;
+
+
+
+export const EvaluateDemoBody = zod.object({
+  "scope": zod.object({
+  "title": zod.string().max(evaluateDemoBodyScopeTitleMax),
+  "clauses": zod.array(zod.object({
+  "clauseRef": zod.string().max(evaluateDemoBodyScopeClausesItemClauseRefMax),
+  "title": zod.string().max(evaluateDemoBodyScopeClausesItemTitleMax),
+  "included": zod.array(zod.string().max(evaluateDemoBodyScopeClausesItemIncludedItemMax)).max(evaluateDemoBodyScopeClausesItemIncludedMax),
+  "excluded": zod.array(zod.string().max(evaluateDemoBodyScopeClausesItemExcludedItemMax)).max(evaluateDemoBodyScopeClausesItemExcludedMax)
+})).min(1).max(evaluateDemoBodyScopeClausesMax)
+}),
+  "pullRequest": zod.object({
+  "number": zod.number().int().nullish(),
+  "title": zod.string().min(1).max(evaluateDemoBodyPullRequestTitleMax),
+  "branch": zod.string().max(evaluateDemoBodyPullRequestBranchMax).nullish(),
+  "body": zod.string().max(evaluateDemoBodyPullRequestBodyMax).nullish(),
+  "files": zod.array(zod.object({
+  "path": zod.string().min(1).max(evaluateDemoBodyPullRequestFilesItemPathMax),
+  "status": zod.enum(['added', 'modified', 'deleted', 'renamed']).optional()
+})).min(1).max(evaluateDemoBodyPullRequestFilesMax)
+}),
+  "issue": zod.union([zod.object({
+  "id": zod.string().min(1).max(evaluateDemoBodyIssueOneIdMax),
+  "title": zod.string().max(evaluateDemoBodyIssueOneTitleMax),
+  "description": zod.string().max(evaluateDemoBodyIssueOneDescriptionMax).nullish(),
+  "estimateHours": zod.number().min(evaluateDemoBodyIssueOneEstimateHoursMin).max(evaluateDemoBodyIssueOneEstimateHoursMax).nullish()
+}),zod.null()]).optional(),
+  "estimateHours": zod.number().min(evaluateDemoBodyEstimateHoursMin).max(evaluateDemoBodyEstimateHoursMax).nullish().describe('Used when no issue is given.'),
+  "hourlyRate": zod.number().min(evaluateDemoBodyHourlyRateMin).max(evaluateDemoBodyHourlyRateMax).nullish(),
+  "projectName": zod.string().max(evaluateDemoBodyProjectNameMax).nullish()
+})
+
+export const EvaluateDemoResponse = zod.object({
+  "state": zod.enum(['IN_SCOPE', 'REVIEW_REQUIRED', 'CHANGE_REQUIRED', 'APPROVED_CHANGE', 'BLOCKED', 'OVERRIDDEN']),
+  "taxonomy": zod.string(),
+  "checkConclusion": zod.enum(['success', 'neutral', 'action_required', 'failure']),
+  "reason": zod.string(),
+  "delta": zod.array(zod.string()),
+  "clause": zod.union([zod.object({
+  "clauseRef": zod.string(),
+  "title": zod.string()
+}),zod.null()]),
+  "estimate": zod.string().nullable(),
+  "comment": zod.string().describe('The pull request comment ScopeCI would post, as Markdown.'),
+  "changeOrder": zod.union([zod.object({
+  "subject": zod.string(),
+  "body": zod.string()
+}),zod.null()])
+})
+
+
+/**
+ * @summary Read a public GitHub pull request's title, branch and changed files
+ */
+export const getDemoGithubPrQueryUrlMax = 300;
+
+
+
+export const GetDemoGithubPrQueryParams = zod.object({
+  "url": zod.coerce.string().max(getDemoGithubPrQueryUrlMax)
+})
+
+export const getDemoGithubPrResponseTitleMax = 300;
+
+export const getDemoGithubPrResponseBranchMax = 200;
+
+export const getDemoGithubPrResponseBodyMax = 5000;
+
+export const getDemoGithubPrResponseFilesItemPathMax = 400;
+
+export const getDemoGithubPrResponseFilesMax = 300;
+
+
+
+export const GetDemoGithubPrResponse = zod.object({
+  "number": zod.number().int().nullish(),
+  "title": zod.string().min(1).max(getDemoGithubPrResponseTitleMax),
+  "branch": zod.string().max(getDemoGithubPrResponseBranchMax).nullish(),
+  "body": zod.string().max(getDemoGithubPrResponseBodyMax).nullish(),
+  "files": zod.array(zod.object({
+  "path": zod.string().min(1).max(getDemoGithubPrResponseFilesItemPathMax),
+  "status": zod.enum(['added', 'modified', 'deleted', 'renamed']).optional()
+})).min(1).max(getDemoGithubPrResponseFilesMax)
+})
+
+

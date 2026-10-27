@@ -21,11 +21,24 @@ import {
   RefreshCw,
   X,
 } from 'lucide-react';
-import { SiGithub, SiLinear } from 'react-icons/si';
 import { useCreateWaitlistSignup } from '@workspace/api-client-react';
 import { ErrorBoundary } from '@/components/error-boundary';
 import NotFound from '@/pages/not-found';
+import TryPage from '@/pages/try';
 import { Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
+import {
+  BASE,
+  Footer,
+  ICON_MARK,
+  Navbar,
+  PRIVACY_PATH,
+  TRY_PATH,
+  VendorMark,
+  anchor,
+  attribution,
+  track,
+  usePageMeta,
+} from './site';
 
 // By default React Query pauses a mutation while the browser reports being
 // offline, which leaves the signup button spinning with no explanation. Let
@@ -34,8 +47,6 @@ const queryClient = new QueryClient({
   defaultOptions: { mutations: { networkMode: 'always' } },
 });
 
-const WORDMARK = '/assets/logo-wordmark.png';
-const ICON_MARK = '/assets/logo-icon.png';
 
 const PAGE_TITLE = 'ScopeCI — Catch scope creep in pull requests';
 const PAGE_DESCRIPTION =
@@ -45,72 +56,7 @@ const PRIVACY_TITLE = 'Privacy Policy — ScopeCI';
 const PRIVACY_DESCRIPTION =
   'What ScopeCI collects through its early-access waitlist, why, and how to have it removed.';
 
-/* Absolute paths, so in-page anchors also work from routes other than "/". */
-const BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
-const PRIVACY_PATH = `${BASE}/privacy`;
 const ADMIN_API = `${BASE}/api/admin`;
-const anchor = (id: string) => `${BASE}/#${id}`;
-
-/* ------------------------------------------------------------------ */
-/* Attribution & lightweight analytics                                 */
-/* ------------------------------------------------------------------ */
-
-interface Attribution {
-  utmSource: string | null;
-  utmMedium: string | null;
-  utmCampaign: string | null;
-  utmContent: string | null;
-  utmTerm: string | null;
-  referrer: string | null;
-}
-
-function captureAttribution(): Attribution {
-  const params = new URLSearchParams(window.location.search);
-  return {
-    utmSource: params.get('utm_source'),
-    utmMedium: params.get('utm_medium'),
-    utmCampaign: params.get('utm_campaign'),
-    utmContent: params.get('utm_content'),
-    utmTerm: params.get('utm_term'),
-    referrer: document.referrer || null,
-  };
-}
-
-/** Module-level singleton — read once, never mutated. */
-const attribution = captureAttribution();
-
-/**
- * Fire-and-forget analytics. Uses sendBeacon when available so events
- * survive page unloads; falls back to a detached fetch. Never blocks
- * rendering or throws. The server only accepts the event names it lists in
- * routes/events.ts, so add new ones there too.
- */
-function track(event: string): void {
-  try {
-    const payload = JSON.stringify({
-      event,
-      source: attribution.utmSource,
-      medium: attribution.utmMedium,
-      campaign: attribution.utmCampaign,
-      referrer: attribution.referrer,
-      landingPage: window.location.pathname,
-    });
-
-    if (navigator.sendBeacon) {
-      const blob = new Blob([payload], { type: 'application/json' });
-      navigator.sendBeacon(`${BASE}/api/events`, blob);
-    } else {
-      fetch(`${BASE}/api/events`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: payload,
-        keepalive: true,
-      }).catch(() => {});
-    }
-  } catch {
-    // Analytics must never break the page.
-  }
-}
 
 /** One-shot scroll depth observers. */
 function useScrollDepth() {
@@ -140,38 +86,6 @@ function useScrollDepth() {
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
-}
-
-/** Keeps the document title, description and canonical in step with the route. */
-function usePageMeta(title: string, description: string) {
-  useEffect(() => {
-    document.title = title;
-    const setMeta = (selector: string, value: string) => {
-      document.querySelector(selector)?.setAttribute('content', value);
-    };
-    setMeta('meta[name="description"]', description);
-    setMeta('meta[property="og:title"]', title);
-    setMeta('meta[property="og:description"]', description);
-    setMeta('meta[property="og:url"]', window.location.origin + window.location.pathname);
-    setMeta(
-      'meta[property="og:image"]',
-      `${window.location.origin}${BASE}/assets/logo-with-bg-and-wordmark.png`,
-    );
-    setMeta('meta[name="twitter:title"]', title);
-    setMeta('meta[name="twitter:description"]', description);
-    setMeta(
-      'meta[name="twitter:image"]',
-      `${window.location.origin}${BASE}/assets/logo-with-bg-and-wordmark.png`,
-    );
-
-    let canonical = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
-    if (!canonical) {
-      canonical = document.createElement('link');
-      canonical.rel = 'canonical';
-      document.head.appendChild(canonical);
-    }
-    canonical.href = window.location.origin + window.location.pathname;
-  }, [title, description]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -234,68 +148,6 @@ function useTimeline(delays: readonly number[], enabled: boolean) {
   }, [enabled]);
 
   return step;
-}
-
-/* ------------------------------------------------------------------ */
-/* Vendor marks                                                        */
-/* ------------------------------------------------------------------ */
-
-/**
- * Official GitHub / Linear marks (Simple Icons paths via react-icons),
- * drawn in `currentColor` so they sit inside the ScopeCI palette. They name the
- * tools ScopeCI is being built for. No partnership is implied. Jira is not
- * supported, so its mark is not shown.
- */
-function VendorMark({ name, size = 14 }: { name: 'github' | 'linear'; size?: number }) {
-  const Mark = name === 'github' ? SiGithub : SiLinear;
-  return <Mark className="vendor-mark" size={size} aria-hidden="true" focusable="false" />;
-}
-
-/* ------------------------------------------------------------------ */
-/* Navigation                                                          */
-/* ------------------------------------------------------------------ */
-
-function Navbar() {
-  const [scrolled, setScrolled] = useState(false);
-
-  useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 8);
-    onScroll();
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
-  }, []);
-
-  return (
-    <header className={`masthead ${scrolled ? 'is-scrolled' : ''}`}>
-      <nav className="masthead-inner container" aria-label="Primary">
-        <a className="brand" href={anchor('top')} data-testid="link-brand">
-          <picture className="brand-logo">
-            <source media="(max-width: 719px)" srcSet={ICON_MARK} />
-            <img
-              src={WORDMARK}
-              alt="ScopeCI"
-              width="651"
-              height="217"
-              decoding="async"
-            />
-          </picture>
-        </a>
-
-        <div className="masthead-actions">
-          <a className="masthead-link" href={anchor('how-it-works')} data-testid="link-how-it-works">
-            How it works
-          </a>
-          <a className="masthead-link" href={anchor('questions')} data-testid="link-questions">
-            Questions
-          </a>
-          <a className="button button-primary button-sm" href={anchor('waitlist')} data-testid="button-join-waitlist-nav">
-            Join waitlist
-            <ArrowRight size={14} aria-hidden="true" />
-          </a>
-        </div>
-      </nav>
-    </header>
-  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -451,21 +303,21 @@ function Hero() {
             and not free work.
           </p>
           <p className="hero-note">
-            Not available yet. Today it runs on sample projects, not real repositories.
+            It doesn't run on real repositories yet, but the check is real: try it on your own SOW.
           </p>
 
           <div className="hero-actions">
             <a
               className="button button-primary"
-              href={anchor('waitlist')}
-              data-testid="button-join-waitlist-hero"
+              href={TRY_PATH}
+              data-testid="button-try-hero"
               onClick={() => track('hero_cta_click')}
             >
-              Join the waitlist
+              Try it on your SOW
               <ArrowRight size={15} aria-hidden="true" />
             </a>
-            <a className="button button-ghost" href={anchor('how-it-works')} data-testid="link-see-how-it-works">
-              How it works
+            <a className="button button-ghost" href={anchor('waitlist')} data-testid="button-join-waitlist-hero">
+              Join the waitlist
               <ArrowDown size={15} aria-hidden="true" />
             </a>
           </div>
@@ -671,7 +523,7 @@ const QUESTIONS: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: 'When can we use it?',
-    a: "There's no date. It runs on sample projects today, not real repositories. We'll email the waitlist when the first agencies can try it.",
+    a: "You can try the check on your own SOW today, on this site. Running it on your real repositories is next: we'll email the waitlist when the first pilot agencies can connect GitHub.",
   },
 ];
 
@@ -929,41 +781,6 @@ function Waitlist() {
         </div>
       </div>
     </section>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Footer                                                              */
-/* ------------------------------------------------------------------ */
-
-function Footer() {
-  return (
-    <footer className="footer">
-      <div className="container">
-        <div className="footer-top">
-          <div className="footer-brand">
-            <img
-              src={WORDMARK}
-              alt="ScopeCI"
-              width="651"
-              height="217"
-              loading="lazy"
-              decoding="async"
-            />
-            <p>Scope checks for agency pull requests.</p>
-          </div>
-          <nav className="footer-links mono" aria-label="Footer">
-            <a href={anchor('how-it-works')} data-testid="link-how-footer">How it works</a>
-            <a href={anchor('waitlist')} data-testid="link-waitlist-footer">Waitlist</a>
-            <a href={PRIVACY_PATH} data-testid="link-privacy-footer">Privacy</a>
-          </nav>
-        </div>
-        <div className="footer-bottom mono">
-          <span>© 2026 ScopeCI</span>
-          <span>In development</span>
-        </div>
-      </div>
-    </footer>
   );
 }
 
@@ -1443,6 +1260,7 @@ function Router() {
       <Switch>
         <Route path="/" component={Home} />
         <Route path="/privacy" component={Privacy} />
+        <Route path="/try" component={TryPage} />
         <Route path="/admin/waitlist" component={AdminWaitlist} />
         <Route component={NotFound} />
       </Switch>

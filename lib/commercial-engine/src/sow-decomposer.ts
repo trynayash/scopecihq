@@ -257,6 +257,13 @@ export class SOWDecomposer {
       clauses.push(currentClause as z.infer<typeof DecomposedClauseSchema>);
     }
 
+    // Contracts without numbered sections ("## Scope", or text copied out of
+    // a PDF) still say what's in and out: fall back to markdown headings, and
+    // failing that, read the whole document as one clause.
+    if (clauses.length === 0) {
+      clauses.push(...this.parseUnnumbered(lines));
+    }
+
     // If clauses were found, generate deliverables for each clause
     for (const c of clauses) {
       const keywords = [...c.inclusions];
@@ -284,6 +291,42 @@ export class SOWDecomposer {
       clauses,
       deliverables,
     };
+  }
+
+  /** Sections from markdown headings or "Section N" lines, numbered §1, §2, ... in order. */
+  private parseUnnumbered(lines: string[]): z.infer<typeof DecomposedClauseSchema>[] {
+    const sections: Array<{ title: string; body: string[] }> = [];
+    let current: { title: string; body: string[] } | undefined;
+
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (line.startsWith("# ")) continue;
+      const heading =
+        line.match(/^#{2,4}\s+(.+)$/) ?? line.match(/^(?:section|clause)\s+\d+\s*[:.\-–]?\s*(.+)$/i);
+      if (heading) {
+        current = { title: heading[1].replace(/[*_#]/g, "").trim(), body: [] };
+        sections.push(current);
+        continue;
+      }
+      if (!current) {
+        current = { title: "Scope", body: [] };
+        sections.push(current);
+      }
+      current.body.push(line);
+    }
+
+    return sections
+      .filter((section) => section.body.join("").trim().length > 0)
+      .map((section, index) => {
+        const legalText = section.body.join("\n").trim();
+        return {
+          clauseRef: `§${index + 1}`,
+          title: section.title,
+          legalText,
+          ...extractScopeBoundaries(legalText),
+          location: `Section ${index + 1}`,
+        };
+      });
   }
 
   private extractInclusionsAndExclusions(
@@ -374,14 +417,20 @@ const INCLUSION_PROSE =
  * stored in the database.
  */
 export function extractScopeBoundaries(legalText: string): { inclusions: string[]; exclusions: string[] } {
+  // Sentence patterns run one sentence at a time, each capped, so a pasted
+  // document with a very long unbroken line can't make them backtrack for
+  // seconds. No pattern needs to see past a sentence end anyway.
+  const sentences = legalText.split(/(?<=[.!?])\s+|\n/).map((sentence) => sentence.slice(0, 1000));
+  const inSentences = (pattern: RegExp) => sentences.flatMap((sentence) => [...sentence.matchAll(pattern)]);
+
   const exclusions = [
     ...listsAfter(legalText, EXCLUSION_HEADER),
-    ...[...legalText.matchAll(EXCLUSION_PROSE)].flatMap((m) => splitList(m[1])),
-    ...[...legalText.matchAll(EXCLUSION_PREDICATE)].flatMap((m) => splitList(m[1])),
+    ...inSentences(EXCLUSION_PROSE).flatMap((m) => splitList(m[1])),
+    ...inSentences(EXCLUSION_PREDICATE).flatMap((m) => splitList(m[1])),
   ];
   const inclusions = [
     ...listsAfter(legalText, INCLUSION_HEADER),
-    ...[...legalText.matchAll(INCLUSION_PROSE)].flatMap((m) => splitList(m[1])),
+    ...inSentences(INCLUSION_PROSE).flatMap((m) => splitList(m[1])),
   ];
 
   const unique = (items: string[]) => Array.from(new Set(items));

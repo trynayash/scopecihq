@@ -12,6 +12,8 @@ tags:
     description: Health operations
   - name: waitlist
     description: Early access signup operations
+  - name: demo
+    description: The public "try it with your SOW" demo. Nothing is stored.
 paths:
   /healthz:
     get:
@@ -53,6 +55,92 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "400":
           description: Invalid waitlist signup
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /demo/sow:
+    post:
+      operationId: parseDemoSow
+      tags: [demo]
+      summary: Read the scope out of a statement of work
+      description: Splits the document into clauses and lists what each one includes and excludes, for the visitor to review and correct.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DemoSowInput"
+      responses:
+        "200":
+          description: The scope as read from the document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DemoScope"
+        "400":
+          description: Missing, oversized or unreadable document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /demo/evaluate:
+    post:
+      operationId: evaluateDemo
+      tags: [demo]
+      summary: Check a pull request against a reviewed scope
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DemoEvaluationInput"
+      responses:
+        "200":
+          description: The result, the PR comment it would post and, when work is out of scope, a change order draft
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DemoEvaluation"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /demo/github-pr:
+    get:
+      operationId: getDemoGithubPr
+      tags: [demo]
+      summary: Read a public GitHub pull request's title, branch and changed files
+      parameters:
+        - name: url
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 300
+      responses:
+        "200":
+          description: The pull request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DemoPullRequest"
+        "400":
+          description: Not a GitHub pull request URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: The pull request doesn't exist or isn't public
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: GitHub didn't answer, or its anonymous rate limit was reached
           content:
             application/json:
               schema:
@@ -122,4 +210,212 @@ components:
           type: string
       required:
         - error
-
+    DemoSowInput:
+      type: object
+      properties:
+        markdown:
+          type: string
+          minLength: 1
+          maxLength: 40000
+      required:
+        - markdown
+    DemoScopeClause:
+      type: object
+      properties:
+        clauseRef:
+          type: string
+          maxLength: 40
+        title:
+          type: string
+          maxLength: 200
+        included:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            maxLength: 300
+        excluded:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            maxLength: 300
+      required:
+        - clauseRef
+        - title
+        - included
+        - excluded
+    DemoScopeInput:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        clauses:
+          type: array
+          minItems: 1
+          maxItems: 60
+          items:
+            $ref: "#/components/schemas/DemoScopeClause"
+      required:
+        - title
+        - clauses
+    DemoScope:
+      type: object
+      properties:
+        title:
+          type: string
+        clauses:
+          type: array
+          items:
+            $ref: "#/components/schemas/DemoScopeClause"
+        warnings:
+          type: array
+          items:
+            type: string
+      required:
+        - title
+        - clauses
+        - warnings
+    DemoChangedFile:
+      type: object
+      properties:
+        path:
+          type: string
+          minLength: 1
+          maxLength: 400
+        status:
+          type: string
+          enum: [added, modified, deleted, renamed]
+      required:
+        - path
+    DemoPullRequest:
+      type: object
+      properties:
+        number:
+          type: ["integer", "null"]
+        title:
+          type: string
+          minLength: 1
+          maxLength: 300
+        branch:
+          type: ["string", "null"]
+          maxLength: 200
+        body:
+          type: ["string", "null"]
+          maxLength: 5000
+        files:
+          type: array
+          minItems: 1
+          maxItems: 300
+          items:
+            $ref: "#/components/schemas/DemoChangedFile"
+      required:
+        - title
+        - files
+    DemoIssue:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 40
+        title:
+          type: string
+          maxLength: 300
+        description:
+          type: ["string", "null"]
+          maxLength: 5000
+        estimateHours:
+          type: ["number", "null"]
+          minimum: 0
+          maximum: 10000
+      required:
+        - id
+        - title
+    DemoEvaluationInput:
+      type: object
+      properties:
+        scope:
+          $ref: "#/components/schemas/DemoScopeInput"
+        pullRequest:
+          $ref: "#/components/schemas/DemoPullRequest"
+        issue:
+          oneOf:
+            - $ref: "#/components/schemas/DemoIssue"
+            - type: "null"
+        estimateHours:
+          type: ["number", "null"]
+          minimum: 0
+          maximum: 10000
+          description: Used when no issue is given.
+        hourlyRate:
+          type: ["number", "null"]
+          minimum: 0
+          maximum: 10000
+        projectName:
+          type: ["string", "null"]
+          maxLength: 120
+      required:
+        - scope
+        - pullRequest
+    DemoEvaluation:
+      type: object
+      properties:
+        state:
+          type: string
+          enum: [IN_SCOPE, REVIEW_REQUIRED, CHANGE_REQUIRED, APPROVED_CHANGE, BLOCKED, OVERRIDDEN]
+        taxonomy:
+          type: string
+        checkConclusion:
+          type: string
+          enum: [success, neutral, action_required, failure]
+        reason:
+          type: string
+        delta:
+          type: array
+          items:
+            type: string
+        clause:
+          oneOf:
+            - $ref: "#/components/schemas/DemoClauseRef"
+            - type: "null"
+        estimate:
+          type: ["string", "null"]
+        comment:
+          type: string
+          description: The pull request comment ScopeCI would post, as Markdown.
+        changeOrder:
+          oneOf:
+            - $ref: "#/components/schemas/DemoChangeOrder"
+            - type: "null"
+      required:
+        - state
+        - taxonomy
+        - checkConclusion
+        - reason
+        - delta
+        - clause
+        - estimate
+        - comment
+        - changeOrder
+    DemoClauseRef:
+      type: object
+      properties:
+        clauseRef:
+          type: string
+        title:
+          type: string
+      required:
+        - clauseRef
+        - title
+    DemoChangeOrder:
+      type: object
+      properties:
+        subject:
+          type: string
+        body:
+          type: string
+      required:
+        - subject
+        - body
