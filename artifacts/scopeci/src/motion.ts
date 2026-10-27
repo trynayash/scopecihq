@@ -101,8 +101,8 @@ export function useReveal<T extends HTMLElement>() {
 
 /**
  * Tilts `ref` toward the pointer by writing `--tilt-x` / `--tilt-y` (in
- * degrees) and `--glare-x` / `--glare-y` (in %). Only for a fine pointer
- * and without reduced motion; otherwise the element keeps its resting pose.
+ * degrees). Only for a fine pointer and without reduced motion; otherwise
+ * the element keeps its resting pose.
  */
 export function usePointerTilt<T extends HTMLElement>(maxDegrees = 5) {
   const ref = useRef<T>(null);
@@ -123,8 +123,6 @@ export function usePointerTilt<T extends HTMLElement>(maxDegrees = 5) {
       };
       node.style.setProperty('--tilt-x', `${(-current.y * maxDegrees).toFixed(3)}deg`);
       node.style.setProperty('--tilt-y', `${(current.x * maxDegrees).toFixed(3)}deg`);
-      node.style.setProperty('--glare-x', `${(50 + current.x * 40).toFixed(1)}%`);
-      node.style.setProperty('--glare-y', `${(50 + current.y * 40).toFixed(1)}%`);
       if (Math.abs(target.x - current.x) > 0.001 || Math.abs(target.y - current.y) > 0.001) {
         frame = requestAnimationFrame(apply);
       } else {

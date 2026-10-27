@@ -1,6 +1,6 @@
 import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import { Download, Lock, LogOut, RefreshCw } from 'lucide-react';
 import { BASE, HOME_PATH, Logo, ThemeToggle, usePageMeta } from '../site';
+import { CrossIcon, DownloadIcon, Icon, LockIcon, ReloadIcon, SignOutIcon, TickIcon } from '../icons';
 
 const ADMIN_API = `${BASE}/api/admin`;
 
@@ -145,11 +145,11 @@ function GitHubAppPanel({ onSignedOut }: { onSignedOut: () => void }) {
           </p>
           <ul className="admin-checks">
             <li data-ok={status.signInReady}>
-              <span className="chip-dot" />
+              <Icon icon={status.signInReady ? TickIcon : CrossIcon} size={14} />
               {status.signInReady ? 'Ready' : 'Not ready'}: Sign in with GitHub
             </li>
             <li data-ok={status.webhooksReady}>
-              <span className="chip-dot" />
+              <Icon icon={status.webhooksReady ? TickIcon : CrossIcon} size={14} />
               {status.webhooksReady ? 'Ready' : 'Not ready'}: pull request checks
             </li>
           </ul>
@@ -346,7 +346,7 @@ export default function AdminWaitlist() {
       <AdminShell>
         <div className="panel admin-gate">
           <span className="admin-gate-icon" aria-hidden="true">
-            <Lock size={18} />
+            <Icon icon={LockIcon} size={20} />
           </span>
           <h1>Admin sign-in</h1>
           <form onSubmit={signIn}>
@@ -378,7 +378,7 @@ export default function AdminWaitlist() {
     <AdminShell
       actions={
         <button type="button" className="button button-quiet button-sm" onClick={signOut}>
-          <LogOut size={14} aria-hidden="true" />
+          <Icon icon={SignOutIcon} size={14} />
           Sign out
         </button>
       }
@@ -390,11 +390,11 @@ export default function AdminWaitlist() {
         </div>
         <div className="row-actions">
           <button type="button" className="button button-quiet" onClick={refresh} disabled={busy}>
-            <RefreshCw size={14} aria-hidden="true" />
+            <Icon icon={ReloadIcon} size={14} />
             Refresh
           </button>
           <a className="button button-quiet" href={`${ADMIN_API}/waitlist/csv`} download>
-            <Download size={14} aria-hidden="true" />
+            <Icon icon={DownloadIcon} size={14} />
             Export CSV
           </a>
         </div>

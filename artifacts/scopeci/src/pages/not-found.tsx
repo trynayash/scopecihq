@@ -1,5 +1,5 @@
-import { ArrowRight } from 'lucide-react';
 import { Footer, HOME_PATH, Navbar, TRY_PATH, usePageMeta } from '../site';
+import { ArrowRightIcon, Icon } from '../icons';
 
 export default function NotFound() {
   usePageMeta('Page not found — ScopeCI', 'There is no page at this address.');
@@ -23,7 +23,7 @@ export default function NotFound() {
             <div className="missing-actions">
               <a className="button button-primary" href={HOME_PATH}>
                 Go to the home page
-                <ArrowRight size={15} aria-hidden="true" />
+                <Icon icon={ArrowRightIcon} size={16} />
               </a>
               <a className="button button-secondary" href={TRY_PATH}>
                 Try it on your SOW

@@ -1,5 +1,5 @@
-import { ArrowLeft } from 'lucide-react';
 import { Footer, HOME_PATH, Navbar, usePageMeta } from '../site';
+import { ArrowLeftIcon, Icon } from '../icons';
 
 const PRIVACY_TITLE = 'Privacy Policy — ScopeCI';
 const PRIVACY_DESCRIPTION =
@@ -140,7 +140,7 @@ export default function Privacy() {
 
             <p className="legal-foot">
               <a className="text-link" href={HOME_PATH} data-testid="link-privacy-back">
-                <ArrowLeft size={14} aria-hidden="true" />
+                <Icon icon={ArrowLeftIcon} size={16} />
                 Back to ScopeCI
               </a>
             </p>

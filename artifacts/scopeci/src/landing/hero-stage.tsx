@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, FileText, GitBranch, GitPullRequest, RotateCcw, X } from 'lucide-react';
+import { ContractIcon, CrossIcon, GitBranchIcon, GitPullRequestIcon, Icon, NeutralIcon, TickIcon } from '../icons';
 import { ICON_MARK, VendorMark } from '../site';
 import { useInView, usePointerTilt, useTimeline } from '../motion';
 
@@ -10,8 +10,8 @@ import { useInView, usePointerTilt, useTimeline } from '../motion';
  *
  * It's an illustration, not a screenshot, but the wording follows what the
  * product returns for this case (lib/commercial-engine: a pull request that
- * builds two items a clause excludes). The footnote letters tie each
- * excluded item to the files that build it.
+ * builds two items a clause excludes). The footnote markers, [a] and [b],
+ * tie each excluded item to the files that build it.
  */
 
 /* highlight a -> files a -> highlight b -> files b -> verdict -> change order */
@@ -41,7 +41,7 @@ export function HeroStage() {
           <article className="stage-card stage-sow" aria-hidden="true">
             <header className="sow-head mono">
               <span>
-                <FileText size={11} aria-hidden="true" />
+                <Icon icon={ContractIcon} size={12} />
                 Statement of work
               </span>
               <span>Northstar Health · p. 4</span>
@@ -54,11 +54,11 @@ export function HeroStage() {
             <ol className="sow-list">
               <li>
                 <mark className={step >= 1 ? 'is-on' : ''}>Organization roles</mark>
-                <sup className="note">a</sup>
+                <sup className="note">[a]</sup>
               </li>
               <li>
                 <mark className={step >= 3 ? 'is-on' : ''}>Team invitations</mark>
-                <sup className="note">b</sup>
+                <sup className="note">[b]</sup>
               </li>
               <li>Single sign-on (SAML)</li>
             </ol>
@@ -79,12 +79,12 @@ export function HeroStage() {
             </header>
             <div className="pr-body">
               <p className="pr-state mono">
-                <GitPullRequest size={11} aria-hidden="true" />
+                <Icon icon={GitPullRequestIcon} size={12} />
                 Open
               </p>
               <p className="pr-title">Add organization-level permissions</p>
               <p className="pr-meta mono">
-                <GitBranch size={11} aria-hidden="true" />
+                <Icon icon={GitBranchIcon} size={12} />
                 feature/org-permissions
                 <span className="pr-dim">→ main · 14 files</span>
               </p>
@@ -94,20 +94,20 @@ export function HeroStage() {
                 <li key={file.path} className={file.at && step >= file.at ? 'is-match' : ''}>
                   <span className={`pr-file-status ${file.status === 'A' ? 'is-added' : ''}`}>{file.status}</span>
                   <span className="pr-file-path">{file.path}</span>
-                  {file.note ? <sup className="note">{file.note}</sup> : <span />}
+                  {file.note ? <sup className="note">[{file.note}]</sup> : <span />}
                   <span className="pr-file-lines">{file.lines}</span>
                 </li>
               ))}
             </ul>
             <ul className="pr-checks mono">
               <li>
-                <span className="pr-check-icon is-ok"><Check size={9} strokeWidth={3} aria-hidden="true" /></span>
+                <span className="pr-check-icon is-ok"><Icon icon={TickIcon} size={13} strokeWidth={2.2} /></span>
                 build
                 <span className="pr-check-result">passed</span>
               </li>
               <li className={resolved ? 'is-failed' : checking ? 'is-running' : ''}>
                 <span className="pr-check-icon">
-                  {resolved ? <X size={9} strokeWidth={3} aria-hidden="true" /> : <span className="pr-check-dot" />}
+                  <Icon icon={resolved ? CrossIcon : NeutralIcon} size={13} strokeWidth={2.2} />
                 </span>
                 scopeci / commercial
                 <span className="pr-check-result">{resolved ? 'action required' : checking ? 'checking…' : 'queued'}</span>
@@ -122,10 +122,7 @@ export function HeroStage() {
                 <img src={ICON_MARK} alt="" width="288" height="270" decoding="async" />
                 ScopeCI
               </span>
-              <span className="chip is-alert">
-                <span className="chip-dot" />
-                Change order needed
-              </span>
+              <span className="chip is-alert">Change order needed</span>
             </header>
             <p className="verdict-reason">
               <strong>§4.2</strong> of the statement of work excludes organization roles and team invitations. This
@@ -146,7 +143,7 @@ export function HeroStage() {
               </div>
             </dl>
             <p className={`verdict-next ${step >= 6 ? 'is-shown' : ''}`}>
-              <span className="verdict-next-dot" />
+              <Icon icon={TickIcon} size={14} strokeWidth={2} />
               Change order drafted for the client
             </p>
           </article>
@@ -165,7 +162,6 @@ export function HeroStage() {
         className={`stage-replay mono ${step >= STEPS.length ? 'is-shown' : ''}`}
         onClick={() => setRun((value) => value + 1)}
       >
-        <RotateCcw size={12} aria-hidden="true" />
         Replay
       </button>
     </div>

@@ -1,11 +1,12 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowRight, Check, Plus, X } from 'lucide-react';
+import { ArrowRightIcon, CrossIcon, Icon, PlusIcon, TickIcon } from '../icons';
 import { useCreateWaitlistSignup } from '@workspace/api-client-react';
 import { Footer, ICON_MARK, Navbar, PRIVACY_PATH, TRY_PATH, VendorMark, anchor, attribution, track, usePageMeta } from '../site';
 import { useReveal } from '../motion';
 import { HeroStage } from '../landing/hero-stage';
 import { CreepChart } from '../landing/creep-chart';
 import { PolicyDemo } from '../landing/policy-demo';
+import { ProductTour } from '../landing/product-tour';
 
 const PAGE_TITLE = 'ScopeCI — Catch scope creep in pull requests';
 const PAGE_DESCRIPTION =
@@ -62,7 +63,6 @@ function Hero() {
       <div className="container hero-inner">
         <div className="hero-copy">
           <p className="hero-kicker" data-reveal>
-            <span className="status-dot" aria-hidden="true" />
             Early access for agencies on
             <span className="hero-kicker-marks">
               <VendorMark name="github" size={14} /> GitHub
@@ -87,7 +87,7 @@ function Hero() {
               onClick={() => track('hero_cta_click')}
             >
               Try it on your SOW
-              <ArrowRight size={16} aria-hidden="true" />
+              <Icon icon={ArrowRightIcon} size={16} />
             </a>
             <a className="button button-secondary button-lg" href={anchor('how-it-works')} data-testid="button-how-hero">
               See how it works
@@ -107,6 +107,32 @@ function Hero() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Product                                                             */
+/* ------------------------------------------------------------------ */
+
+function Product() {
+  return (
+    <section className="section section-product" id="product" aria-labelledby="product-title">
+      <div className="container">
+        <div className="section-head" data-reveal>
+          <Kicker num="01">Product</Kicker>
+          <h2 className="section-title display" id="product-title">
+            What your team actually opens.
+          </h2>
+          <p className="section-lede">
+            Real screens from the app, shown with a sample workspace: the pull requests ScopeCI checked, the scope
+            they were checked against, and the change orders waiting on clients.
+          </p>
+        </div>
+        <div data-reveal data-reveal-delay="80">
+          <ProductTour />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* The problem                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -115,7 +141,7 @@ function Problem() {
     <section className="section section-problem" id="why" aria-labelledby="why-title">
       <div className="container problem-grid">
         <div className="section-head" data-reveal>
-          <Kicker num="01">Why it exists</Kicker>
+          <Kicker num="02">Why it exists</Kicker>
           <h2 className="section-title display" id="why-title">
             Scope creep doesn’t arrive as one big request.
           </h2>
@@ -145,7 +171,7 @@ function HowItWorks() {
     <section className="section section-how" id="how-it-works" aria-labelledby="how-title">
       <div className="container">
         <div className="section-head" data-reveal>
-          <Kicker num="02">How it works</Kicker>
+          <Kicker num="03">How it works</Kicker>
           <h2 className="section-title display" id="how-title">
             Three inputs you already have. One answer where your team already looks.
           </h2>
@@ -167,8 +193,8 @@ function HowItWorks() {
               <p>Email and password sign-in, sessions, password reset.</p>
               <p className="artifact-doc-label">Explicit exclusions</p>
               <ul>
-                <li><X size={12} aria-hidden="true" /> Organization roles</li>
-                <li><X size={12} aria-hidden="true" /> Team invitations</li>
+                <li><Icon icon={CrossIcon} size={13} /> Organization roles</li>
+                <li><Icon icon={CrossIcon} size={13} /> Team invitations</li>
               </ul>
             </div>
           </li>
@@ -208,10 +234,10 @@ function HowItWorks() {
             </p>
             <div className="artifact" aria-label="The ScopeCI check on the pull request">
               <p className="artifact-check mono">
-                <span className="artifact-check-icon" aria-hidden="true"><X size={10} strokeWidth={3} /></span>
+                <span className="artifact-check-icon"><Icon icon={CrossIcon} size={14} strokeWidth={2.2} /></span>
                 scopeci / commercial
               </p>
-              <span className="chip is-alert"><span className="chip-dot" />Change order needed</span>
+              <span className="chip is-alert">Change order needed</span>
               <p className="artifact-reason">§4.2 excludes organization roles and team invitations.</p>
             </div>
           </li>
@@ -230,7 +256,7 @@ function Policy() {
     <section className="section section-policy" id="policy" aria-labelledby="policy-title">
       <div className="container policy-grid">
         <div className="section-head" data-reveal>
-          <Kicker num="03">Policies</Kicker>
+          <Kicker num="04">Policies</Kicker>
           <h2 className="section-title display" id="policy-title">
             Quiet until you want it strict.
           </h2>
@@ -256,7 +282,7 @@ function Evidence() {
     <section className="section section-evidence" id="evidence" aria-labelledby="evidence-title">
       <div className="container">
         <div className="section-head" data-reveal>
-          <Kicker num="04">Evidence</Kicker>
+          <Kicker num="05">Evidence</Kicker>
           <h2 className="section-title display" id="evidence-title">
             Every answer shows its working.
           </h2>
@@ -273,14 +299,14 @@ function Evidence() {
               <p className="pane-subject">§4.2 User authentication</p>
               <p className="pane-group">Included</p>
               <ul className="pane-items">
-                <li className="is-in"><Check size={13} aria-hidden="true" /> Email and password sign-in</li>
-                <li className="is-in"><Check size={13} aria-hidden="true" /> Sessions and sign-out</li>
-                <li className="is-in"><Check size={13} aria-hidden="true" /> Password reset</li>
+                <li className="is-in"><Icon icon={TickIcon} size={14} /> Email and password sign-in</li>
+                <li className="is-in"><Icon icon={TickIcon} size={14} /> Sessions and sign-out</li>
+                <li className="is-in"><Icon icon={TickIcon} size={14} /> Password reset</li>
               </ul>
               <p className="pane-group">Excluded</p>
               <ul className="pane-items">
-                <li className="is-out"><X size={13} aria-hidden="true" /> Organization roles</li>
-                <li className="is-out"><X size={13} aria-hidden="true" /> Team invitations</li>
+                <li className="is-out"><Icon icon={CrossIcon} size={14} /> Organization roles</li>
+                <li className="is-out"><Icon icon={CrossIcon} size={14} /> Team invitations</li>
               </ul>
             </div>
 
@@ -347,7 +373,7 @@ function ChangeOrder() {
     <section className="section section-co" id="change-orders" aria-labelledby="co-title">
       <div className="container co-grid">
         <div className="section-head" data-reveal>
-          <Kicker num="05">Change orders</Kicker>
+          <Kicker num="06">Change orders</Kicker>
           <h2 className="section-title display" id="co-title">
             The flag comes with the paperwork.
           </h2>
@@ -358,7 +384,9 @@ function ChangeOrder() {
           <ol className="lifecycle">
             {LIFECYCLE.map((item, index) => (
               <li key={item.state} data-reveal data-reveal-delay={String(120 + index * 90)}>
-                <span className={`lifecycle-dot ${index === LIFECYCLE.length - 1 ? 'is-end' : ''}`} aria-hidden="true" />
+                <span className={`lifecycle-num mono ${index === LIFECYCLE.length - 1 ? 'is-end' : ''}`} aria-hidden="true">
+                  {String(index + 1).padStart(2, '0')}
+                </span>
                 <div>
                   <strong>{item.state}</strong>
                   <p>{item.text}</p>
@@ -376,7 +404,7 @@ function ChangeOrder() {
           <article className="co-letter" aria-label="Example change order drafted by ScopeCI">
             <header className="co-letter-head mono">
               <span>Change order draft</span>
-              <span className="chip is-ok"><span className="chip-dot" />Ready to send</span>
+              <span className="chip is-ok">Ready to send</span>
             </header>
             <p className="co-subject">
               <span className="mono">Subject</span>
@@ -446,7 +474,7 @@ function Principles() {
     <section className="section section-principles" id="principles" aria-labelledby="principles-title">
       <div className="container principles-grid">
         <div className="section-head" data-reveal>
-          <Kicker num="06">Trust</Kicker>
+          <Kicker num="07">Trust</Kicker>
           <h2 className="section-title display" id="principles-title">
             Built to be trusted with contracts.
           </h2>
@@ -508,7 +536,7 @@ function Questions() {
     <section className="section section-faq" id="questions" aria-labelledby="questions-title">
       <div className="container faq-grid">
         <div className="section-head faq-head" data-reveal>
-          <Kicker num="07">Questions</Kicker>
+          <Kicker num="08">Questions</Kicker>
           <h2 className="section-title display" id="questions-title">
             Worth knowing first.
           </h2>
@@ -528,8 +556,8 @@ function Questions() {
             >
               <summary>
                 {item.q}
-                <span className="faq-icon" aria-hidden="true">
-                  <Plus size={16} />
+                <span className="faq-icon">
+                  <Icon icon={PlusIcon} size={18} />
                 </span>
               </summary>
               <p>{item.a}</p>
@@ -654,7 +682,7 @@ function Waitlist() {
             <ul className="cta-terms">
               {PILOT_TERMS.map((term) => (
                 <li key={term}>
-                  <Check size={15} aria-hidden="true" />
+                  <Icon icon={TickIcon} size={16} />
                   {term}
                 </li>
               ))}
@@ -664,8 +692,8 @@ function Waitlist() {
           <div className="cta-form-wrap">
             {settled ? (
               <div className="settled" role="status" data-testid="waitlist-success">
-                <span className="settled-mark" aria-hidden="true">
-                  <Check size={20} />
+                <span className="settled-mark">
+                  <Icon icon={TickIcon} size={22} />
                 </span>
                 <h3>{state === 'duplicate' ? "You're already on the list." : "You're on the list."}</h3>
                 <p>
@@ -760,7 +788,7 @@ function Waitlist() {
                   ) : (
                     <>
                       Join the pilot
-                      <ArrowRight size={16} aria-hidden="true" />
+                      <Icon icon={ArrowRightIcon} size={16} />
                     </>
                   )}
                 </button>
@@ -814,6 +842,7 @@ export default function Home() {
       <Navbar />
       <main id="main">
         <Hero />
+        <Product />
         <Problem />
         <HowItWorks />
         <Policy />
