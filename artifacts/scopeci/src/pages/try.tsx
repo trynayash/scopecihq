@@ -1,5 +1,4 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react';
-import { ArrowRight, Check, Link2 } from 'lucide-react';
 import {
   getDemoGithubPr,
   useEvaluateDemo,
@@ -9,6 +8,7 @@ import {
   type DemoScopeClause,
 } from '@workspace/api-client-react';
 import { Footer, Navbar, anchor, track, usePageMeta } from '../site';
+import { ArrowRightIcon, Icon, LinkIcon, TickIcon } from '../icons';
 import { ChangeOrderBox, ScopeEditor, changeOrderText, errorMessage, itemCount, verdictOf } from '../scope-ui';
 
 /* ------------------------------------------------------------------ */
@@ -266,7 +266,9 @@ export default function TryPage() {
                   const state = n < current ? 'done' : n === current ? 'current' : 'next';
                   return (
                     <li key={label} className={`is-${state}`} aria-current={state === 'current' ? 'step' : undefined}>
-                      <span className="try-progress-num mono">{state === 'done' ? <Check size={12} aria-hidden="true" /> : n}</span>
+                      <span className="try-progress-num mono">
+                        {state === 'done' ? <Icon icon={TickIcon} size={13} strokeWidth={2} /> : n}
+                      </span>
                       <span className="try-progress-label">{label}</span>
                     </li>
                   );
@@ -315,7 +317,7 @@ export default function TryPage() {
                   )}
                   <button type="submit" className="button button-primary" disabled={parseSow.isPending}>
                     {parseSow.isPending ? 'Reading…' : 'Read the scope'}
-                    <ArrowRight size={15} aria-hidden="true" />
+                    <Icon icon={ArrowRightIcon} size={16} />
                   </button>
                 </form>
               </section>
@@ -381,7 +383,7 @@ export default function TryPage() {
                         onChange={(e) => setPrUrl(e.target.value)}
                       />
                       <button type="submit" className="button button-quiet" disabled={prUrlState.loading}>
-                        <Link2 size={14} aria-hidden="true" />
+                        <Icon icon={LinkIcon} size={14} />
                         {prUrlState.loading ? 'Loading…' : 'Load'}
                       </button>
                     </div>
@@ -476,7 +478,7 @@ export default function TryPage() {
                     )}
                     <button type="submit" className="button button-primary" disabled={evaluate.isPending}>
                       {evaluate.isPending ? 'Checking…' : 'Check this pull request'}
-                      <ArrowRight size={15} aria-hidden="true" />
+                      <Icon icon={ArrowRightIcon} size={16} />
                     </button>
                   </form>
                 </section>
@@ -531,7 +533,7 @@ export default function TryPage() {
                     </p>
                     <a className="button button-primary" href={anchor('waitlist')} onClick={() => track('try_waitlist_click')}>
                       Join the pilot waitlist
-                      <ArrowRight size={15} aria-hidden="true" />
+                      <Icon icon={ArrowRightIcon} size={16} />
                     </a>
                   </div>
                 </section>

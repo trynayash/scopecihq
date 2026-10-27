@@ -1,6 +1,6 @@
 import { type FormEvent, useState } from 'react';
-import { Check, ClipboardCopy, Plus, X } from 'lucide-react';
 import type { DemoScopeClause } from '@workspace/api-client-react';
+import { CopyIcon, CrossIcon, Icon, PlusIcon, TickIcon } from './icons';
 
 /**
  * Pieces the public demo and the signed-in app share: the scope checklist
@@ -61,7 +61,7 @@ export function ItemList({
         <ul>
           {items.map((item) => (
             <li key={item}>
-              {tone === 'included' ? <Check size={13} aria-hidden="true" /> : <X size={13} aria-hidden="true" />}
+              {tone === 'included' ? <Icon icon={TickIcon} size={13} /> : <Icon icon={CrossIcon} size={13} />}
               <span>{item}</span>
               <button
                 type="button"
@@ -69,7 +69,7 @@ export function ItemList({
                 onClick={() => onChange(items.filter((i) => i !== item))}
                 aria-label={`Remove "${item}" from ${label.toLowerCase()}`}
               >
-                <X size={13} aria-hidden="true" />
+                <Icon icon={CrossIcon} size={13} />
               </button>
             </li>
           ))}
@@ -87,7 +87,7 @@ export function ItemList({
           onChange={(e) => setDraft(e.target.value)}
         />
         <button type="submit" className="scope-add-button" aria-label={`Add to ${label.toLowerCase()}`}>
-          <Plus size={14} aria-hidden="true" />
+          <Icon icon={PlusIcon} size={14} />
         </button>
       </form>
     </div>
@@ -193,7 +193,7 @@ export function ChangeOrderBox({
       <div className="change-order-head">
         {showHeading ? <h3>Change order draft</h3> : <span />}
         <button type="button" className="button button-quiet" onClick={copy}>
-          <ClipboardCopy size={14} aria-hidden="true" />
+          <Icon icon={CopyIcon} size={14} />
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>

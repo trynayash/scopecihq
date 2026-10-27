@@ -1,7 +1,6 @@
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Link, Route, Switch, useLocation, useParams } from 'wouter';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, ClipboardCopy, ExternalLink, FolderGit2, Lock, LogOut, Plus, Users } from 'lucide-react';
 import { SiGithub } from 'react-icons/si';
 import {
   getGetProjectQueryKey,
@@ -44,6 +43,19 @@ import {
 } from '@workspace/api-client-react';
 import { BASE, ICON_MARK, Logo, TRY_PATH, ThemeToggle, usePageMeta } from '../site';
 import { ChangeOrderBox, ScopeEditor, changeOrderText, errorMessage, itemCount, verdictOf } from '../scope-ui';
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  CopyIcon,
+  ExternalIcon,
+  FolderIcon,
+  Icon,
+  LockIcon,
+  PlusIcon,
+  SignOutIcon,
+  TeamIcon,
+  TickIcon,
+} from '../icons';
 
 /**
  * The signed-in app at /app: projects, each with its confirmed scope, its
@@ -162,11 +174,11 @@ function AppHeader({
             </span>
             <nav className="app-nav" aria-label="App">
               <Link href="/" className={`app-nav-link ${onProjects ? 'is-active' : ''}`} data-testid="link-projects">
-                <FolderGit2 size={14} aria-hidden="true" />
+                <Icon icon={FolderIcon} size={14} />
                 <span className="app-header-label">Projects</span>
               </Link>
               <Link href="/team" className={`app-nav-link ${location === '/team' ? 'is-active' : ''}`} data-testid="link-team">
-                <Users size={14} aria-hidden="true" />
+                <Icon icon={TeamIcon} size={14} />
                 <span className="app-header-label">Team</span>
               </Link>
             </nav>
@@ -178,7 +190,7 @@ function AppHeader({
             <>
               {user.avatarUrl && <img className="app-avatar" src={user.avatarUrl} alt={user.login} title={user.login} width="28" height="28" />}
               <button type="button" className="button button-quiet button-sm" onClick={signOut} disabled={endSession.isPending}>
-                <LogOut size={14} aria-hidden="true" />
+                <Icon icon={SignOutIcon} size={14} />
                 <span className="app-header-label">Sign out</span>
               </button>
             </>
@@ -313,7 +325,6 @@ function ProjectStatus({ project }: { project: Project }) {
   return (
     <p className="project-status">
       <span className={`chip ${project.scopeVersion ? 'is-ok' : 'is-warn'}`}>
-        <span className="chip-dot" />
         {project.scopeVersion ? `Scope ${project.scopeVersion}` : 'Scope not confirmed'}
       </span>
       <span className="chip">
@@ -356,7 +367,7 @@ function ProjectsHome() {
           <p className="try-lede">One project per client engagement: its scope, its repository and every pull request checked.</p>
         </div>
         <Link href="/projects/new" className="button button-primary" data-testid="button-new-project">
-          <Plus size={15} aria-hidden="true" />
+          <Icon icon={PlusIcon} size={16} />
           New project
         </Link>
       </header>
@@ -385,7 +396,7 @@ function ProjectsHome() {
               <Link href={`/projects/${project.id}`} className="project-card" data-testid="project-card">
                 <span className="project-card-top">
                   <span className="project-card-name">{project.name}</span>
-                  <ArrowRight size={16} aria-hidden="true" />
+                  <Icon icon={ArrowRightIcon} size={16} />
                 </span>
                 {project.clientName && <span className="project-card-client">{project.clientName}</span>}
                 <ProjectStatus project={project} />
@@ -436,7 +447,7 @@ function NewProject() {
   return (
     <>
       <Link href="/" className="app-back">
-        <ArrowLeft size={14} aria-hidden="true" /> Projects
+        <Icon icon={ArrowLeftIcon} size={14} /> Projects
       </Link>
       <header className="app-page-head">
         <h1 className="display">New project</h1>
@@ -473,7 +484,7 @@ function NewProject() {
         )}
         <button type="submit" className="button button-primary" disabled={create.isPending}>
           {create.isPending ? 'Creating…' : 'Create project'}
-          <ArrowRight size={15} aria-hidden="true" />
+          <Icon icon={ArrowRightIcon} size={16} />
         </button>
       </form>
     </>
@@ -505,7 +516,7 @@ function ProjectPage() {
   return (
     <>
       <Link href="/" className="app-back">
-        <ArrowLeft size={14} aria-hidden="true" /> Projects
+        <Icon icon={ArrowLeftIcon} size={14} /> Projects
       </Link>
       <header className="app-page-head">
         <div>
@@ -524,7 +535,18 @@ function ProjectPage() {
 function SectionHead({ step, title, done, id }: { step?: number; title: string; done?: boolean; id: string }) {
   return (
     <div className="try-step-head">
-      {step !== undefined && <span className={`step-num mono ${done ? 'is-done' : ''}`}>{done ? '✓' : step}</span>}
+      {step !== undefined && (
+        <span className={`step-num mono ${done ? 'is-done' : ''}`}>
+          {done ? (
+            <>
+              <Icon icon={TickIcon} size={13} strokeWidth={2} />
+              <span className="sr-only">Done</span>
+            </>
+          ) : (
+            step
+          )}
+        </span>
+      )}
       <h2 id={id}>{title}</h2>
     </div>
   );
@@ -645,7 +667,7 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
           )}
           <button type="submit" className="button button-primary" disabled={parse.isPending}>
             {parse.isPending ? 'Reading…' : 'Read the scope'}
-            <ArrowRight size={15} aria-hidden="true" />
+            <Icon icon={ArrowRightIcon} size={16} />
           </button>
         </form>
       ) : (
@@ -803,7 +825,12 @@ function RepositorySection({ project }: { project: Project }) {
                       onChange={(e) => setSelected(e.target.value)}
                     />
                     <span className="mono">{repo.fullName}</span>
-                    {repo.private && <Lock size={12} aria-label="private" />}
+                    {repo.private && (
+                      <>
+                        <Icon icon={LockIcon} size={13} />
+                        <span className="sr-only">private</span>
+                      </>
+                    )}
                     {usedElsewhere && <span className="repo-note">used by another project</span>}
                   </label>
                 );
@@ -961,7 +988,7 @@ function PullRequestRow({ project, pr }: { project: Project; pr: PullRequestResu
       <p className="pr-row-title">
         <a href={pr.url} target="_blank" rel="noreferrer">
           #{pr.number} {pr.title}
-          <ExternalLink size={12} aria-hidden="true" />
+          <Icon icon={ExternalIcon} size={13} />
         </a>
       </p>
       <p className="verdict-card-clause mono">
@@ -1215,7 +1242,7 @@ function TeamPage() {
   return (
     <>
       <Link href="/" className="app-back">
-        <ArrowLeft size={14} aria-hidden="true" /> Projects
+        <Icon icon={ArrowLeftIcon} size={14} /> Projects
       </Link>
       <header className="app-page-head">
         <div>
@@ -1292,7 +1319,7 @@ function TeamPage() {
               <div className="try-inline">
                 <input id="invite-url" className="mono" readOnly value={link} onFocus={(e) => e.target.select()} />
                 <button type="button" className="button button-quiet" onClick={copy}>
-                  <ClipboardCopy size={14} aria-hidden="true" />
+                  <Icon icon={CopyIcon} size={14} />
                   {copied ? 'Copied' : 'Copy'}
                 </button>
               </div>
@@ -1391,7 +1418,7 @@ function InvitePage() {
       )}
       <button type="button" className="button button-primary" onClick={join} disabled={accept.isPending} data-testid="button-join">
         {accept.isPending ? 'Joining…' : `Join ${invite.data.workspaceName}`}
-        <ArrowRight size={15} aria-hidden="true" />
+        <Icon icon={ArrowRightIcon} size={16} />
       </button>
     </section>
   );

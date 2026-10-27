@@ -121,8 +121,8 @@ html.menu-open { overflow: hidden; }
   place-items: center;
   width: 30px;
   height: 26px;
-  /* Outer radius 8px minus the 3px padding, so the corners nest. */
-  border-radius: var(--radius-s);
+  /* Outer 8px less the 3px padding and 1px border, so the corners nest. */
+  border-radius: var(--radius-xs);
   color: var(--fg-faint);
   transition: color var(--fast) var(--ease), background-color var(--fast) var(--ease);
 }
