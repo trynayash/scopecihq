@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
+  changeOrdersTable,
   commercialEvaluationsTable,
   commercialEventsTable,
   githubCheckRunsTable,
@@ -20,6 +21,8 @@ import {
   draftChangeOrder,
   evaluateCommercialScope,
   pullRequestAsWorkItem,
+  type ChangeOrder,
+  type ChangeOrderItem,
   type CommercialEvaluation,
   type LinearIssue,
 } from "@workspace/commercial-engine";
@@ -225,6 +228,55 @@ export class WebhookService {
         .set(unlink)
         .where(and(eq(projectsTable.githubInstallationId, installationId), inArray(projectsTable.repositoryExternalId, ids)));
     }
+  }
+
+  /**
+   * Checks a project's pull request again at the commit it was last checked
+   * on, as if GitHub had sent the event again. Used when a change order is
+   * approved, so the check and comment change straight away rather than on
+   * the next push.
+   */
+  async reevaluatePullRequest(pullRequestId: string): Promise<WebhookProcessResult> {
+    const deliveryId = `recheck_${crypto.randomUUID()}`;
+    const pr = await db.query.pullRequestsTable.findFirst({ where: eq(pullRequestsTable.id, pullRequestId) });
+    const project = pr?.projectId
+      ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, pr.projectId) })
+      : undefined;
+    const latest = pr
+      ? await db.query.commercialEvaluationsTable.findFirst({
+          where: eq(commercialEvaluationsTable.pullRequestId, pr.id),
+          orderBy: [desc(commercialEvaluationsTable.createdAt)],
+        })
+      : undefined;
+    if (!pr || !project?.githubInstallationId || !project.repositoryFullName || !project.repositoryExternalId || !latest?.headSha) {
+      return { deliveryId, status: "ignored" };
+    }
+
+    const [owner, name] = project.repositoryFullName.split("/");
+    return this.processPullRequestEvent(deliveryId, {
+      action: "rechecked",
+      installation: { id: Number(project.githubInstallationId) },
+      repository: { id: Number(project.repositoryExternalId), name, full_name: project.repositoryFullName, owner: { login: owner } },
+      pull_request: {
+        id: Number(pr.externalId.replace(/^gh_pr_/, "")),
+        number: pr.number,
+        title: pr.title,
+        body: pr.body,
+        head: { ref: pr.headBranch, sha: latest.headSha },
+        base: { ref: pr.baseBranch },
+        user: { login: pr.authorExternalId },
+        state: pr.state === "OPEN" ? "open" : "closed",
+        merged: pr.state === "MERGED",
+        draft: pr.isDraft,
+        additions: pr.additions,
+        deletions: pr.deletions,
+        changed_files: pr.changedFiles,
+        commits: pr.commitsCount,
+        html_url: pr.url,
+        created_at: pr.openedAt.toISOString(),
+        merged_at: pr.mergedAt?.toISOString() ?? null,
+      },
+    });
   }
 
   /**
@@ -514,6 +566,31 @@ export class WebhookService {
       const domainBaseline = toDomainBaseline(baselineRecord);
       const policyMode = (project?.policyMode ?? "OBSERVE") as CommercialEvaluation["policyMode"];
 
+      // Work a client approved through a change order is covered from then on,
+      // on this pull request and any later one.
+      const approvedChangeOrders: ChangeOrder[] = project
+        ? (
+            await db
+              .select()
+              .from(changeOrdersTable)
+              .where(and(eq(changeOrdersTable.projectId, project.id), eq(changeOrdersTable.status, "APPROVED")))
+          ).map((row) => {
+            const items = (row.itemsJson as ChangeOrderItem[] | null) ?? [];
+            return {
+              id: row.reference,
+              contractId: row.contractId,
+              baselineVersion: baselineRecord!.versionNumber,
+              title: row.title,
+              reason: row.description,
+              authorizedSubsystems: items.flatMap((i) => [i.item, ...(i.capability ? [i.capability] : [])]),
+              hours: { min: row.estimatedHoursMin, max: row.estimatedHoursMax },
+              amount: row.estimatedValueMax,
+              status: "APPROVED" as const,
+              approvedAt: row.approvedAt?.toISOString(),
+            };
+          })
+        : [];
+
       // 6. Invoke Commercial Engine (OBSERVE mode, HeadSha Invariant Enforced)
       const evaluation = evaluateCommercialScope({
         baseline: domainBaseline,
@@ -540,6 +617,7 @@ export class WebhookService {
         // A project's pull request is judged on its own when no issue is
         // linked; older Linear-mapped setups still ask for the link.
         issue: primaryIssue ?? (project ? pullRequestAsWorkItem() : undefined),
+        approvedChangeOrders,
         policyMode,
         // A project prices work only at the rate it was given; older setups keep the default.
         ...(project ? { hourlyRate: project.hourlyRate ?? 0 } : {}),
@@ -590,7 +668,9 @@ export class WebhookService {
           currency: evaluation.commercialValue.currency,
           reason: evaluation.detectedDelta.join("; ") || "Commercial evaluation completed",
           estimateSummary: describeEstimate(evaluation) ?? null,
-          changeOrderDraftJson: changeOrder ? { subject: changeOrder.subject, body: changeOrder.body } : null,
+          changeOrderDraftJson: changeOrder
+            ? { subject: changeOrder.subject, body: changeOrder.body, items: changeOrder.items }
+            : null,
           evaluatorVersion: evaluation.evaluatorVersion || "scopeci-alpha-0.2.0",
         })
         .returning();

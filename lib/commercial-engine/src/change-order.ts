@@ -14,6 +14,8 @@ export interface ChangeOrderItem {
   item: string;
   clauseRef: string;
   clauseTitle: string;
+  /** The evaluator's name for it, so an approval can be matched on later pull requests. */
+  capability?: string;
 }
 
 export interface ChangeOrderDraft {
@@ -51,18 +53,30 @@ export function excludedItems(evaluation: CommercialEvaluation): ChangeOrderItem
       capability.extractionMethod === "CONTRACT_PHRASE_MATCH"
         ? capability.name
         : (capability.description ?? capability.name.replace(/_/g, " "));
-    items.push({ item: capitalise(item), clauseRef: clause?.clauseRef ?? "", clauseTitle: clause?.title ?? "" });
+    items.push({
+      item: capitalise(item),
+      clauseRef: clause?.clauseRef ?? "",
+      clauseTitle: clause?.title ?? "",
+      capability: capability.name,
+    });
   }
   return items;
 }
 
-export function draftChangeOrder(input: ChangeOrderDraftInput): ChangeOrderDraft | undefined {
-  const { evaluation } = input;
-  if (evaluation.state !== "CHANGE_REQUIRED") return undefined;
+export interface ChangeOrderMessageInput {
+  items: ChangeOrderItem[];
+  pullRequestTitle: string;
+  projectName?: string;
+  clientName?: string;
+  agencyName?: string;
+  /** Hours someone stands behind: an issue estimate, or what a person typed in. */
+  hours?: number;
+  hourlyRate?: number;
+}
 
-  const items = excludedItems(evaluation);
-  if (items.length === 0) return undefined;
-
+/** The message itself, from the items and whatever is known about cost. */
+export function composeChangeOrder(input: ChangeOrderMessageInput): { subject: string; body: string } {
+  const { items } = input;
   const names = items.map((i) => i.item.toLowerCase());
   // "Statement of Work — Harbor & Pine" reads as just "Harbor & Pine" in a subject line.
   const project = input.projectName?.replace(/^\s*(?:statement of work|sow)\s*[:\-–—]\s*/i, "").trim();
@@ -72,10 +86,10 @@ export function draftChangeOrder(input: ChangeOrderDraftInput): ChangeOrderDraft
     .map((i) => `- ${i.item}${i.clauseRef ? ` (excluded in ${i.clauseRef}${i.clauseTitle ? ` ${i.clauseTitle}` : ""})` : ""}`)
     .join("\n");
 
-  const hours = evaluation.estimatedHours.max;
+  const hours = input.hours && input.hours > 0 ? input.hours : undefined;
   const rate = input.hourlyRate && input.hourlyRate > 0 ? input.hourlyRate : undefined;
   let cost: string;
-  if (evaluation.estimateSource === "LINEAR_ISSUE_ESTIMATE" && hours > 0) {
+  if (hours) {
     cost = rate
       ? `We estimate ${hours} hours for this, which is $${(hours * rate).toLocaleString("en-US")} at our rate of $${rate.toLocaleString("en-US")} an hour.`
       : `We estimate ${hours} hours for this.`;
@@ -100,5 +114,19 @@ export function draftChangeOrder(input: ChangeOrderDraftInput): ChangeOrderDraft
     input.agencyName?.trim() || "[Your name]",
   ].join("\n");
 
-  return { subject, body, items };
+  return { subject, body };
+}
+
+export function draftChangeOrder(input: ChangeOrderDraftInput): ChangeOrderDraft | undefined {
+  const { evaluation } = input;
+  if (evaluation.state !== "CHANGE_REQUIRED") return undefined;
+
+  const items = excludedItems(evaluation);
+  if (items.length === 0) return undefined;
+
+  const estimated =
+    evaluation.estimateSource === "LINEAR_ISSUE_ESTIMATE" && evaluation.estimatedHours.max > 0
+      ? evaluation.estimatedHours.max
+      : undefined;
+  return { ...composeChangeOrder({ ...input, items, hours: estimated }), items };
 }

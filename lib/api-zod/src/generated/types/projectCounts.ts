@@ -10,4 +10,9 @@ export interface ProjectCounts {
   checked: number;
   changeOrders: number;
   decisions: number;
+  /** Sent and still waiting on the client */
+  changeOrdersSent: number;
+  changeOrdersApproved: number;
+  /** Total of approved change orders that have a price, in the project's currency */
+  approvedValue: number;
 }

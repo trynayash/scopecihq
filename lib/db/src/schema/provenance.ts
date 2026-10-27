@@ -145,9 +145,20 @@ export const changeOrdersTable = pgTable(
     estimatedValueMin: integer("estimated_value_min").notNull(),
     estimatedValueMax: integer("estimated_value_max").notNull(),
     currency: varchar("currency", { length: 10 }).default("USD").notNull(),
-    status: varchar("status", { length: 50 }).default("PENDING").notNull(), // PENDING, APPROVED, REJECTED
+    // PENDING, APPROVED, REJECTED; change orders tracked in the app also use DRAFT and SENT.
+    status: varchar("status", { length: 50 }).default("PENDING").notNull(),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
     rejectedAt: timestamp("rejected_at", { withTimezone: true }),
+    // Tracked in the app: the project (projects.id in accounts.ts; no foreign
+    // key so the schema files don't import each other), the pull request
+    // that raised it, what it covers, and the message that was sent.
+    projectId: uuid("project_id"),
+    pullRequestId: uuid("pull_request_id").references(() => pullRequestsTable.id, { onDelete: "set null" }),
+    itemsJson: jsonb("items_json"),
+    hours: integer("hours"),
+    messageSubject: text("message_subject"),
+    messageBody: text("message_body"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -156,6 +167,8 @@ export const changeOrdersTable = pgTable(
     index("co_contract_idx").on(table.contractId),
     index("co_reference_idx").on(table.reference),
     index("co_status_idx").on(table.status),
+    index("co_project_idx").on(table.projectId),
+    uniqueIndex("co_pull_request_uidx").on(table.pullRequestId),
   ]
 );
 

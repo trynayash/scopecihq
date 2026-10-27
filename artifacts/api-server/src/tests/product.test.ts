@@ -34,6 +34,7 @@ const { setGitHubFetch } = await import("../github/github-http.js");
 const { GitHubAppClient, createAppJwt } = await import("../github/app-client.js");
 const { NoIssueProvider } = await import("../github/issue-provider.js");
 const { WebhookService } = await import("../github/webhook-service.js");
+const { setWebhookService } = await import("../routes/github.js");
 const { COMMENT_MARKER } = await import("../github/comment-formatter.js");
 
 /* ------------------------------------------------------------------ */
@@ -320,6 +321,8 @@ async function run() {
     gitHubClient: new GitHubAppClient({ appId: "424242", privateKey: PRIVATE_PEM, slug: "scopeci-test" }),
     issueProvider: new NoIssueProvider(),
   });
+  // Re-checks the app triggers (after a change order is approved) go through the same fake GitHub.
+  setWebhookService(service);
   async function deliver(payload: object, eventType = "pull_request") {
     const raw = Buffer.from(JSON.stringify(payload));
     const signature = `sha256=${crypto.createHmac("sha256", secret).update(raw).digest("hex")}`;
@@ -555,7 +558,108 @@ async function run() {
       assert.strictEqual(fake.checkRuns.filter((r) => r.repo === "harbor-agency/storefront").length, 2);
       assert.strictEqual(fake.comments["harbor-agency/storefront#12"].length, 2, "no duplicate comment");
       const counts = (await call(server, "/api/projects", { cookie: dana })).body.projects.find((p: any) => p.id === projectId).counts;
-      assert.deepStrictEqual(counts, { checked: 1, changeOrders: 1, decisions: 0 });
+      assert.deepStrictEqual(counts, {
+        checked: 1,
+        changeOrders: 1,
+        decisions: 0,
+        changeOrdersSent: 0,
+        changeOrdersApproved: 0,
+        approvedValue: 0,
+      });
+    });
+
+    let evaluationId = "";
+    await scenario("A flagged pull request's change order is priced and marked as sent", async () => {
+      const prs = await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana });
+      evaluationId = prs.body.pullRequests[0].evaluationId;
+      assert.strictEqual(prs.body.pullRequests[0].trackedChangeOrder, null);
+
+      const priced = await call(server, `/api/projects/${projectId}/change-order`, {
+        method: "PUT",
+        body: { evaluationId, hours: 16 },
+        cookie: dana,
+      });
+      assert.strictEqual(priced.status, 200, JSON.stringify(priced.body));
+      assert.strictEqual(priced.body.reference, "CO-1");
+      assert.strictEqual(priced.body.status, "DRAFT");
+      assert.strictEqual(priced.body.amount, 2400);
+      assert.ok(priced.body.body.includes("$2,400 at our rate of $150 an hour"), priced.body.body);
+      assert.deepStrictEqual(priced.body.items, ["Loyalty points programme"]);
+
+      const sent = await call(server, `/api/projects/${projectId}/change-order`, {
+        method: "PUT",
+        body: { evaluationId, status: "SENT", body: "Hi Harbor & Pine, as discussed on the call…" },
+        cookie: dana,
+      });
+      assert.strictEqual(sent.body.status, "SENT");
+      assert.ok(sent.body.sentAt);
+      assert.strictEqual(sent.body.body, "Hi Harbor & Pine, as discussed on the call…");
+      assert.strictEqual(sent.body.amount, 2400, "editing the message keeps the price");
+
+      const counts = (await call(server, `/api/projects/${projectId}`, { cookie: dana })).body.project.counts;
+      assert.strictEqual(counts.changeOrdersSent, 1);
+    });
+
+    await scenario("Approving it covers the work, and the pull request is re-checked at once", async () => {
+      const approved = await call(server, `/api/projects/${projectId}/change-order`, {
+        method: "PUT",
+        body: { evaluationId, status: "APPROVED" },
+        cookie: dana,
+      });
+      assert.strictEqual(approved.body.status, "APPROVED");
+      assert.ok(approved.body.decidedAt);
+
+      const head = "b".repeat(40);
+      let title = "";
+      for (let i = 0; i < 40; i++) {
+        title = fake.checkRuns.find((r) => r.body.head_sha === head)?.body.output?.title ?? "";
+        if (title === "ScopeCI: Covered by an approved change") break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      assert.strictEqual(title, "ScopeCI: Covered by an approved change");
+      assert.strictEqual(
+        fake.checkRuns.filter((r) => r.body.head_sha === head).length,
+        1,
+        "the same commit's check run was updated, not duplicated",
+      );
+
+      const prs = await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana });
+      assert.strictEqual(prs.body.pullRequests[0].verdict, "APPROVED_CHANGE");
+      assert.strictEqual(prs.body.pullRequests[0].trackedChangeOrder.status, "APPROVED");
+      assert.strictEqual(prs.body.pullRequests[0].changeOrder, null);
+
+      const counts = (await call(server, `/api/projects/${projectId}`, { cookie: dana })).body.project.counts;
+      assert.strictEqual(counts.changeOrdersApproved, 1);
+      assert.strictEqual(counts.approvedValue, 2400);
+      assert.strictEqual(counts.changeOrdersSent, 0);
+    });
+
+    await scenario("A decided change order is locked, and other workspaces can't touch it", async () => {
+      const prs = await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana });
+      const latestId = prs.body.pullRequests[0].evaluationId;
+      const again = await call(server, `/api/projects/${projectId}/change-order`, {
+        method: "PUT",
+        body: { evaluationId: latestId, status: "DECLINED" },
+        cookie: dana,
+      });
+      assert.strictEqual(again.status, 409);
+      const foreign = await call(server, `/api/projects/${projectId}/change-order`, {
+        method: "PUT",
+        body: { evaluationId: latestId, status: "DECLINED" },
+        cookie: eve,
+      });
+      assert.strictEqual(foreign.status, 404);
+      const unknown = await call(server, `/api/projects/${projectId}/change-order`, {
+        method: "PUT",
+        body: { evaluationId: crypto.randomUUID(), hours: 3 },
+        cookie: dana,
+      });
+      assert.strictEqual(unknown.status, 404);
+    });
+
+    await scenario("Later pull requests building the approved work are covered too", async () => {
+      const result: any = await deliver(prPayload({ id: 7001, full_name: "harbor-agency/storefront" }, 12, "f".repeat(40), "synchronize"));
+      assert.strictEqual(result.evaluationState, "APPROVED_CHANGE");
     });
 
     await scenario("A connected repository without a confirmed scope gets a neutral note", async () => {

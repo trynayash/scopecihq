@@ -6,6 +6,8 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './changeOrderUpdateInput';
+export * from './changeOrderUpdateInputStatus';
 export * from './demoChangedFile';
 export * from './demoChangedFileStatus';
 export * from './demoChangeOrder';
@@ -42,5 +44,7 @@ export * from './savedScope';
 export * from './sessionInfo';
 export * from './sessionOrganization';
 export * from './sessionUser';
+export * from './trackedChangeOrder';
+export * from './trackedChangeOrderStatus';
 export * from './waitlistSignup';
 export * from './waitlistSignupInput';

@@ -20,6 +20,7 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  ChangeOrderUpdateInput,
   DemoEvaluation,
   DemoEvaluationInput,
   DemoPullRequest,
@@ -39,6 +40,7 @@ import type {
   RepositoryLinkInput,
   SavedScope,
   SessionInfo,
+  TrackedChangeOrder,
   WaitlistSignup,
   WaitlistSignupInput
 } from './api.schemas';
@@ -1176,6 +1178,79 @@ export const useUnlinkProjectRepository = <TError = ErrorType<ErrorResponse>,
         TContext
       > => {
       return useMutation(getUnlinkProjectRepositoryMutationOptions(options));
+    }
+
+export const getUpdateChangeOrderUrl = (projectId: string,) => {
+
+
+
+
+  return `/api/projects/${projectId}/change-order`
+}
+
+/**
+ * Creates the change order for the pull request behind the given result on first use. Hours are priced at the project's hourly rate. An approved change order covers that work on this and later pull requests, and the pull request is checked again straight away.
+ * @summary Track the change order for a flagged pull request, price it, and record what the client decided
+ */
+export const updateChangeOrder = async (projectId: string,
+    changeOrderUpdateInput: ChangeOrderUpdateInput, options?: Parameters<typeof customFetch>[1]): Promise<TrackedChangeOrder> => {
+
+  return customFetch<TrackedChangeOrder>(getUpdateChangeOrderUrl(projectId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(changeOrderUpdateInput)
+  }
+);}
+
+
+
+
+
+export const getUpdateChangeOrderMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateChangeOrder>>, TError,{projectId: string;data: BodyType<ChangeOrderUpdateInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateChangeOrder>>, TError,{projectId: string;data: BodyType<ChangeOrderUpdateInput>}, TContext> => {
+
+const mutationKey = ['updateChangeOrder'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateChangeOrder>>, {projectId: string;data: BodyType<ChangeOrderUpdateInput>}> = (props) => {
+          const {projectId,data} = props ?? {};
+
+          return  updateChangeOrder(projectId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateChangeOrderMutationResult = NonNullable<Awaited<ReturnType<typeof updateChangeOrder>>>
+    export type UpdateChangeOrderMutationBody = BodyType<ChangeOrderUpdateInput>
+    export type UpdateChangeOrderMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Track the change order for a flagged pull request, price it, and record what the client decided
+ */
+export const useUpdateChangeOrder = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateChangeOrder>>, TError,{projectId: string;data: BodyType<ChangeOrderUpdateInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateChangeOrder>>,
+        TError,
+        {projectId: string;data: BodyType<ChangeOrderUpdateInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateChangeOrderMutationOptions(options));
     }
 
 export const getListProjectPullRequestsUrl = (projectId: string,) => {

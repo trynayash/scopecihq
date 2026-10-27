@@ -21,6 +21,7 @@ import {
   useParseDemoSow,
   useSaveProjectScope,
   useUnlinkProjectRepository,
+  useUpdateChangeOrder,
   useUpdateProject,
   type DemoScopeClause,
   type PolicyMode,
@@ -29,6 +30,7 @@ import {
   type SavedScope,
   type SessionOrganization,
   type SessionUser,
+  type TrackedChangeOrder,
 } from '@workspace/api-client-react';
 import { BASE, ICON_MARK, TRY_PATH, WORDMARK, usePageMeta } from '../site';
 import { ChangeOrderBox, ScopeEditor, changeOrderText, errorMessage, itemCount, verdictOf } from '../scope-ui';
@@ -58,6 +60,8 @@ function recall(): string | null {
     return null;
   }
 }
+
+const money = (amount: number) => `$${amount.toLocaleString('en-US')}`;
 
 const signInHref = (next: string) => `${BASE}/api/auth/github?next=${encodeURIComponent(next)}`;
 
@@ -214,7 +218,7 @@ export default function AppPage() {
 /* ------------------------------------------------------------------ */
 
 function ProjectStatus({ project }: { project: Project }) {
-  const { checked, changeOrders, decisions } = project.counts;
+  const { checked, changeOrders, decisions, changeOrdersSent, changeOrdersApproved, approvedValue } = project.counts;
   return (
     <p className="project-status mono">
       {project.scopeVersion ? `Scope ${project.scopeVersion}` : 'Scope not confirmed'}
@@ -224,10 +228,13 @@ function ProjectStatus({ project }: { project: Project }) {
         <>
           {' · '}
           {checked} checked
-          {changeOrders > 0 && `, ${changeOrders} change order${changeOrders === 1 ? '' : 's'}`}
+          {changeOrders > 0 && `, ${changeOrders} need${changeOrders === 1 ? 's' : ''} a change order`}
           {decisions > 0 && `, ${decisions} to decide`}
         </>
       )}
+      {changeOrdersSent > 0 && ` · ${changeOrdersSent} sent`}
+      {changeOrdersApproved > 0 &&
+        ` · ${changeOrdersApproved} approved${approvedValue > 0 ? ` (${money(approvedValue)})` : ''}`}
     </p>
   );
 }
@@ -731,10 +738,121 @@ function RepositorySection({ project }: { project: Project }) {
 
 /* Pull requests ----------------------------------------------------- */
 
-function PullRequestRow({ pr }: { pr: PullRequestResult }) {
+function changeOrderSummary(tracked: TrackedChangeOrder | null): string {
+  if (!tracked || tracked.status === 'DRAFT') return 'Not sent yet';
+  if (tracked.status === 'SENT') return `${tracked.reference} sent ${relativeTime(tracked.sentAt!)}, waiting on the client`;
+  const price = tracked.amount ? `, ${money(tracked.amount)}` : '';
+  return tracked.status === 'APPROVED' ? `${tracked.reference} approved${price}` : `${tracked.reference} declined`;
+}
+
+/** "Subject: …" on the first line, then the message, as the draft box shows it. */
+function splitMessage(text: string): { subject?: string; body: string } {
+  const match = text.match(/^Subject: (.*)\r?\n\r?\n([\s\S]*)$/);
+  return match ? { subject: match[1].slice(0, 300), body: match[2].slice(0, 10_000) } : { body: text.slice(0, 10_000) };
+}
+
+function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestResult }) {
+  const queryClient = useQueryClient();
+  const update = useUpdateChangeOrder();
+  const tracked = pr.trackedChangeOrder;
+  const source = tracked ? { subject: tracked.subject, body: tracked.body } : pr.changeOrder;
+  const [text, setText] = useState(changeOrderText(source));
+  const [hours, setHours] = useState(tracked?.hours ? String(tracked.hours) : '');
+  const [error, setError] = useState('');
+  useEffect(() => setText(changeOrderText(source)), [source?.subject, source?.body]);
+
+  const decided = tracked?.status === 'APPROVED' || tracked?.status === 'DECLINED';
+  const save = (data: { hours?: number | null; status?: 'SENT' | 'APPROVED' | 'DECLINED'; subject?: string; body?: string }) =>
+    update.mutate(
+      { projectId: project.id, data: { evaluationId: pr.evaluationId, ...data } },
+      {
+        onSuccess: () => {
+          setError('');
+          queryClient.invalidateQueries({ queryKey: getListProjectPullRequestsQueryKey(project.id) });
+          queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(project.id) });
+          queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
+        },
+        onError: (err) => setError(errorMessage(err, "We couldn't update the change order.")),
+      },
+    );
+
+  const price = (event: FormEvent) => {
+    event.preventDefault();
+    const value = hours.trim() === '' ? null : Math.min(10_000, Math.max(0, Math.round(Number(hours))));
+    save({ hours: value });
+  };
+
+  return (
+    <details className="pr-row-draft" open={tracked?.status === 'SENT' || undefined}>
+      <summary>
+        Change order <span className="pr-row-co-status">· {changeOrderSummary(tracked)}</span>
+      </summary>
+      {decided ? (
+        <p className="try-help">
+          {tracked!.status === 'APPROVED'
+            ? 'The client approved it. This work is covered on this and later pull requests.'
+            : 'The client declined it. Take the work out of this pull request, or absorb it knowingly.'}
+        </p>
+      ) : (
+        <>
+          <form className="co-hours" onSubmit={price}>
+            <div className="field">
+              <label htmlFor={`co-hours-${pr.evaluationId}`}>
+                Hours{' '}
+                <span className="field-optional">
+                  {project.hourlyRate ? `priced at ${money(project.hourlyRate)} an hour` : 'set an hourly rate in settings to show a price'}
+                </span>
+              </label>
+              <div className="try-inline">
+                <input
+                  id={`co-hours-${pr.evaluationId}`}
+                  type="number"
+                  min={0}
+                  max={10000}
+                  inputMode="numeric"
+                  value={hours}
+                  onChange={(e) => setHours(e.target.value)}
+                />
+                <button type="submit" className="button button-quiet" disabled={update.isPending}>
+                  Update the draft
+                </button>
+              </div>
+            </div>
+          </form>
+          <ChangeOrderBox id={`change-order-${pr.evaluationId}`} text={text} onChange={setText} showHeading={false} />
+        </>
+      )}
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+      {!decided && (
+        <div className="app-actions">
+          {tracked?.status !== 'SENT' && (
+            <button
+              type="button"
+              className="button button-primary"
+              disabled={update.isPending}
+              onClick={() => save({ status: 'SENT', ...splitMessage(text) })}
+            >
+              Mark as sent
+            </button>
+          )}
+          <button type="button" className="button button-quiet" disabled={update.isPending} onClick={() => save({ status: 'APPROVED' })}>
+            Client approved
+          </button>
+          <button type="button" className="try-link" disabled={update.isPending} onClick={() => save({ status: 'DECLINED' })}>
+            Client declined
+          </button>
+        </div>
+      )}
+    </details>
+  );
+}
+
+function PullRequestRow({ project, pr }: { project: Project; pr: PullRequestResult }) {
   const verdict = verdictOf(pr.verdict);
-  const [text, setText] = useState(changeOrderText(pr.changeOrder));
-  useEffect(() => setText(changeOrderText(pr.changeOrder)), [pr.changeOrder]);
 
   return (
     <li className={`verdict-card is-${verdict.tone} pr-row`} data-testid="pr-result">
@@ -751,12 +869,7 @@ function PullRequestRow({ pr }: { pr: PullRequestResult }) {
       </p>
       <p className="verdict-card-reason">{pr.reason}</p>
       {pr.estimate && <p className="verdict-card-estimate">Estimated impact: {pr.estimate}</p>}
-      {pr.changeOrder && (
-        <details className="pr-row-draft">
-          <summary>Change order draft</summary>
-          <ChangeOrderBox id={`change-order-${pr.evaluationId}`} text={text} onChange={setText} showHeading={false} />
-        </details>
-      )}
+      {(pr.changeOrder || pr.trackedChangeOrder) && <ChangeOrderPanel project={project} pr={pr} />}
     </li>
   );
 }
@@ -785,7 +898,7 @@ function PullRequestsSection({ project }: { project: Project }) {
       {results.data && results.data.pullRequests.length > 0 && (
         <ul className="pr-list">
           {results.data.pullRequests.map((pr) => (
-            <PullRequestRow key={pr.evaluationId} pr={pr} />
+            <PullRequestRow key={pr.evaluationId} project={project} pr={pr} />
           ))}
         </ul>
       )}

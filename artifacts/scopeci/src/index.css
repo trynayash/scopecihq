@@ -1425,6 +1425,9 @@ img.vendor-mark { width: auto; height: 1em; object-fit: contain; }
 .pr-row-draft { margin-top: 12px; border-top: 1px solid var(--rule); }
 .pr-row-draft summary { padding-block: 12px 4px; cursor: pointer; font-size: 14px; font-weight: 500; }
 .pr-row-draft .change-order { margin-top: 8px; }
+.pr-row-co-status { color: var(--muted); font-weight: 400; }
+.co-hours { margin-top: 10px; max-width: 420px; }
+.co-hours .field label { font-size: 13.5px; }
 
 .app-settings-row { margin-bottom: 4px; }
 .policy-options { display: grid; gap: 8px; margin-top: 6px; }

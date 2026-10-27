@@ -8,6 +8,7 @@
 import type { DemoChangeOrder } from './demoChangeOrder';
 import type { PullRequestResultPrState } from './pullRequestResultPrState';
 import type { PullRequestResultVerdict } from './pullRequestResultVerdict';
+import type { TrackedChangeOrder } from './trackedChangeOrder';
 
 export interface PullRequestResult {
   evaluationId: string;
@@ -24,5 +25,6 @@ export interface PullRequestResult {
   /** @nullable */
   estimate: string | null;
   changeOrder: DemoChangeOrder | null;
+  trackedChangeOrder: TrackedChangeOrder | null;
   checkedAt: Date;
 }

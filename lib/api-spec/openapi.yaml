@@ -364,6 +364,48 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /projects/{projectId}/change-order:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    put:
+      operationId: updateChangeOrder
+      tags: [projects]
+      summary: Track the change order for a flagged pull request, price it, and record what the client decided
+      description: >-
+        Creates the change order for the pull request behind the given result on first use. Hours are priced at
+        the project's hourly rate. An approved change order covers that work on this and later pull requests,
+        and the pull request is checked again straight away.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangeOrderUpdateInput"
+      responses:
+        "200":
+          description: The change order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackedChangeOrder"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such project or result in this organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The result has nothing to change-order, or the change order was already decided
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /projects/{projectId}/pull-requests:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -782,10 +824,21 @@ components:
           type: integer
         decisions:
           type: integer
+        changeOrdersSent:
+          type: integer
+          description: Sent and still waiting on the client
+        changeOrdersApproved:
+          type: integer
+        approvedValue:
+          type: integer
+          description: Total of approved change orders that have a price, in the project's currency
       required:
         - checked
         - changeOrders
         - decisions
+        - changeOrdersSent
+        - changeOrdersApproved
+        - approvedValue
     Project:
       type: object
       properties:
@@ -908,10 +961,15 @@ components:
           oneOf:
             - $ref: "#/components/schemas/DemoChangeOrder"
             - type: "null"
+        trackedChangeOrder:
+          oneOf:
+            - $ref: "#/components/schemas/TrackedChangeOrder"
+            - type: "null"
         checkedAt:
           type: string
           format: date-time
       required:
+        - trackedChangeOrder
         - evaluationId
         - number
         - title
@@ -967,3 +1025,66 @@ components:
       required:
         - installUrl
         - repositories
+    TrackedChangeOrder:
+      type: object
+      properties:
+        id:
+          type: string
+        reference:
+          type: string
+        status:
+          type: string
+          enum: [DRAFT, SENT, APPROVED, DECLINED]
+        items:
+          type: array
+          items:
+            type: string
+        hours:
+          type: ["integer", "null"]
+        amount:
+          type: ["integer", "null"]
+        currency:
+          type: string
+        subject:
+          type: string
+        body:
+          type: string
+        sentAt:
+          type: ["string", "null"]
+          format: date-time
+        decidedAt:
+          type: ["string", "null"]
+          format: date-time
+      required:
+        - id
+        - reference
+        - status
+        - items
+        - hours
+        - amount
+        - currency
+        - subject
+        - body
+        - sentAt
+        - decidedAt
+    ChangeOrderUpdateInput:
+      type: object
+      properties:
+        evaluationId:
+          type: string
+          maxLength: 36
+        hours:
+          type: ["integer", "null"]
+          minimum: 0
+          maximum: 10000
+        status:
+          type: string
+          enum: [SENT, APPROVED, DECLINED]
+        subject:
+          type: string
+          maxLength: 300
+        body:
+          type: string
+          maxLength: 10000
+      required:
+        - evaluationId

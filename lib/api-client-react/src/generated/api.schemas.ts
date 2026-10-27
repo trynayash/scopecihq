@@ -307,6 +307,11 @@ export interface ProjectCounts {
   checked: number;
   changeOrders: number;
   decisions: number;
+  /** Sent and still waiting on the client */
+  changeOrdersSent: number;
+  changeOrdersApproved: number;
+  /** Total of approved change orders that have a price, in the project's currency */
+  approvedValue: number;
 }
 
 export interface Project {
@@ -371,6 +376,34 @@ export const PullRequestResultVerdict = {
   OVERRIDDEN: 'OVERRIDDEN',
 } as const;
 
+export type TrackedChangeOrderStatus = typeof TrackedChangeOrderStatus[keyof typeof TrackedChangeOrderStatus];
+
+
+export const TrackedChangeOrderStatus = {
+  DRAFT: 'DRAFT',
+  SENT: 'SENT',
+  APPROVED: 'APPROVED',
+  DECLINED: 'DECLINED',
+} as const;
+
+export interface TrackedChangeOrder {
+  id: string;
+  reference: string;
+  status: TrackedChangeOrderStatus;
+  items: string[];
+  /** @nullable */
+  hours: number | null;
+  /** @nullable */
+  amount: number | null;
+  currency: string;
+  subject: string;
+  body: string;
+  /** @nullable */
+  sentAt: string | null;
+  /** @nullable */
+  decidedAt: string | null;
+}
+
 export interface PullRequestResult {
   evaluationId: string;
   number: number;
@@ -386,6 +419,7 @@ export interface PullRequestResult {
   /** @nullable */
   estimate: string | null;
   changeOrder: DemoChangeOrder | null;
+  trackedChangeOrder: TrackedChangeOrder | null;
   checkedAt: string;
 }
 
@@ -407,6 +441,31 @@ export interface GitHubRepositoryList {
   /** @nullable */
   installUrl: string | null;
   repositories: GitHubRepository[];
+}
+
+export type ChangeOrderUpdateInputStatus = typeof ChangeOrderUpdateInputStatus[keyof typeof ChangeOrderUpdateInputStatus];
+
+
+export const ChangeOrderUpdateInputStatus = {
+  SENT: 'SENT',
+  APPROVED: 'APPROVED',
+  DECLINED: 'DECLINED',
+} as const;
+
+export interface ChangeOrderUpdateInput {
+  /** @maxLength 36 */
+  evaluationId: string;
+  /**
+     * @minimum 0
+     * @maximum 10000
+     * @nullable
+     */
+  hours?: number | null;
+  status?: ChangeOrderUpdateInputStatus;
+  /** @maxLength 300 */
+  subject?: string;
+  /** @maxLength 10000 */
+  body?: string;
 }
 
 export type GetDemoGithubPrParams = {

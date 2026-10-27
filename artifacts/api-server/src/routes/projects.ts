@@ -2,7 +2,10 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
+  changeOrdersTable,
   commercialEvaluationsTable,
+  commercialEventsTable,
+  contractsTable,
   githubInstallationsTable,
   projectsTable,
   pullRequestsTable,
@@ -17,9 +20,13 @@ import {
   ListProjectsResponse,
   SaveProjectScopeBody,
   SaveProjectScopeResponse,
+  UpdateChangeOrderBody,
+  UpdateChangeOrderResponse,
   UpdateProjectBody,
   UpdateProjectResponse,
 } from "@workspace/api-zod";
+import { composeChangeOrder, type ChangeOrderItem } from "@workspace/commercial-engine";
+import { activeWebhookService } from "./github.js";
 import { rateLimiter } from "../middlewares/rate-limit.js";
 import { accountOf, requireAccount, sameOriginWrites, type Account } from "../lib/session.js";
 import { checklistFromRecord, loadActiveBaseline, saveChecklist } from "../lib/scope-store.js";
@@ -40,7 +47,23 @@ const gitHubLimiter = rateLimiter({ windowMs: 60_000, max: 30, message: "Too man
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type ProjectRow = typeof projectsTable.$inferSelect;
-type Counts = { checked: number; changeOrders: number; decisions: number };
+type ChangeOrderRow = typeof changeOrdersTable.$inferSelect;
+type Counts = {
+  checked: number;
+  changeOrders: number;
+  decisions: number;
+  changeOrdersSent: number;
+  changeOrdersApproved: number;
+  approvedValue: number;
+};
+const noCounts = (): Counts => ({
+  checked: 0,
+  changeOrders: 0,
+  decisions: 0,
+  changeOrdersSent: 0,
+  changeOrdersApproved: 0,
+  approvedValue: 0,
+});
 
 function badRequest(res: Response, error: { issues: Array<{ path: PropertyKey[]; message: string }> }): void {
   const [issue] = error.issues;
@@ -65,9 +88,9 @@ async function withProject(req: Request, res: Response): Promise<ProjectRow | nu
   return project;
 }
 
-/** Counts from the latest result of each pull request. */
+/** Counts from the latest result of each pull request, and from tracked change orders. */
 async function countsFor(projectIds: string[]): Promise<Map<string, Counts>> {
-  const counts = new Map<string, Counts>(projectIds.map((id) => [id, { checked: 0, changeOrders: 0, decisions: 0 }]));
+  const counts = new Map<string, Counts>(projectIds.map((id) => [id, noCounts()]));
   if (projectIds.length === 0) return counts;
   const rows = await db.execute<{ project_id: string; state: string }>(sql`
     select distinct on (pr.id) pr.project_id, e.state
@@ -83,7 +106,45 @@ async function countsFor(projectIds: string[]): Promise<Map<string, Counts>> {
     if (row.state === "CHANGE_REQUIRED") c.changeOrders++;
     if (row.state === "REVIEW_REQUIRED") c.decisions++;
   }
+
+  const orders = await db
+    .select({ projectId: changeOrdersTable.projectId, status: changeOrdersTable.status, value: changeOrdersTable.estimatedValueMax })
+    .from(changeOrdersTable)
+    .where(inArray(changeOrdersTable.projectId, projectIds));
+  for (const order of orders) {
+    const c = order.projectId ? counts.get(order.projectId) : undefined;
+    if (!c) continue;
+    if (order.status === "SENT") c.changeOrdersSent++;
+    if (order.status === "APPROVED") {
+      c.changeOrdersApproved++;
+      c.approvedValue += order.value;
+    }
+  }
   return counts;
+}
+
+const STATUS_OUT: Record<string, "DRAFT" | "SENT" | "APPROVED" | "DECLINED"> = {
+  DRAFT: "DRAFT",
+  SENT: "SENT",
+  APPROVED: "APPROVED",
+  REJECTED: "DECLINED",
+};
+
+function toTracked(row: ChangeOrderRow) {
+  const items = (row.itemsJson as ChangeOrderItem[] | null) ?? [];
+  return {
+    id: row.id,
+    reference: row.reference,
+    status: STATUS_OUT[row.status] ?? "DRAFT",
+    items: items.map((i) => i.item),
+    hours: row.hours,
+    amount: row.hours && row.estimatedValueMax > 0 ? row.estimatedValueMax : null,
+    currency: row.currency,
+    subject: row.messageSubject ?? row.title,
+    body: row.messageBody ?? row.description,
+    sentAt: row.sentAt,
+    decidedAt: row.approvedAt ?? row.rejectedAt,
+  };
 }
 
 async function scopeVersions(contractIds: string[]) {
@@ -110,7 +171,7 @@ function toProject(row: ProjectRow, scope: { version: string; savedAt: Date } | 
     scopeVersion: scope?.version ?? null,
     scopeSavedAt: scope?.savedAt ?? null,
     createdAt: row.createdAt,
-    counts: counts ?? { checked: 0, changeOrders: 0, decisions: 0 },
+    counts: counts ?? noCounts(),
   };
 }
 
@@ -389,6 +450,147 @@ router.delete("/projects/:projectId/repository", async (req, res): Promise<void>
 });
 
 /* ------------------------------------------------------------------ */
+/* Change orders                                                       */
+/* ------------------------------------------------------------------ */
+
+router.put("/projects/:projectId/change-order", async (req, res): Promise<void> => {
+  const parsed = UpdateChangeOrderBody.safeParse(req.body);
+  if (!parsed.success) return badRequest(res, parsed.error);
+  const project = await withProject(req, res);
+  if (!project) return;
+  const account = accountOf(res);
+  const input = parsed.data;
+
+  const evaluation = UUID.test(input.evaluationId)
+    ? await db.query.commercialEvaluationsTable.findFirst({
+        where: eq(commercialEvaluationsTable.id, input.evaluationId),
+      })
+    : undefined;
+  const pr = evaluation
+    ? await db.query.pullRequestsTable.findFirst({
+        where: and(eq(pullRequestsTable.id, evaluation.pullRequestId), eq(pullRequestsTable.projectId, project.id)),
+      })
+    : undefined;
+  if (!evaluation || !pr) {
+    res.status(404).json({ error: "No such result in this project." });
+    return;
+  }
+
+  const contract = project.contractId
+    ? await db.query.contractsTable.findFirst({ where: eq(contractsTable.id, project.contractId) })
+    : undefined;
+  const compose = (items: ChangeOrderItem[], hours: number | null) =>
+    composeChangeOrder({
+      items,
+      pullRequestTitle: pr.title,
+      // The client reads this: name the contract they signed.
+      projectName: contract?.name || project.name,
+      clientName: project.clientName ?? undefined,
+      hours: hours ?? undefined,
+      hourlyRate: project.hourlyRate ?? undefined,
+    });
+
+  let row = await db.query.changeOrdersTable.findFirst({ where: eq(changeOrdersTable.pullRequestId, pr.id) });
+  if (!row) {
+    const items = (evaluation.changeOrderDraftJson as { items?: ChangeOrderItem[] } | null)?.items ?? [];
+    if (items.length === 0 || !project.contractId) {
+      res.status(409).json({ error: "This pull request has no out-of-scope work to raise a change order for." });
+      return;
+    }
+    const [{ count }] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(changeOrdersTable)
+      .where(eq(changeOrdersTable.contractId, project.contractId));
+    const message = compose(items, null);
+    [row] = await db
+      .insert(changeOrdersTable)
+      .values({
+        organizationId: project.organizationId,
+        contractId: project.contractId,
+        sourceBaselineId: evaluation.scopeBaselineId,
+        reference: `CO-${count + 1}`,
+        title: items.map((i) => i.item).join(", ").slice(0, 255),
+        description: `Raised by pull request #${pr.number}: ${pr.title}`,
+        estimatedHoursMin: 0,
+        estimatedHoursMax: 0,
+        estimatedValueMin: 0,
+        estimatedValueMax: 0,
+        currency: project.currency,
+        status: "DRAFT",
+        projectId: project.id,
+        pullRequestId: pr.id,
+        itemsJson: items,
+        messageSubject: message.subject,
+        messageBody: message.body,
+      })
+      .returning();
+  }
+
+  const decided = row.status === "APPROVED" || row.status === "REJECTED";
+  if (decided && (input.status !== undefined || input.hours !== undefined)) {
+    res.status(409).json({ error: `${row.reference} was already ${row.status === "APPROVED" ? "approved" : "declined"}.` });
+    return;
+  }
+
+  const items = (row.itemsJson as ChangeOrderItem[] | null) ?? [];
+  const hours = input.hours !== undefined ? input.hours || null : row.hours;
+  let subject = row.messageSubject ?? "";
+  let body = row.messageBody ?? "";
+  if (input.hours !== undefined) ({ subject, body } = compose(items, hours));
+  if (input.subject !== undefined) subject = input.subject;
+  if (input.body !== undefined) body = input.body;
+  const value = hours && project.hourlyRate ? hours * project.hourlyRate : 0;
+
+  const now = new Date();
+  const nextStatus =
+    input.status === "SENT" ? "SENT" : input.status === "APPROVED" ? "APPROVED" : input.status === "DECLINED" ? "REJECTED" : row.status;
+  const [updated] = await db
+    .update(changeOrdersTable)
+    .set({
+      hours,
+      estimatedHoursMin: hours ?? 0,
+      estimatedHoursMax: hours ?? 0,
+      estimatedValueMin: value,
+      estimatedValueMax: value,
+      messageSubject: subject,
+      messageBody: body,
+      status: nextStatus,
+      ...(nextStatus === "SENT" && !row.sentAt ? { sentAt: now } : {}),
+      ...(nextStatus === "APPROVED" ? { approvedAt: now } : {}),
+      ...(nextStatus === "REJECTED" ? { rejectedAt: now } : {}),
+      updatedAt: now,
+    })
+    .where(eq(changeOrdersTable.id, row.id))
+    .returning();
+
+  if (nextStatus !== row.status) {
+    await db.insert(commercialEventsTable).values({
+      organizationId: project.organizationId,
+      entityType: "CHANGE_ORDER",
+      entityId: row.id,
+      eventType: `CHANGE_ORDER_${STATUS_OUT[nextStatus]}`,
+      actorType: "PM",
+      actorId: account.login,
+      previousState: row.status,
+      newState: nextStatus,
+      metadataJson: { reference: row.reference, pullRequestId: pr.id, hours, value },
+    });
+  }
+
+  if (nextStatus === "APPROVED" && row.status !== "APPROVED") {
+    // Check the pull request again now, so the GitHub check reflects the
+    // approval without waiting for another push.
+    setImmediate(() => {
+      activeWebhookService.reevaluatePullRequest(pr.id).catch((err) => {
+        req.log.warn({ err, pullRequestId: pr.id }, "Re-check after change order approval failed");
+      });
+    });
+  }
+
+  res.json(UpdateChangeOrderResponse.parse(toTracked(updated)));
+});
+
+/* ------------------------------------------------------------------ */
 /* Results                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -412,6 +614,15 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
     : [];
   const latest = new Map<string, (typeof evaluations)[number]>();
   for (const e of evaluations) if (!latest.has(e.pullRequestId)) latest.set(e.pullRequestId, e);
+  const tracked = prs.length
+    ? await db.query.changeOrdersTable.findMany({
+        where: inArray(
+          changeOrdersTable.pullRequestId,
+          prs.map((p) => p.id),
+        ),
+      })
+    : [];
+  const trackedBy = new Map(tracked.map((t) => [t.pullRequestId, t]));
 
   const pullRequests = prs.flatMap((pr) => {
     const e = latest.get(pr.id);
@@ -431,6 +642,7 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
           (e.decisionExplanationJson as { reason?: string } | null)?.reason ?? e.reason,
         estimate: e.estimateSummary,
         changeOrder: draft?.subject && draft.body ? { subject: draft.subject, body: draft.body } : null,
+        trackedChangeOrder: trackedBy.has(pr.id) ? toTracked(trackedBy.get(pr.id)!) : null,
         checkedAt: e.createdAt,
       },
     ];

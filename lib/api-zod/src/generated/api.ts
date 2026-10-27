@@ -264,7 +264,10 @@ export const ListProjectsResponse = zod.object({
   "counts": zod.object({
   "checked": zod.number().int(),
   "changeOrders": zod.number().int(),
-  "decisions": zod.number().int()
+  "decisions": zod.number().int(),
+  "changeOrdersSent": zod.number().int().describe('Sent and still waiting on the client'),
+  "changeOrdersApproved": zod.number().int(),
+  "approvedValue": zod.number().int().describe('Total of approved change orders that have a price, in the project\'s currency')
 })
 }))
 })
@@ -305,7 +308,10 @@ export const CreateProjectResponse = zod.object({
   "counts": zod.object({
   "checked": zod.number().int(),
   "changeOrders": zod.number().int(),
-  "decisions": zod.number().int()
+  "decisions": zod.number().int(),
+  "changeOrdersSent": zod.number().int().describe('Sent and still waiting on the client'),
+  "changeOrdersApproved": zod.number().int(),
+  "approvedValue": zod.number().int().describe('Total of approved change orders that have a price, in the project\'s currency')
 })
 })
 
@@ -353,7 +359,10 @@ export const GetProjectResponse = zod.object({
   "counts": zod.object({
   "checked": zod.number().int(),
   "changeOrders": zod.number().int(),
-  "decisions": zod.number().int()
+  "decisions": zod.number().int(),
+  "changeOrdersSent": zod.number().int().describe('Sent and still waiting on the client'),
+  "changeOrdersApproved": zod.number().int(),
+  "approvedValue": zod.number().int().describe('Total of approved change orders that have a price, in the project\'s currency')
 })
 }),
   "scope": zod.union([zod.object({
@@ -414,7 +423,10 @@ export const UpdateProjectResponse = zod.object({
   "counts": zod.object({
   "checked": zod.number().int(),
   "changeOrders": zod.number().int(),
-  "decisions": zod.number().int()
+  "decisions": zod.number().int(),
+  "changeOrdersSent": zod.number().int().describe('Sent and still waiting on the client'),
+  "changeOrdersApproved": zod.number().int(),
+  "approvedValue": zod.number().int().describe('Total of approved change orders that have a price, in the project\'s currency')
 })
 })
 
@@ -536,7 +548,10 @@ export const LinkProjectRepositoryResponse = zod.object({
   "counts": zod.object({
   "checked": zod.number().int(),
   "changeOrders": zod.number().int(),
-  "decisions": zod.number().int()
+  "decisions": zod.number().int(),
+  "changeOrdersSent": zod.number().int().describe('Sent and still waiting on the client'),
+  "changeOrdersApproved": zod.number().int(),
+  "approvedValue": zod.number().int().describe('Total of approved change orders that have a price, in the project\'s currency')
 })
 })
 
@@ -569,8 +584,57 @@ export const UnlinkProjectRepositoryResponse = zod.object({
   "counts": zod.object({
   "checked": zod.number().int(),
   "changeOrders": zod.number().int(),
-  "decisions": zod.number().int()
+  "decisions": zod.number().int(),
+  "changeOrdersSent": zod.number().int().describe('Sent and still waiting on the client'),
+  "changeOrdersApproved": zod.number().int(),
+  "approvedValue": zod.number().int().describe('Total of approved change orders that have a price, in the project\'s currency')
 })
+})
+
+
+/**
+ * Creates the change order for the pull request behind the given result on first use. Hours are priced at the project's hourly rate. An approved change order covers that work on this and later pull requests, and the pull request is checked again straight away.
+ * @summary Track the change order for a flagged pull request, price it, and record what the client decided
+ */
+export const updateChangeOrderPathProjectIdMax = 36;
+
+
+
+export const UpdateChangeOrderParams = zod.object({
+  "projectId": zod.coerce.string().max(updateChangeOrderPathProjectIdMax)
+})
+
+export const updateChangeOrderBodyEvaluationIdMax = 36;
+
+export const updateChangeOrderBodyHoursMin = 0;
+export const updateChangeOrderBodyHoursMax = 10000;
+
+export const updateChangeOrderBodySubjectMax = 300;
+
+export const updateChangeOrderBodyBodyMax = 10000;
+
+
+
+export const UpdateChangeOrderBody = zod.object({
+  "evaluationId": zod.string().max(updateChangeOrderBodyEvaluationIdMax),
+  "hours": zod.number().int().min(updateChangeOrderBodyHoursMin).max(updateChangeOrderBodyHoursMax).nullish(),
+  "status": zod.enum(['SENT', 'APPROVED', 'DECLINED']).optional(),
+  "subject": zod.string().max(updateChangeOrderBodySubjectMax).optional(),
+  "body": zod.string().max(updateChangeOrderBodyBodyMax).optional()
+})
+
+export const UpdateChangeOrderResponse = zod.object({
+  "id": zod.string(),
+  "reference": zod.string(),
+  "status": zod.enum(['DRAFT', 'SENT', 'APPROVED', 'DECLINED']),
+  "items": zod.array(zod.string()),
+  "hours": zod.number().int().nullable(),
+  "amount": zod.number().int().nullable(),
+  "currency": zod.string(),
+  "subject": zod.string(),
+  "body": zod.string(),
+  "sentAt": zod.coerce.date().nullable(),
+  "decidedAt": zod.coerce.date().nullable()
 })
 
 
@@ -600,6 +664,19 @@ export const ListProjectPullRequestsResponse = zod.object({
   "changeOrder": zod.union([zod.object({
   "subject": zod.string(),
   "body": zod.string()
+}),zod.null()]),
+  "trackedChangeOrder": zod.union([zod.object({
+  "id": zod.string(),
+  "reference": zod.string(),
+  "status": zod.enum(['DRAFT', 'SENT', 'APPROVED', 'DECLINED']),
+  "items": zod.array(zod.string()),
+  "hours": zod.number().int().nullable(),
+  "amount": zod.number().int().nullable(),
+  "currency": zod.string(),
+  "subject": zod.string(),
+  "body": zod.string(),
+  "sentAt": zod.coerce.date().nullable(),
+  "decidedAt": zod.coerce.date().nullable()
 }),zod.null()]),
   "checkedAt": zod.coerce.date()
 }))
