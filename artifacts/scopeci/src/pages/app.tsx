@@ -1,7 +1,6 @@
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Link, Route, Switch, useLocation, useParams } from 'wouter';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, ClipboardCopy, ExternalLink, Lock, LogOut, Plus, Users } from 'lucide-react';
 import { SiGithub } from 'react-icons/si';
 import {
   getGetProjectQueryKey,
@@ -42,8 +41,21 @@ import {
   type SessionUser,
   type TrackedChangeOrder,
 } from '@workspace/api-client-react';
-import { BASE, ICON_MARK, TRY_PATH, WORDMARK, usePageMeta } from '../site';
+import { BASE, ICON_MARK, Logo, TRY_PATH, ThemeToggle, usePageMeta } from '../site';
 import { ChangeOrderBox, ScopeEditor, changeOrderText, errorMessage, itemCount, verdictOf } from '../scope-ui';
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  CopyIcon,
+  ExternalIcon,
+  FolderIcon,
+  Icon,
+  LockIcon,
+  PlusIcon,
+  SignOutIcon,
+  TeamIcon,
+  TickIcon,
+} from '../icons';
 
 /**
  * The signed-in app at /app: projects, each with its confirmed scope, its
@@ -137,7 +149,9 @@ function AppHeader({
   workspaces?: SessionOrganization[];
 }) {
   const queryClient = useQueryClient();
+  const [location] = useLocation();
   const endSession = useEndSession();
+  const onProjects = location === '/' || location.startsWith('/projects');
   const signOut = () =>
     endSession.mutate(undefined, {
       onSettled: () => {
@@ -150,27 +164,38 @@ function AppHeader({
     <header className="app-header">
       <div className="container app-header-inner">
         <Link href="/" className="brand app-brand" aria-label="ScopeCI projects">
-          <picture className="brand-logo">
-            <source media="(max-width: 719px)" srcSet={ICON_MARK} />
-            <img src={WORDMARK} alt="ScopeCI" width="651" height="217" decoding="async" />
-          </picture>
+          <Logo />
         </Link>
         {user && (
-          <div className="app-account">
+          <>
+            <span className="app-header-divider" aria-hidden="true" />
             <span className="app-account-name">
-              {user.avatarUrl && <img src={user.avatarUrl} alt="" width="24" height="24" />}
               {organization ? <WorkspaceSwitcher current={organization} workspaces={workspaces} /> : <span>{user.login}</span>}
             </span>
-            <Link href="/team" className="app-team-link" data-testid="link-team">
-              <Users size={14} aria-hidden="true" />
-              <span className="app-header-label">Team</span>
-            </Link>
-            <button type="button" className="button button-quiet button-sm" onClick={signOut} disabled={endSession.isPending}>
-              <LogOut size={14} aria-hidden="true" />
-              <span className="app-header-label">Sign out</span>
-            </button>
-          </div>
+            <nav className="app-nav" aria-label="App">
+              <Link href="/" className={`app-nav-link ${onProjects ? 'is-active' : ''}`} data-testid="link-projects">
+                <Icon icon={FolderIcon} size={14} />
+                <span className="app-header-label">Projects</span>
+              </Link>
+              <Link href="/team" className={`app-nav-link ${location === '/team' ? 'is-active' : ''}`} data-testid="link-team">
+                <Icon icon={TeamIcon} size={14} />
+                <span className="app-header-label">Team</span>
+              </Link>
+            </nav>
+          </>
         )}
+        <div className="app-account">
+          <ThemeToggle />
+          {user && (
+            <>
+              {user.avatarUrl && <img className="app-avatar" src={user.avatarUrl} alt={user.login} title={user.login} width="28" height="28" />}
+              <button type="button" className="button button-quiet button-sm" onClick={signOut} disabled={endSession.isPending}>
+                <Icon icon={SignOutIcon} size={14} />
+                <span className="app-header-label">Sign out</span>
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </header>
   );
@@ -215,8 +240,9 @@ function SignIn({ available }: { available: boolean }) {
 
   return (
     <Frame>
-      <section className="app-signin" aria-labelledby="signin-title">
-        <h1 id="signin-title">Sign in to ScopeCI</h1>
+      <section className="app-signin panel" aria-labelledby="signin-title">
+        <img className="app-signin-mark" src={ICON_MARK} alt="" width="288" height="270" decoding="async" />
+        <h1 id="signin-title" className="display">Sign in to ScopeCI</h1>
         <p className="try-lede">
           Use your GitHub account. ScopeCI uses it to see who you are and which repositories you've given the ScopeCI
           app access to.
@@ -227,15 +253,20 @@ function SignIn({ available }: { available: boolean }) {
           </p>
         )}
         {available ? (
-          <a className="button button-primary" href={signInHref(next)} data-testid="button-sign-in">
+          <a className="button button-primary button-lg app-signin-button" href={signInHref(next)} data-testid="button-sign-in">
             <SiGithub size={16} aria-hidden="true" />
             Sign in with GitHub
           </a>
         ) : (
           !problem && <p className="try-notice">Sign-in isn't switched on for this server yet.</p>
         )}
+        <ol className="app-signin-steps">
+          <li>Signing in for the first time creates your workspace.</li>
+          <li>Add a project, its statement of work and its repository.</li>
+          <li>Every pull request on it gets a scope check.</li>
+        </ol>
         <p className="try-help">
-          Signing in for the first time creates your workspace. Rather look first?{' '}
+          Rather look first?{' '}
           <a className="try-link" href={TRY_PATH}>
             Try it on your SOW
           </a>
@@ -292,21 +323,27 @@ export default function AppPage() {
 function ProjectStatus({ project }: { project: Project }) {
   const { checked, changeOrders, decisions, changeOrdersSent, changeOrdersApproved, approvedValue } = project.counts;
   return (
-    <p className="project-status mono">
-      {project.scopeVersion ? `Scope ${project.scopeVersion}` : 'Scope not confirmed'}
-      {' · '}
-      {project.repository ? project.repository.fullName : 'No repository'}
-      {checked > 0 && (
-        <>
-          {' · '}
-          {checked} checked
-          {changeOrders > 0 && `, ${changeOrders} need${changeOrders === 1 ? 's' : ''} a change order`}
-          {decisions > 0 && `, ${decisions} to decide`}
-        </>
+    <p className="project-status">
+      <span className={`chip ${project.scopeVersion ? 'is-ok' : 'is-warn'}`}>
+        {project.scopeVersion ? `Scope ${project.scopeVersion}` : 'Scope not confirmed'}
+      </span>
+      <span className="chip">
+        <SiGithub size={11} aria-hidden="true" />
+        <span className="mono">{project.repository ? project.repository.fullName : 'No repository'}</span>
+      </span>
+      {checked > 0 && <span className="chip">{checked} checked</span>}
+      {changeOrders > 0 && (
+        <span className="chip is-alert">
+          {changeOrders} need{changeOrders === 1 ? 's' : ''} a change order
+        </span>
       )}
-      {changeOrdersSent > 0 && ` · ${changeOrdersSent} sent`}
-      {changeOrdersApproved > 0 &&
-        ` · ${changeOrdersApproved} approved${approvedValue > 0 ? ` (${money(approvedValue)})` : ''}`}
+      {decisions > 0 && <span className="chip is-warn">{decisions} to decide</span>}
+      {changeOrdersSent > 0 && <span className="chip">{changeOrdersSent} sent</span>}
+      {changeOrdersApproved > 0 && (
+        <span className="chip is-ok">
+          {changeOrdersApproved} approved{approvedValue > 0 ? ` · ${money(approvedValue)}` : ''}
+        </span>
+      )}
     </p>
   );
 }
@@ -326,11 +363,11 @@ function ProjectsHome() {
     <>
       <header className="app-page-head">
         <div>
-          <h1>Projects</h1>
+          <h1 className="display">Projects</h1>
           <p className="try-lede">One project per client engagement: its scope, its repository and every pull request checked.</p>
         </div>
         <Link href="/projects/new" className="button button-primary" data-testid="button-new-project">
-          <Plus size={15} aria-hidden="true" />
+          <Icon icon={PlusIcon} size={16} />
           New project
         </Link>
       </header>
@@ -343,7 +380,7 @@ function ProjectsHome() {
       )}
       {projects.data && projects.data.projects.length === 0 && (
         <section className="try-step app-onboarding">
-          <h2>Set up your first project</h2>
+          <h2 className="display">Set up your first project</h2>
           <ol className="app-steps">
             <li>Create a project for one client engagement.</li>
             <li>Paste its statement of work and confirm what's included and excluded.</li>
@@ -357,7 +394,10 @@ function ProjectsHome() {
           {projects.data.projects.map((project) => (
             <li key={project.id}>
               <Link href={`/projects/${project.id}`} className="project-card" data-testid="project-card">
-                <span className="project-card-name">{project.name}</span>
+                <span className="project-card-top">
+                  <span className="project-card-name">{project.name}</span>
+                  <Icon icon={ArrowRightIcon} size={16} />
+                </span>
                 {project.clientName && <span className="project-card-client">{project.clientName}</span>}
                 <ProjectStatus project={project} />
               </Link>
@@ -407,10 +447,10 @@ function NewProject() {
   return (
     <>
       <Link href="/" className="app-back">
-        <ArrowLeft size={14} aria-hidden="true" /> Projects
+        <Icon icon={ArrowLeftIcon} size={14} /> Projects
       </Link>
       <header className="app-page-head">
-        <h1>New project</h1>
+        <h1 className="display">New project</h1>
       </header>
       <form className="try-step app-form" onSubmit={submit}>
         <div className="field">
@@ -444,7 +484,7 @@ function NewProject() {
         )}
         <button type="submit" className="button button-primary" disabled={create.isPending}>
           {create.isPending ? 'Creating…' : 'Create project'}
-          <ArrowRight size={15} aria-hidden="true" />
+          <Icon icon={ArrowRightIcon} size={16} />
         </button>
       </form>
     </>
@@ -476,11 +516,11 @@ function ProjectPage() {
   return (
     <>
       <Link href="/" className="app-back">
-        <ArrowLeft size={14} aria-hidden="true" /> Projects
+        <Icon icon={ArrowLeftIcon} size={14} /> Projects
       </Link>
       <header className="app-page-head">
         <div>
-          <h1>{project.name}</h1>
+          <h1 className="display">{project.name}</h1>
           <ProjectStatus project={project} />
         </div>
       </header>
@@ -495,7 +535,18 @@ function ProjectPage() {
 function SectionHead({ step, title, done, id }: { step?: number; title: string; done?: boolean; id: string }) {
   return (
     <div className="try-step-head">
-      {step !== undefined && <span className={`step-num mono ${done ? 'is-done' : ''}`}>{done ? '✓' : step}</span>}
+      {step !== undefined && (
+        <span className={`step-num mono ${done ? 'is-done' : ''}`}>
+          {done ? (
+            <>
+              <Icon icon={TickIcon} size={13} strokeWidth={2} />
+              <span className="sr-only">Done</span>
+            </>
+          ) : (
+            step
+          )}
+        </span>
+      )}
       <h2 id={id}>{title}</h2>
     </div>
   );
@@ -616,7 +667,7 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
           )}
           <button type="submit" className="button button-primary" disabled={parse.isPending}>
             {parse.isPending ? 'Reading…' : 'Read the scope'}
-            <ArrowRight size={15} aria-hidden="true" />
+            <Icon icon={ArrowRightIcon} size={16} />
           </button>
         </form>
       ) : (
@@ -774,7 +825,12 @@ function RepositorySection({ project }: { project: Project }) {
                       onChange={(e) => setSelected(e.target.value)}
                     />
                     <span className="mono">{repo.fullName}</span>
-                    {repo.private && <Lock size={12} aria-label="private" />}
+                    {repo.private && (
+                      <>
+                        <Icon icon={LockIcon} size={13} />
+                        <span className="sr-only">private</span>
+                      </>
+                    )}
                     {usedElsewhere && <span className="repo-note">used by another project</span>}
                   </label>
                 );
@@ -932,7 +988,7 @@ function PullRequestRow({ project, pr }: { project: Project; pr: PullRequestResu
       <p className="pr-row-title">
         <a href={pr.url} target="_blank" rel="noreferrer">
           #{pr.number} {pr.title}
-          <ExternalLink size={12} aria-hidden="true" />
+          <Icon icon={ExternalIcon} size={13} />
         </a>
       </p>
       <p className="verdict-card-clause mono">
@@ -1186,11 +1242,11 @@ function TeamPage() {
   return (
     <>
       <Link href="/" className="app-back">
-        <ArrowLeft size={14} aria-hidden="true" /> Projects
+        <Icon icon={ArrowLeftIcon} size={14} /> Projects
       </Link>
       <header className="app-page-head">
         <div>
-          <h1>Team</h1>
+          <h1 className="display">Team</h1>
           <p className="try-lede">Everyone here sees and works on all of {team.name}'s projects.</p>
         </div>
       </header>
@@ -1263,7 +1319,7 @@ function TeamPage() {
               <div className="try-inline">
                 <input id="invite-url" className="mono" readOnly value={link} onFocus={(e) => e.target.select()} />
                 <button type="button" className="button button-quiet" onClick={copy}>
-                  <ClipboardCopy size={14} aria-hidden="true" />
+                  <Icon icon={CopyIcon} size={14} />
                   {copied ? 'Copied' : 'Copy'}
                 </button>
               </div>
@@ -1335,8 +1391,8 @@ function InvitePage() {
   if (invite.isPending) return <p className="app-loading">Checking the invite…</p>;
   if (invite.isError || !invite.data) {
     return (
-      <section className="app-signin">
-        <h1>This invite doesn't work</h1>
+      <section className="app-signin panel">
+        <h1 className="display">This invite doesn't work</h1>
         <p className="try-lede">{errorMessage(invite.error, 'The link may be wrong.')}</p>
         <p className="try-help">
           <Link href="/" className="try-link">
@@ -1348,8 +1404,8 @@ function InvitePage() {
   }
 
   return (
-    <section className="app-signin" aria-labelledby="invite-heading">
-      <h1 id="invite-heading">Join {invite.data.workspaceName}</h1>
+    <section className="app-signin panel" aria-labelledby="invite-heading">
+      <h1 id="invite-heading" className="display">Join {invite.data.workspaceName}</h1>
       <p className="try-lede">
         {invite.data.invitedBy ? `@${invite.data.invitedBy} invited you` : 'You were invited'} to work on{' '}
         {invite.data.workspaceName}'s projects in ScopeCI.
@@ -1362,7 +1418,7 @@ function InvitePage() {
       )}
       <button type="button" className="button button-primary" onClick={join} disabled={accept.isPending} data-testid="button-join">
         {accept.isPending ? 'Joining…' : `Join ${invite.data.workspaceName}`}
-        <ArrowRight size={15} aria-hidden="true" />
+        <Icon icon={ArrowRightIcon} size={16} />
       </button>
     </section>
   );

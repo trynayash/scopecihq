@@ -1,5 +1,4 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react';
-import { ArrowRight, Link2 } from 'lucide-react';
 import {
   getDemoGithubPr,
   useEvaluateDemo,
@@ -9,6 +8,7 @@ import {
   type DemoScopeClause,
 } from '@workspace/api-client-react';
 import { Footer, Navbar, anchor, track, usePageMeta } from '../site';
+import { ArrowRightIcon, Icon, LinkIcon, TickIcon } from '../icons';
 import { ChangeOrderBox, ScopeEditor, changeOrderText, errorMessage, itemCount, verdictOf } from '../scope-ui';
 
 /* ------------------------------------------------------------------ */
@@ -72,6 +72,8 @@ const SAMPLE_PRS: ReadonlyArray<{ label: string; hint: string; pr: DraftPullRequ
 ];
 
 const EMPTY_PR: DraftPullRequest = { title: '', branch: '', body: '', files: '' };
+
+const TRY_STEPS = ['Statement of work', 'What ScopeCI read', 'A pull request', 'The result'] as const;
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -235,6 +237,7 @@ export default function TryPage() {
   };
 
   const verdict = result ? verdictOf(result.state) : null;
+  const current = result ? 4 : clauses ? 3 : 1;
 
   return (
     <div className="site">
@@ -243,274 +246,300 @@ export default function TryPage() {
       <main id="main" className="try">
         <div className="container try-inner">
           <header className="try-head">
-            <h1 className="try-title">Try ScopeCI on your own SOW</h1>
+            <p className="kicker">
+              <span className="kicker-num">Demo</span>
+              <span className="kicker-rule" aria-hidden="true" />
+              No account needed
+            </p>
+            <h1 className="try-title display">Try ScopeCI on your own SOW</h1>
             <p className="try-lede">
               Paste a statement of work, fix anything ScopeCI misreads, then describe a pull request.
               The check is the real one. Nothing you paste is stored.
             </p>
           </header>
 
-          {/* Step 1 */}
-          <section className="try-step" aria-labelledby="step-sow">
-            <div className="try-step-head">
-              <span className="step-num mono">1</span>
-              <h2 id="step-sow">Your statement of work</h2>
-            </div>
-            <form onSubmit={readScope}>
-              <label className="sr-only" htmlFor="sow-text">
-                Statement of work
-              </label>
-              <textarea
-                id="sow-text"
-                className="try-textarea mono"
-                rows={14}
-                maxLength={40_000}
-                value={sow}
-                onChange={(e) => setSow(e.target.value)}
-                aria-describedby="sow-help"
-              />
-              <p id="sow-help" className="try-help">
-                This is a sample. Replace it with yours: Markdown or text copied from a PDF both work. Sections that
-                list what's included and what's out of scope give the best result.{' '}
-                {sow !== '' && (
-                  <button type="button" className="try-link" onClick={() => setSow('')}>
-                    Clear
-                  </button>
-                )}
-                {sow !== SAMPLE_SOW && (
-                  <button type="button" className="try-link" onClick={() => setSow(SAMPLE_SOW)}>
-                    Use the sample
-                  </button>
-                )}
-              </p>
-              {sowError && (
-                <p className="form-error" role="alert">
-                  {sowError}
-                </p>
-              )}
-              <button type="submit" className="button button-primary" disabled={parseSow.isPending}>
-                {parseSow.isPending ? 'Reading…' : 'Read the scope'}
-                <ArrowRight size={15} aria-hidden="true" />
-              </button>
-            </form>
-          </section>
+          <div className="try-layout">
+            <nav className="try-progress" aria-label="Progress">
+              <ol>
+                {TRY_STEPS.map((label, index) => {
+                  const n = index + 1;
+                  const state = n < current ? 'done' : n === current ? 'current' : 'next';
+                  return (
+                    <li key={label} className={`is-${state}`} aria-current={state === 'current' ? 'step' : undefined}>
+                      <span className="try-progress-num mono">
+                        {state === 'done' ? <Icon icon={TickIcon} size={13} strokeWidth={2} /> : n}
+                      </span>
+                      <span className="try-progress-label">{label}</span>
+                    </li>
+                  );
+                })}
+              </ol>
+            </nav>
 
-          {/* Step 2 */}
-          {clauses && (
-            <section className="try-step" aria-labelledby="step-scope">
-              <div className="try-step-head">
-                <span className="step-num mono">2</span>
-                <h2 id="step-scope" ref={scopeHeading} tabIndex={-1}>
-                  What ScopeCI read
-                </h2>
-              </div>
-              <p className="try-help">
-                Fix anything it got wrong. This list, not the raw document, is what pull requests are checked
-                against.
-              </p>
-              {itemCount(clauses) === 0 && (
-                <p className="try-notice">
-                  We didn't find anything marked as included or excluded. Add items below, or paste a document with
-                  "Included:" and "Out of scope:" lists.
-                </p>
-              )}
-              <ScopeEditor clauses={clauses} onChange={editScope} />
-            </section>
-          )}
-
-          {/* Step 3 */}
-          {clauses && (
-            <section className="try-step" aria-labelledby="step-pr">
-              <div className="try-step-head">
-                <span className="step-num mono">3</span>
-                <h2 id="step-pr">A pull request</h2>
-              </div>
-
-              <div className="try-samples" role="group" aria-label="Sample pull requests">
-                {SAMPLE_PRS.map((sample) => (
-                  <button
-                    type="button"
-                    key={sample.label}
-                    className={`try-sample ${pr.title === sample.pr.title ? 'is-active' : ''}`}
-                    onClick={() => {
-                      setPr(sample.pr);
-                      setResult(null);
-                    }}
-                  >
-                    <strong>{sample.label}</strong>
-                    <span>{sample.hint}</span>
-                  </button>
-                ))}
-              </div>
-
-              <form className="try-github" onSubmit={loadGitHubPr}>
-                <label htmlFor="pr-url">Or load a public GitHub pull request</label>
-                <div className="try-inline">
-                  <input
-                    id="pr-url"
-                    type="url"
-                    inputMode="url"
-                    placeholder="https://github.com/owner/repo/pull/123"
-                    value={prUrl}
-                    maxLength={300}
-                    onChange={(e) => setPrUrl(e.target.value)}
-                  />
-                  <button type="submit" className="button button-quiet" disabled={prUrlState.loading}>
-                    <Link2 size={14} aria-hidden="true" />
-                    {prUrlState.loading ? 'Loading…' : 'Load'}
-                  </button>
+            <div className="try-steps">
+              {/* Step 1 */}
+              <section className="try-step" aria-labelledby="step-sow">
+                <div className="try-step-head">
+                  <span className="step-num mono">1</span>
+                  <h2 id="step-sow">Your statement of work</h2>
                 </div>
-                <p aria-live="polite" className="try-help">
-                  {prUrlState.error && <span className="field-error">{prUrlState.error}</span>}
-                  {prUrlState.loaded}
-                </p>
-              </form>
-
-              <form onSubmit={check} className="try-pr">
-                <div className="field">
-                  <label htmlFor="pr-title">Title</label>
-                  <input
-                    id="pr-title"
-                    value={pr.title}
-                    maxLength={300}
-                    placeholder="Add loyalty points at checkout"
-                    onChange={(e) => setPr({ ...pr, title: e.target.value })}
-                  />
-                </div>
-                <div className="field">
-                  <label htmlFor="pr-files">
-                    Changed files <span className="field-optional">one per line, or paste git diff --name-status</span>
+                <form onSubmit={readScope}>
+                  <label className="sr-only" htmlFor="sow-text">
+                    Statement of work
                   </label>
                   <textarea
-                    id="pr-files"
-                    className="try-textarea mono"
-                    rows={5}
-                    value={pr.files}
-                    placeholder={'src/loyalty/points.ts\nsrc/checkout/cart.ts'}
-                    onChange={(e) => setPr({ ...pr, files: e.target.value })}
+                    id="sow-text"
+                    className="try-textarea try-sow mono"
+                    rows={14}
+                    maxLength={40_000}
+                    value={sow}
+                    onChange={(e) => setSow(e.target.value)}
+                    aria-describedby="sow-help"
                   />
-                </div>
-                <div className="try-row">
-                  <div className="field">
-                    <label htmlFor="pr-branch">
-                      Branch <span className="field-optional">optional</span>
-                    </label>
-                    <input
-                      id="pr-branch"
-                      value={pr.branch}
-                      maxLength={200}
-                      onChange={(e) => setPr({ ...pr, branch: e.target.value })}
-                    />
-                  </div>
-                  <div className="field">
-                    <label htmlFor="pr-hours">
-                      Estimated hours <span className="field-optional">optional</span>
-                    </label>
-                    <input
-                      id="pr-hours"
-                      type="number"
-                      min={0}
-                      max={10000}
-                      inputMode="decimal"
-                      value={hours}
-                      onChange={(e) => setHours(e.target.value)}
-                    />
-                  </div>
-                  <div className="field">
-                    <label htmlFor="pr-rate">
-                      Your hourly rate, $ <span className="field-optional">optional</span>
-                    </label>
-                    <input
-                      id="pr-rate"
-                      type="number"
-                      min={0}
-                      max={10000}
-                      inputMode="decimal"
-                      value={rate}
-                      onChange={(e) => setRate(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="field">
-                  <label htmlFor="pr-body">
-                    Description <span className="field-optional">optional</span>
-                  </label>
-                  <textarea
-                    id="pr-body"
-                    className="try-textarea"
-                    rows={3}
-                    maxLength={5000}
-                    value={pr.body}
-                    onChange={(e) => setPr({ ...pr, body: e.target.value })}
-                  />
-                </div>
-                {prError && (
-                  <p className="form-error" role="alert">
-                    {prError}
+                  <p id="sow-help" className="try-help">
+                    This is a sample. Replace it with yours: Markdown or text copied from a PDF both work. Sections that
+                    list what's included and what's out of scope give the best result.{' '}
+                    {sow !== '' && (
+                      <button type="button" className="try-link" onClick={() => setSow('')}>
+                        Clear
+                      </button>
+                    )}
+                    {sow !== SAMPLE_SOW && (
+                      <button type="button" className="try-link" onClick={() => setSow(SAMPLE_SOW)}>
+                        Use the sample
+                      </button>
+                    )}
                   </p>
-                )}
-                <button type="submit" className="button button-primary" disabled={evaluate.isPending}>
-                  {evaluate.isPending ? 'Checking…' : 'Check this pull request'}
-                  <ArrowRight size={15} aria-hidden="true" />
-                </button>
-              </form>
-            </section>
-          )}
+                  {sowError && (
+                    <p className="form-error" role="alert">
+                      {sowError}
+                    </p>
+                  )}
+                  <button type="submit" className="button button-primary" disabled={parseSow.isPending}>
+                    {parseSow.isPending ? 'Reading…' : 'Read the scope'}
+                    <Icon icon={ArrowRightIcon} size={16} />
+                  </button>
+                </form>
+              </section>
 
-          {/* Step 4 */}
-          {result && verdict && (
-            <section className="try-step try-result" aria-labelledby="step-result" aria-live="polite">
-              <div className="try-step-head">
-                <span className="step-num mono">4</span>
-                <h2 id="step-result" ref={resultHeading} tabIndex={-1}>
-                  The result
-                </h2>
-              </div>
-
-              <div className={`verdict-card is-${verdict.tone}`} data-testid="try-verdict">
-                <p className="verdict-card-label mono">{verdict.label}</p>
-                <p className="verdict-card-reason">{result.reason}</p>
-                {result.clause && (
-                  <p className="verdict-card-clause mono">
-                    {result.clause.clauseRef} {result.clause.title}
+              {/* Step 2 */}
+              {clauses && (
+                <section className="try-step" aria-labelledby="step-scope">
+                  <div className="try-step-head">
+                    <span className="step-num mono">2</span>
+                    <h2 id="step-scope" ref={scopeHeading} tabIndex={-1}>
+                      What ScopeCI read
+                    </h2>
+                  </div>
+                  <p className="try-help">
+                    Fix anything it got wrong. This list, not the raw document, is what pull requests are checked
+                    against.
                   </p>
-                )}
-                {result.delta.length > 0 && (
-                  <ul className="verdict-card-delta">
-                    {result.delta.map((line) => (
-                      <li key={line}>{line}</li>
+                  {itemCount(clauses) === 0 && (
+                    <p className="try-notice">
+                      We didn't find anything marked as included or excluded. Add items below, or paste a document with
+                      "Included:" and "Out of scope:" lists.
+                    </p>
+                  )}
+                  <ScopeEditor clauses={clauses} onChange={editScope} />
+                </section>
+              )}
+
+              {/* Step 3 */}
+              {clauses && (
+                <section className="try-step" aria-labelledby="step-pr">
+                  <div className="try-step-head">
+                    <span className="step-num mono">3</span>
+                    <h2 id="step-pr">A pull request</h2>
+                  </div>
+
+                  <div className="try-samples" role="group" aria-label="Sample pull requests">
+                    {SAMPLE_PRS.map((sample) => (
+                      <button
+                        type="button"
+                        key={sample.label}
+                        className={`try-sample ${pr.title === sample.pr.title ? 'is-active' : ''}`}
+                        onClick={() => {
+                          setPr(sample.pr);
+                          setResult(null);
+                        }}
+                      >
+                        <strong>{sample.label}</strong>
+                        <span>{sample.hint}</span>
+                      </button>
                     ))}
-                  </ul>
-                )}
-                {result.estimate && <p className="verdict-card-estimate">Estimated impact: {result.estimate}</p>}
-              </div>
+                  </div>
 
-              {result.changeOrder && (
-                <ChangeOrderBox
-                  id="change-order-text"
-                  text={changeOrder}
-                  onChange={setChangeOrder}
-                  onCopied={() => track('try_change_order_copied')}
-                />
+                  <form className="try-github" onSubmit={loadGitHubPr}>
+                    <label htmlFor="pr-url">Or load a public GitHub pull request</label>
+                    <div className="try-inline">
+                      <input
+                        id="pr-url"
+                        type="url"
+                        inputMode="url"
+                        placeholder="https://github.com/owner/repo/pull/123"
+                        value={prUrl}
+                        maxLength={300}
+                        onChange={(e) => setPrUrl(e.target.value)}
+                      />
+                      <button type="submit" className="button button-quiet" disabled={prUrlState.loading}>
+                        <Icon icon={LinkIcon} size={14} />
+                        {prUrlState.loading ? 'Loading…' : 'Load'}
+                      </button>
+                    </div>
+                    <p aria-live="polite" className="try-help">
+                      {prUrlState.error && <span className="field-error">{prUrlState.error}</span>}
+                      {prUrlState.loaded}
+                    </p>
+                  </form>
+
+                  <form onSubmit={check} className="try-pr">
+                    <div className="field">
+                      <label htmlFor="pr-title">Title</label>
+                      <input
+                        id="pr-title"
+                        value={pr.title}
+                        maxLength={300}
+                        placeholder="Add loyalty points at checkout"
+                        onChange={(e) => setPr({ ...pr, title: e.target.value })}
+                      />
+                    </div>
+                    <div className="field">
+                      <label htmlFor="pr-files">
+                        Changed files <span className="field-optional">one per line, or paste git diff --name-status</span>
+                      </label>
+                      <textarea
+                        id="pr-files"
+                        className="try-textarea mono"
+                        rows={5}
+                        value={pr.files}
+                        placeholder={'src/loyalty/points.ts\nsrc/checkout/cart.ts'}
+                        onChange={(e) => setPr({ ...pr, files: e.target.value })}
+                      />
+                    </div>
+                    <div className="try-row">
+                      <div className="field">
+                        <label htmlFor="pr-branch">
+                          Branch <span className="field-optional">optional</span>
+                        </label>
+                        <input
+                          id="pr-branch"
+                          value={pr.branch}
+                          maxLength={200}
+                          onChange={(e) => setPr({ ...pr, branch: e.target.value })}
+                        />
+                      </div>
+                      <div className="field">
+                        <label htmlFor="pr-hours">
+                          Estimated hours <span className="field-optional">optional</span>
+                        </label>
+                        <input
+                          id="pr-hours"
+                          type="number"
+                          min={0}
+                          max={10000}
+                          inputMode="decimal"
+                          value={hours}
+                          onChange={(e) => setHours(e.target.value)}
+                        />
+                      </div>
+                      <div className="field">
+                        <label htmlFor="pr-rate">
+                          Your hourly rate, $ <span className="field-optional">optional</span>
+                        </label>
+                        <input
+                          id="pr-rate"
+                          type="number"
+                          min={0}
+                          max={10000}
+                          inputMode="decimal"
+                          value={rate}
+                          onChange={(e) => setRate(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div className="field">
+                      <label htmlFor="pr-body">
+                        Description <span className="field-optional">optional</span>
+                      </label>
+                      <textarea
+                        id="pr-body"
+                        className="try-textarea"
+                        rows={3}
+                        maxLength={5000}
+                        value={pr.body}
+                        onChange={(e) => setPr({ ...pr, body: e.target.value })}
+                      />
+                    </div>
+                    {prError && (
+                      <p className="form-error" role="alert">
+                        {prError}
+                      </p>
+                    )}
+                    <button type="submit" className="button button-primary" disabled={evaluate.isPending}>
+                      {evaluate.isPending ? 'Checking…' : 'Check this pull request'}
+                      <Icon icon={ArrowRightIcon} size={16} />
+                    </button>
+                  </form>
+                </section>
               )}
 
-              <details className="try-comment">
-                <summary>The comment ScopeCI would post on the pull request</summary>
-                <pre className="mono">{result.comment}</pre>
-              </details>
+              {/* Step 4 */}
+              {result && verdict && (
+                <section className="try-step try-result" aria-labelledby="step-result" aria-live="polite">
+                  <div className="try-step-head">
+                    <span className="step-num mono">4</span>
+                    <h2 id="step-result" ref={resultHeading} tabIndex={-1}>
+                      The result
+                    </h2>
+                  </div>
 
-              <div className="try-cta">
-                <p>
-                  <strong>Want this on your real pull requests?</strong> We're taking a small group of fixed-price
-                  agencies on GitHub and Linear into the pilot.
-                </p>
-                <a className="button button-primary" href={anchor('waitlist')} onClick={() => track('try_waitlist_click')}>
-                  Join the pilot waitlist
-                  <ArrowRight size={15} aria-hidden="true" />
-                </a>
-              </div>
-            </section>
-          )}
+                  <div className={`verdict-card is-${verdict.tone}`} data-testid="try-verdict">
+                    <p className="verdict-card-label mono">{verdict.label}</p>
+                    <p className="verdict-card-reason">{result.reason}</p>
+                    {result.clause && (
+                      <p className="verdict-card-clause mono">
+                        {result.clause.clauseRef} {result.clause.title}
+                      </p>
+                    )}
+                    {result.delta.length > 0 && (
+                      <ul className="verdict-card-delta">
+                        {result.delta.map((line) => (
+                          <li key={line}>{line}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {result.estimate && <p className="verdict-card-estimate">Estimated impact: {result.estimate}</p>}
+                  </div>
+
+                  {result.changeOrder && (
+                    <ChangeOrderBox
+                      id="change-order-text"
+                      text={changeOrder}
+                      onChange={setChangeOrder}
+                      onCopied={() => track('try_change_order_copied')}
+                    />
+                  )}
+
+                  <details className="try-comment">
+                    <summary>The comment ScopeCI would post on the pull request</summary>
+                    <pre className="mono">{result.comment}</pre>
+                  </details>
+
+                  <div className="try-cta">
+                    <p>
+                      <strong>Want this on your real pull requests?</strong> We're taking a small group of fixed-price
+                      agencies on GitHub and Linear into the pilot.
+                    </p>
+                    <a className="button button-primary" href={anchor('waitlist')} onClick={() => track('try_waitlist_click')}>
+                      Join the pilot waitlist
+                      <Icon icon={ArrowRightIcon} size={16} />
+                    </a>
+                  </div>
+                </section>
+              )}
+            </div>
+          </div>
         </div>
       </main>
       <Footer />
