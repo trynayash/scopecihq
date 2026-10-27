@@ -57,6 +57,14 @@ export const pool = new Pool({
   connectionTimeoutMillis: 10_000,
 });
 
+// An idle connection the server drops (a restart, a failover, a pooler
+// closing it) is reported here. Without a listener Node treats it as an
+// uncaught error and the whole API exits; the pool replaces the connection
+// on the next query anyway.
+pool.on("error", (err) => {
+  console.error(`Postgres dropped an idle connection: ${err.message}`);
+});
+
 export const db = drizzle(pool, { schema });
 
 export * from "./schema";

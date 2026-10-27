@@ -549,7 +549,8 @@ export class WebhookService {
       const changeOrder = draftChangeOrder({
         evaluation,
         pullRequestTitle: prRecord.title,
-        projectName,
+        // The client reads this: name the contract they signed, as the demo does.
+        projectName: domainBaseline.title || projectName,
         clientName: project?.clientName ?? undefined,
         hourlyRate: project?.hourlyRate ?? undefined,
       });

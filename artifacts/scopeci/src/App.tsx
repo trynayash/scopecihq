@@ -25,6 +25,7 @@ import { useCreateWaitlistSignup } from '@workspace/api-client-react';
 import { ErrorBoundary } from '@/components/error-boundary';
 import NotFound from '@/pages/not-found';
 import TryPage from '@/pages/try';
+import AppPage from '@/pages/app';
 import { Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
 import {
   BASE,
@@ -1261,6 +1262,9 @@ function Router() {
         <Route path="/" component={Home} />
         <Route path="/privacy" component={Privacy} />
         <Route path="/try" component={TryPage} />
+        <Route path="/app" nest>
+          <AppPage />
+        </Route>
         <Route path="/admin/waitlist" component={AdminWaitlist} />
         <Route component={NotFound} />
       </Switch>

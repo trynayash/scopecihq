@@ -532,7 +532,7 @@ async function run() {
       const pr = prs.body.pullRequests[0];
       assert.strictEqual(pr.verdict, "CHANGE_REQUIRED");
       assert.strictEqual(pr.number, 12);
-      assert.ok(pr.changeOrder.subject.startsWith("Change request: loyalty points programme"));
+      assert.strictEqual(pr.changeOrder.subject, "Change request: loyalty points programme (Harbor & Pine Online Store)");
       assert.ok(pr.changeOrder.body.startsWith("Hi Harbor & Pine,"));
 
       const evaluation = await db.query.commercialEvaluationsTable.findFirst({

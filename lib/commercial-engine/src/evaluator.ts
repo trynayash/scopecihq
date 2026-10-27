@@ -579,7 +579,7 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
       });
     }
 
-    primaryReason = `Contract ${explicitlyExcludedCapabilities[0].clause.clauseRef} explicitly excludes ${explicitlyExcludedCapabilities.map((e) => e.capability.name).join(", ")}. Change Order authorization required.`;
+    primaryReason = `Contract ${explicitlyExcludedCapabilities[0].clause.clauseRef} explicitly excludes ${explicitlyExcludedCapabilities.map((e) => e.capability.name).join(", ")}. It needs an approved change order.`;
   } else if (
     weaklyExcludedCapabilities.length > 0 ||
     uncontractedCapabilities.length > 0 ||

@@ -1,125 +1,86 @@
-# ScopeCI Alpha — GitHub App Integration Guide
+# Connecting ScopeCI to GitHub
 
-## 1. Overview
+ScopeCI uses one GitHub App for two things:
 
-ScopeCI is designed to run as a GitHub App that monitors pull request activity, correlates code changes with contracted statement of work (SOW) baselines and Linear issues, and publishes commercial review evidence on GitHub pull requests.
+- **Sign in with GitHub.** The App's OAuth credentials identify the person and let ScopeCI ask GitHub which of the App's installations and repositories they can see. That is how a repository is linked to a project without trusting anything the browser sends.
+- **Checking pull requests.** When a pull request on a connected repository is opened or updated, ScopeCI reads its title, branch, description and changed files, checks them against the project's confirmed scope, and posts a check run (`scopeci / commercial`) and one comment, which it updates on every push.
 
-**Status today.** The webhook route, signature check, delivery log, diff collection, evaluation and database records are built and covered by `artifacts/api-server/src/tests/github-app.test.ts`. The only GitHub API client in the code is `MockGitHubClient`, which keeps check runs and comments in memory. Nothing is posted to real pull requests yet, and the GitHub and Linear routes are switched off in production unless `ENABLE_INTEGRATION_ROUTES=true`. The sections below describe the intended behaviour.
+The real client lives in `artifacts/api-server/src/github/app-client.ts`. Without `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` the server falls back to an in-memory client, which is what the test suites use; production refuses to accept webhooks in that state.
 
-In **Phase 2 (Alpha)**, ScopeCI runs strictly in **Observe Mode**:
-- GitHub Check Runs are published under `scopeci / commercial` with conclusion `neutral`.
-- Pull request merges are **never blocked**.
-- Non-duplicating, updateable PR review comments provide commercial evidence without asserting unauthorized legal conclusions.
+## 1. Register the App
 
----
+On GitHub: **Settings → Developer settings → GitHub Apps → New GitHub App** (or the same under an organization's settings, if the organization should own it). Use your deployed address in place of `https://scopeci.example.com`.
 
-## 2. GitHub App Setup & Configuration
+| Setting | Value |
+| :-- | :-- |
+| Homepage URL | `https://scopeci.example.com` |
+| Callback URL | `https://scopeci.example.com/api/auth/github/callback` |
+| Expire user authorization tokens | On |
+| Request user authorization (OAuth) during installation | **Off**. Sign-in starts from ScopeCI, which checks its own `state`; a code sent straight from the install screen would be refused. |
+| Setup URL | `https://scopeci.example.com/app`, with "Redirect on update" on. After installing, people land back in the app and return to the project they came from. |
+| Webhook URL | `https://scopeci.example.com/api/webhooks/github` |
+| Webhook secret | A long random string (`openssl rand -hex 32`). Same value as `GITHUB_WEBHOOK_SECRET`. |
+| Where can this GitHub App be installed? | Any account, so client agencies can install it on their own organizations. |
 
-### A. App Identification & Domain Architecture
-- **Application URL**: Set to `https://app.scopeci.<domain>` (or `http://localhost:3000` in dev).
-  - *Architectural Invariant*: ScopeCI separates public marketing/waitlist (`scopeci.<domain>`) from the authenticated product (`app.scopeci.<domain>`).
-- **Webhook URL**: `https://api.scopeci.<domain>/api/webhooks/github` (or Smee.io / Ngrok URL for local development).
-- **Webhook Secret**: Generate a cryptographically random secret (e.g. `openssl rand -hex 32`).
+**Repository permissions**
 
-### B. Required Permissions (Least Privilege Principle)
+| Permission | Access | Why |
+| :-- | :-- | :-- |
+| Pull requests | Read and write | Read pull requests; write the one ScopeCI comment. |
+| Checks | Read and write | Create the `scopeci / commercial` check run on each commit. |
+| Contents | Read-only | List a pull request's changed files. |
+| Metadata | Read-only | Required by GitHub for every App. |
 
-| Permission | Access | Justification |
-|---|---|---|
-| **Pull requests** | `Read & Write` | `Read`: Ingest PR lifecycle events (`opened`, `synchronize`, `reopened`, `closed`), extract issue references.<br>`Write`: Post and update commercial review evidence comments via idempotent marker `<!-- scopeci-commercial-review -->`. |
-| **Repository contents** | `Read-only` | Collect changed file paths, status, additions/deletions, and diff patches for commercial scope delta analysis. |
-| **Checks** | `Read & Write` | Create and update GitHub Check Runs (`scopeci / commercial`) to display commercial review status to engineers and reviewers. |
-| **Metadata** | `Read-only` | Required by GitHub for all GitHub Apps to resolve repository and organization metadata. |
+No administration, secrets, workflow or account permissions.
 
-*No administrative, repository deletion, secret, or workflow permissions are requested.*
+**Subscribe to events:** Pull request. GitHub always sends `installation` and `installation_repositories` events to Apps; ScopeCI uses them to stop checking when the App is suspended or uninstalled, and to disconnect a project when its repository is removed from the App.
 
-### C. Subscribed Webhook Events
-- `Pull request`
-  - `opened`
-  - `synchronize`
-  - `reopened`
-  - `closed`
-- `Ping`
+After creating the App:
 
----
+1. Note the **App ID**, the **Client ID**, and the App's **slug** (the last part of `https://github.com/apps/<slug>`).
+2. Generate a **client secret**.
+3. Generate a **private key** and download the `.pem` file.
 
-## 3. Environment Variables
+## 2. Configure the server
 
-Store in `.env` (never commit secrets to version control):
+| Variable | Value |
+| :-- | :-- |
+| `APP_BASE_URL` | `https://scopeci.example.com`. Used for the OAuth callback and the links on check runs and comments. |
+| `GITHUB_APP_ID` | The App ID |
+| `GITHUB_APP_SLUG` | The slug; builds the "Install the GitHub App" link and identifies the App's own comments |
+| `GITHUB_CLIENT_ID` | The Client ID |
+| `GITHUB_CLIENT_SECRET` | The client secret |
+| `GITHUB_APP_PRIVATE_KEY` | The `.pem` contents. Real newlines, `\n` escapes, or the whole file base64-encoded all work. |
+| `GITHUB_WEBHOOK_SECRET` | The webhook secret |
+| `GITHUB_TOKEN_ENCRYPTION_KEY` | A long random string (`openssl rand -hex 32`). Encrypts the GitHub user tokens ScopeCI stores. Sign-in stays off in production until it is set. |
+| `ENABLE_INTEGRATION_ROUTES` | `true`, so production accepts GitHub webhooks |
 
-```bash
-# ScopeCI App Base URL
-APP_BASE_URL=https://app.scopeci.com
+`GITHUB_API_URL` and `GITHUB_WEB_URL` default to `https://api.github.com` and `https://github.com`; set them for GitHub Enterprise Server.
 
-# GitHub App Integration
-GITHUB_APP_ID=123456
-GITHUB_CLIENT_ID=Iv1.xxxxxxxxxxxx
-GITHUB_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-GITHUB_WEBHOOK_SECRET=your_long_random_webhook_secret_here
-GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----"
+Then create the new tables (users, sessions, organization members, projects, and the new columns) in the production database:
+
+```sh
+DATABASE_URL=... pnpm --filter @workspace/db run push
 ```
 
----
+The changes only add tables and nullable columns, so existing data is untouched.
 
-## 4. Local Webhook Testing
+## 3. Check it works
 
-To receive GitHub webhooks locally during development:
+1. Open `/app`, sign in with GitHub, and create a project.
+2. Paste the statement of work, check what ScopeCI read, and save it.
+3. Under **Repository**, choose **Choose a repository**. If the list is empty, use **Install the GitHub App** and pick the repository; you come back to the project afterwards.
+4. Open a pull request on that repository. Within a few seconds it shows a `scopeci / commercial` check and a ScopeCI comment, and the project page lists the result. If the scope isn't saved yet, the check says so instead.
 
-1. Use [smee.io](https://smee.io) or [ngrok](https://ngrok.com):
-   ```bash
-   smee --url https://smee.io/your-unique-channel --target http://localhost:8080/api/webhooks/github
-   ```
-2. Set your GitHub App webhook URL to your Smee channel URL.
-3. Configure `GITHUB_WEBHOOK_SECRET` in `.env` matching your GitHub App settings.
-4. Execute automated mocked integration tests without credentials:
-   ```bash
-   pnpm run test:github
-   ```
+The webhook delivery log on the App's settings page shows each delivery and ScopeCI's response (`202` when accepted). The server logs each pull request it processes, and the `webhook_deliveries` table records why a delivery was ignored (an unclaimed installation, a repository not connected to a project, no confirmed scope).
 
----
+## How results are decided and reported
 
-## 5. Architectural Invariants & Data Flow
-
-### A. Fast Acknowledgment & Asynchronous Processing
-1. GitHub delivers payload $\to$ `POST /api/webhooks/github`.
-2. ScopeCI computes HMAC SHA-256 over raw request bytes (`X-Hub-Signature-256`).
-3. Delivery idempotency check: `webhook_deliveries` is checked by `X-GitHub-Delivery`.
-   - If already `PROCESSED`, returns HTTP `200 OK` with `{ status: "already_processed" }`.
-4. Webhook delivery recorded as `PENDING` with trimmed metadata and a 30-day retention expiration.
-5. Asynchronous evaluation pipeline is enqueued.
-6. HTTP `202 Accepted` is returned immediately.
-
-### B. HeadSha Invariant
-ScopeCI enforces strict commit SHA revision pinning:
-
-$$\text{PR revision SHA} \longrightarrow \text{Diff analysis SHA} \longrightarrow \text{Commercial evaluation SHA} \longrightarrow \text{GitHub Check Run headSha}$$
-
-If a pull request moves from $\text{SHA } A \to \text{SHA } B$ via `synchronize`:
-- A new diff analysis is recorded for $\text{SHA } B$.
-- A new commercial evaluation is computed for $\text{SHA } B$.
-- The GitHub Check Run is updated with `headSha = SHA B`.
-- An evaluation for an older revision $\text{SHA } A$ can **never** authorize $\text{SHA } B$.
-
-### C. Observe Mode (Graduated Trust)
-In Phase 2 Alpha, ScopeCI never blocks merges:
-- Check Run name: `scopeci / commercial`.
-- Conclusion: `neutral`.
-- Mode displayed: `OBSERVE`.
-- Output summary clearly flags `Review required` or `In scope` according to baseline deliverables, without asserting legal breach or contract nullity.
-
-### D. Idempotent PR Review Comments
-- ScopeCI PR comments contain the unique HTML comment marker:
-  ```html
-  <!-- scopeci-commercial-review -->
-  ```
-- Subsequent `synchronize` or re-delivery events inspect existing PR comments for this marker and edit the comment in-place, eliminating comment spam.
-- User-controlled strings (titles, bodies, branches) are HTML/Markdown escaped to prevent injection.
-
----
-
-## 6. Multi-Tenant Organization Boundary
-
-ScopeCI is multi-tenant by design:
-- `github_installations` maps `installation_id` to a single ScopeCI `organization_id`.
-- Repositories are resolved against `project_links` belonging strictly to that organization.
-- Unmapped repositories return a controlled `unmapped` state and do not create arbitrary database projects or leak cross-tenant data.
-- All database queries are strictly scoped by `organization_id`.
+- **Scope.** A project's pull requests are checked only against that project's active scope version. Saving the checklist again makes a new version; earlier results keep the version they were checked against. A repository whose installation no ScopeCI workspace has claimed is ignored.
+- **No linked issue needed.** Without a Linear issue, the pull request is judged on its own title, branch, description and files. Hours, and so prices, only appear when an estimate exists; ScopeCI never invents one.
+- **Policy** (project settings):
+  - *Report only* (default): the check is neutral and never affects merging.
+  - *Ask for a decision*: the check needs action when work is out of scope or unclear.
+  - *Fail the check*: the check fails on excluded work. With branch protection requiring it, merging waits for approval.
+- **One check run per commit.** A new push gets a new check run on its head commit; a redelivered webhook for the same commit updates the existing run.
+- **One comment per pull request.** ScopeCI edits only its own bot comment, never a person's comment that happens to quote it.

@@ -14,6 +14,7 @@ export const ICON_MARK = '/assets/logo-icon.png';
 export const BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
 export const PRIVACY_PATH = `${BASE}/privacy`;
 export const TRY_PATH = `${BASE}/try`;
+export const APP_PATH = `${BASE}/app`;
 export const anchor = (id: string) => `${BASE}/#${id}`;
 
 /* ------------------------------------------------------------------ */
@@ -163,6 +164,9 @@ export function Navbar() {
           </a>
           <a className="masthead-link" href={anchor('questions')} data-testid="link-questions">
             Questions
+          </a>
+          <a className="masthead-link" href={APP_PATH} data-testid="link-sign-in">
+            Sign in
           </a>
           <a className="button button-primary button-sm" href={anchor('waitlist')} data-testid="button-join-waitlist-nav">
             Join waitlist

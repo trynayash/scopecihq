@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react';
-import { ArrowRight, Check, ClipboardCopy, Link2, Plus, X } from 'lucide-react';
+import { ArrowRight, Link2 } from 'lucide-react';
 import {
   getDemoGithubPr,
   useEvaluateDemo,
@@ -9,6 +9,7 @@ import {
   type DemoScopeClause,
 } from '@workspace/api-client-react';
 import { Footer, Navbar, anchor, track, usePageMeta } from '../site';
+import { ChangeOrderBox, ScopeEditor, changeOrderText, errorMessage, itemCount, verdictOf } from '../scope-ui';
 
 /* ------------------------------------------------------------------ */
 /* Samples                                                             */
@@ -108,88 +109,6 @@ function filesToText(files: DemoChangedFile[]): string {
   return files.map((f) => `${code[f.status ?? 'modified']}\t${f.path}`).join('\n');
 }
 
-function errorMessage(error: unknown, fallback: string): string {
-  const data = (error as { data?: { error?: string; message?: string } } | null)?.data;
-  const status = (error as { status?: number } | null)?.status;
-  if (status === 429) return data?.message ?? 'Too many tries at once. Wait a minute.';
-  if (status === undefined) return "We couldn't reach ScopeCI. Check your connection and try again.";
-  return data?.error ?? fallback;
-}
-
-const VERDICT: Record<string, { label: string; tone: 'alert' | 'warn' | 'ok' }> = {
-  CHANGE_REQUIRED: { label: 'Change order needed', tone: 'alert' },
-  REVIEW_REQUIRED: { label: 'Needs a decision', tone: 'warn' },
-  IN_SCOPE: { label: 'In scope', tone: 'ok' },
-  APPROVED_CHANGE: { label: 'Covered by an approved change', tone: 'ok' },
-};
-
-/* ------------------------------------------------------------------ */
-/* Scope checklist                                                     */
-/* ------------------------------------------------------------------ */
-
-function ItemList({
-  id,
-  label,
-  tone,
-  items,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  tone: 'included' | 'excluded';
-  items: string[];
-  onChange: (items: string[]) => void;
-}) {
-  const [draft, setDraft] = useState('');
-  const add = (event: FormEvent) => {
-    event.preventDefault();
-    const item = draft.trim().toLowerCase();
-    if (item && !items.includes(item)) onChange([...items, item]);
-    setDraft('');
-  };
-
-  return (
-    <div className={`scope-list is-${tone}`}>
-      <p className="scope-list-label mono">{label}</p>
-      {items.length === 0 ? (
-        <p className="scope-list-empty">Nothing yet.</p>
-      ) : (
-        <ul>
-          {items.map((item) => (
-            <li key={item}>
-              {tone === 'included' ? <Check size={13} aria-hidden="true" /> : <X size={13} aria-hidden="true" />}
-              <span>{item}</span>
-              <button
-                type="button"
-                className="scope-remove"
-                onClick={() => onChange(items.filter((i) => i !== item))}
-                aria-label={`Remove "${item}" from ${label.toLowerCase()}`}
-              >
-                <X size={13} aria-hidden="true" />
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <form className="scope-add" onSubmit={add}>
-        <label className="sr-only" htmlFor={id}>
-          Add to {label.toLowerCase()}
-        </label>
-        <input
-          id={id}
-          value={draft}
-          maxLength={300}
-          placeholder={tone === 'included' ? 'Add included work' : 'Add excluded work'}
-          onChange={(e) => setDraft(e.target.value)}
-        />
-        <button type="submit" className="scope-add-button" aria-label={`Add to ${label.toLowerCase()}`}>
-          <Plus size={14} aria-hidden="true" />
-        </button>
-      </form>
-    </div>
-  );
-}
-
 /* ------------------------------------------------------------------ */
 /* Page                                                                */
 /* ------------------------------------------------------------------ */
@@ -204,7 +123,6 @@ export default function TryPage() {
   const [sowError, setSowError] = useState('');
   const [scopeTitle, setScopeTitle] = useState('');
   const [clauses, setClauses] = useState<DemoScopeClause[] | null>(null);
-  const [showEmptyClauses, setShowEmptyClauses] = useState(false);
 
   const [pr, setPr] = useState<DraftPullRequest>(EMPTY_PR);
   const [prUrl, setPrUrl] = useState('');
@@ -219,7 +137,6 @@ export default function TryPage() {
 
   const [result, setResult] = useState<DemoEvaluation | null>(null);
   const [changeOrder, setChangeOrder] = useState('');
-  const [copied, setCopied] = useState(false);
 
   const parseSow = useParseDemoSow();
   const evaluate = useEvaluateDemo();
@@ -254,16 +171,10 @@ export default function TryPage() {
     );
   };
 
-  const updateClause = (index: number, patch: Partial<DemoScopeClause>) => {
-    setClauses((current) => current?.map((c, i) => (i === index ? { ...c, ...patch } : c)) ?? null);
+  const editScope = (next: DemoScopeClause[]) => {
+    setClauses(next);
     setResult(null);
   };
-
-  const itemCount = clauses?.reduce((n, c) => n + c.included.length + c.excluded.length, 0) ?? 0;
-  const visibleClauses =
-    clauses
-      ?.map((clause, index) => ({ clause, index }))
-      .filter(({ clause }) => showEmptyClauses || clause.included.length + clause.excluded.length > 0) ?? [];
 
   /* Step 3 */
   const loadGitHubPr = async (event: FormEvent) => {
@@ -314,10 +225,7 @@ export default function TryPage() {
       {
         onSuccess: (evaluation) => {
           setResult(evaluation);
-          setChangeOrder(
-            evaluation.changeOrder ? `Subject: ${evaluation.changeOrder.subject}\n\n${evaluation.changeOrder.body}` : '',
-          );
-          setCopied(false);
+          setChangeOrder(changeOrderText(evaluation.changeOrder));
           track('try_evaluated');
           requestAnimationFrame(() => resultHeading.current?.focus());
         },
@@ -326,17 +234,7 @@ export default function TryPage() {
     );
   };
 
-  const copyChangeOrder = async () => {
-    try {
-      await navigator.clipboard.writeText(changeOrder);
-      setCopied(true);
-      track('try_change_order_copied');
-    } catch {
-      setCopied(false);
-    }
-  };
-
-  const verdict = result ? (VERDICT[result.state] ?? { label: result.state, tone: 'warn' as const }) : null;
+  const verdict = result ? verdictOf(result.state) : null;
 
   return (
     <div className="site">
@@ -410,45 +308,13 @@ export default function TryPage() {
                 Fix anything it got wrong. This list, not the raw document, is what pull requests are checked
                 against.
               </p>
-              {itemCount === 0 && (
+              {itemCount(clauses) === 0 && (
                 <p className="try-notice">
                   We didn't find anything marked as included or excluded. Add items below, or paste a document with
                   "Included:" and "Out of scope:" lists.
                 </p>
               )}
-              <div className="scope-clauses">
-                {(itemCount === 0 ? clauses.map((clause, index) => ({ clause, index })).slice(0, 1) : visibleClauses).map(
-                  ({ clause, index }) => (
-                    <article className="scope-clause" key={`${clause.clauseRef}-${index}`}>
-                      <h3 className="scope-clause-title">
-                        <span className="mono">{clause.clauseRef}</span> {clause.title}
-                      </h3>
-                      <div className="scope-columns">
-                        <ItemList
-                          id={`clause-${index}-included`}
-                          label="Included"
-                          tone="included"
-                          items={clause.included}
-                          onChange={(included) => updateClause(index, { included })}
-                        />
-                        <ItemList
-                          id={`clause-${index}-excluded`}
-                          label="Excluded"
-                          tone="excluded"
-                          items={clause.excluded}
-                          onChange={(excluded) => updateClause(index, { excluded })}
-                        />
-                      </div>
-                    </article>
-                  ),
-                )}
-              </div>
-              {itemCount > 0 && clauses.length > visibleClauses.length && (
-                <button type="button" className="try-link" onClick={() => setShowEmptyClauses(true)}>
-                  Show {clauses.length - visibleClauses.length} more section
-                  {clauses.length - visibleClauses.length === 1 ? '' : 's'} with nothing listed
-                </button>
-              )}
+              <ScopeEditor clauses={clauses} onChange={editScope} />
             </section>
           )}
 
@@ -620,29 +486,12 @@ export default function TryPage() {
               </div>
 
               {result.changeOrder && (
-                <div className="change-order">
-                  <div className="change-order-head">
-                    <h3>Change order draft</h3>
-                    <button type="button" className="button button-quiet" onClick={copyChangeOrder}>
-                      <ClipboardCopy size={14} aria-hidden="true" />
-                      {copied ? 'Copied' : 'Copy'}
-                    </button>
-                  </div>
-                  <p className="try-help">Edit it, then send it to your client instead of doing the work for free.</p>
-                  <label className="sr-only" htmlFor="change-order-text">
-                    Change order draft
-                  </label>
-                  <textarea
-                    id="change-order-text"
-                    className="try-textarea"
-                    rows={14}
-                    value={changeOrder}
-                    onChange={(e) => {
-                      setChangeOrder(e.target.value);
-                      setCopied(false);
-                    }}
-                  />
-                </div>
+                <ChangeOrderBox
+                  id="change-order-text"
+                  text={changeOrder}
+                  onChange={setChangeOrder}
+                  onCopied={() => track('try_change_order_copied')}
+                />
               )}
 
               <details className="try-comment">

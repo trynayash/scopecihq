@@ -2,12 +2,12 @@
 
 ScopeCI is a tool I'm building for software agencies that do fixed-price client work. It checks each pull request against what the client signed, so work outside the agreed scope is caught before it ships.
 
-**Status: in development.** The waitlist site is live at [scopeci.onrender.com](https://scopeci.onrender.com). The evaluator, the GitHub App and the Linear integration are built and tested, but the GitHub side still runs against an in-memory client and both integrations are switched off in production. Nothing runs on real repositories yet.
+**Status: pilot.** The site is live at [scopeci.onrender.com](https://scopeci.onrender.com), with a public demo at `/try` that runs the real check on a pasted statement of work. The signed-in app at `/app` (sign in with GitHub, projects, confirmed scope, connected repository, checked pull requests with change order drafts) works end to end against GitHub once a GitHub App is registered and configured; see [docs/github-app.md](docs/github-app.md). The Linear integration is built and tested but not yet connected per workspace.
 
 ## How it works
 
-1. A statement of work written in Markdown is parsed into a scope baseline: clauses, deliverables, inclusions and exclusions.
-2. When a pull request changes, ScopeCI collects the changed files and the linked Linear issue.
+1. A statement of work is parsed into a checklist of what each clause includes and excludes. A person corrects it and saves it as the project's scope; each save is a new version.
+2. When a pull request on the project's repository changes, ScopeCI collects its title, branch, description, changed files and, when there is one, the linked Linear issue.
 3. A rule-based evaluator (no AI model) compares the change with the baseline and returns one of: in scope, change required, review required, approved change, or overridden. It matches the SOW's own wording against the changed file paths, the pull request title and branch, and the linked issue. Work that matches an exclusion in the code or a title needs a change order; work the SOW doesn't mention, or that only a description mentions, goes to a person for review. Hours come only from the linked issue's estimate and are reported as not estimated when it has none.
 4. The result is reported as a GitHub check run and a pull request comment. The policy mode decides what happens next: observe (report only, never blocks a merge), review or enforce.
 
@@ -17,8 +17,8 @@ A pnpm workspace in TypeScript.
 
 | Path | What it is |
 | :-- | :-- |
-| `artifacts/scopeci` | The waitlist site (React and Vite) |
-| `artifacts/api-server` | The API (Express): waitlist signups, GitHub App webhooks, Linear OAuth |
+| `artifacts/scopeci` | The site, the `/try` demo and the signed-in app at `/app` (React and Vite) |
+| `artifacts/api-server` | The API (Express): sign-in, projects, the demo, GitHub App webhooks and client, waitlist, Linear OAuth |
 | `lib/commercial-engine` | The scope evaluator, the statement of work parser and the scenario simulator |
 | `lib/db` | PostgreSQL schema and queries (Drizzle) |
 | `lib/api-spec`, `lib/api-zod`, `lib/api-client-react` | The OpenAPI spec, the Zod schemas generated from it, and a typed React Query client |
@@ -51,6 +51,17 @@ PORT=3000 pnpm --filter @workspace/api-server run start  # serves the API and th
 
 Then open <http://localhost:3000>.
 
+## Tests
+
+```sh
+pnpm run simulate      # golden scenarios through the evaluator; no database
+pnpm test:demo         # the public demo API
+pnpm test:product      # sign-in, projects, scope, repository linking and a PR through a fake GitHub
+pnpm run db:test && pnpm test:github && pnpm test:linear && pnpm test:phase4 && pnpm test:security && pnpm test:launch
+```
+
+Everything but `simulate` needs `DATABASE_URL`. `scripts/test-db.sh` runs every database suite, each on a freshly created database.
+
 ## CI
 
-Every push runs `pnpm audit`, the type check, the simulator and the build in GitHub Actions.
+Every push runs `pnpm audit`, the type check, the simulator and the build, and every database suite against a Postgres service, in GitHub Actions.
