@@ -32,11 +32,16 @@ export async function ensureSchema(pool: Pool): Promise<{ warnings: string[] }> 
           await client.query(`ALTER TABLE "${table}" ENABLE ROW LEVEL SECURITY`);
           if (apiRoles) {
             await client.query(`REVOKE ALL ON TABLE "${table}" FROM ${apiRoles}`);
-            const seq = await client.query<{ seq: string | null }>(
-              "SELECT pg_get_serial_sequence($1, 'id') AS seq",
-              [`"${table}"`],
+            // Serial columns' sequences too; not every table has one.
+            const seqs = await client.query<{ seq: string | null }>(
+              `SELECT pg_get_serial_sequence(format('%I', table_name), column_name) AS seq
+                 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = $1 AND column_default LIKE 'nextval(%'`,
+              [table],
             );
-            if (seq.rows[0]?.seq) await client.query(`REVOKE ALL ON SEQUENCE ${seq.rows[0].seq} FROM ${apiRoles}`);
+            for (const { seq } of seqs.rows) {
+              if (seq) await client.query(`REVOKE ALL ON SEQUENCE ${seq} FROM ${apiRoles}`);
+            }
           }
         } catch (err) {
           warnings.push(`${table}: ${(err as Error).message}`);
