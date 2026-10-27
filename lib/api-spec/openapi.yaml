@@ -1155,6 +1155,11 @@ components:
           oneOf:
             - $ref: "#/components/schemas/TrackedChangeOrder"
             - type: "null"
+        excluded:
+          type: array
+          description: Work this pull request builds that the scope excludes, each with the clause that excludes it. Empty unless the result names excluded work.
+          items:
+            $ref: "#/components/schemas/ExcludedItem"
         checkedAt:
           type: string
           format: date-time
@@ -1171,7 +1176,21 @@ components:
         - reason
         - estimate
         - changeOrder
+        - excluded
         - checkedAt
+    ExcludedItem:
+      type: object
+      properties:
+        item:
+          type: string
+        clauseRef:
+          type: string
+        clauseTitle:
+          type: string
+      required:
+        - item
+        - clauseRef
+        - clauseTitle
     PullRequestResultList:
       type: object
       properties:

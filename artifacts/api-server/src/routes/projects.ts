@@ -629,7 +629,16 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
   const pullRequests = prs.flatMap((pr) => {
     const e = latest.get(pr.id);
     if (!e) return [];
-    const draft = e.changeOrderDraftJson as { subject?: string; body?: string } | null;
+    const draft = e.changeOrderDraftJson as {
+      subject?: string;
+      body?: string;
+      items?: Array<{ item?: string; clauseRef?: string; clauseTitle?: string }>;
+    } | null;
+    // The draft keeps each excluded item with its clause; drafts saved before
+    // items were stored simply have none.
+    const excluded = (draft?.items ?? []).flatMap((i) =>
+      i.item && i.clauseRef ? [{ item: i.item, clauseRef: i.clauseRef, clauseTitle: i.clauseTitle ?? "" }] : [],
+    );
     return [
       {
         evaluationId: e.id,
@@ -645,6 +654,7 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
         estimate: e.estimateSummary,
         changeOrder: draft?.subject && draft.body ? { subject: draft.subject, body: draft.body } : null,
         trackedChangeOrder: trackedBy.has(pr.id) ? toTracked(trackedBy.get(pr.id)!) : null,
+        excluded,
         checkedAt: e.createdAt,
       },
     ];

@@ -560,6 +560,11 @@ async function run() {
       assert.strictEqual(pr.number, 12);
       assert.strictEqual(pr.changeOrder.subject, "Change request: loyalty points programme (Harbor & Pine Online Store)");
       assert.ok(pr.changeOrder.body.startsWith("Hi Harbor & Pine,"));
+      assert.deepStrictEqual(
+        pr.excluded.map((e: { item: string; clauseRef: string }) => [e.item, e.clauseRef]),
+        [["Loyalty points programme", "§3.1"]],
+        "names the excluded item with the clause that excludes it",
+      );
 
       const evaluation = await db.query.commercialEvaluationsTable.findFirst({
         where: eq(commercialEvaluationsTable.id, pr.evaluationId),
@@ -650,6 +655,7 @@ async function run() {
       assert.strictEqual(prs.body.pullRequests[0].verdict, "APPROVED_CHANGE");
       assert.strictEqual(prs.body.pullRequests[0].trackedChangeOrder.status, "APPROVED");
       assert.strictEqual(prs.body.pullRequests[0].changeOrder, null);
+      assert.deepStrictEqual(prs.body.pullRequests[0].excluded, []);
 
       const counts = (await call(server, `/api/projects/${projectId}`, { cookie: dana })).body.project.counts;
       assert.strictEqual(counts.changeOrdersApproved, 1);

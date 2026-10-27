@@ -449,11 +449,138 @@
 .pr-row-title a { display: inline-flex; align-items: baseline; gap: 6px; overflow-wrap: anywhere; }
 .pr-row-title a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .pr-row .verdict-card-reason { font-size: 15px; }
-.pr-row-draft { margin-top: 12px; border-top: 1px solid var(--line); }
-.pr-row-draft summary { padding-block: 12px 4px; cursor: pointer; font-size: 14px; font-weight: 500; }
-.pr-row-draft .change-order { margin-top: 8px; }
-.pr-row-co-status { color: var(--fg-muted); font-weight: 400; }
-.co-hours { margin-top: 10px; max-width: 440px; }
+.pr-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 16px; flex-wrap: wrap; }
+.pr-row-meta { color: var(--fg-muted); font-size: 12px; }
+.pr-row-detail { margin-top: 8px; color: var(--fg-muted); font-size: 14px; line-height: 1.55; }
+.pr-row-co {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.pr-row-co .chip { max-width: 100%; white-space: normal; }
+
+/* The why line: the clause and what it excludes, pinned above the detail
+   in the result's own tone. */
+.why {
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+  padding: 10px 13px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-s);
+  background: var(--bg-sunken);
+  font-size: 15px;
+  line-height: 1.45;
+}
+.why.is-alert { border-color: var(--alert-line); background: var(--alert-wash); }
+.why.is-warn { border-color: var(--warn-line); background: var(--warn-wash); }
+.why-clause { color: var(--fg-2); }
+.why-clause .mono { font-size: 13px; font-weight: 500; }
+.why.is-alert .why-clause .mono { color: var(--alert); }
+.why.is-warn .why-clause .mono { color: var(--warn); }
+.why strong { color: var(--fg); font-weight: 650; letter-spacing: -0.01em; }
+/* With no items to name, the line is the reason itself: firm, not shouting. */
+.why-reason { color: var(--fg); font-weight: 550; }
+
+.co-hours { max-width: 440px; }
+
+/* ==================================================================
+   Change order panel
+   ================================================================== */
+
+.drawer-overlay {
+  position: fixed;
+  z-index: 60;
+  inset: 0;
+  background: rgba(10, 18, 14, 0.34);
+  animation: overlay-in 220ms var(--ease);
+}
+.dark .drawer-overlay { background: rgba(0, 0, 0, 0.6); }
+.drawer-overlay[data-state='closed'] { animation: overlay-out 180ms var(--ease) forwards; }
+
+.drawer {
+  position: fixed;
+  z-index: 61;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  width: min(580px, 100vw);
+  border-left: 1px solid var(--line-2);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-3);
+  animation: drawer-in 320ms var(--ease-out);
+}
+.drawer:focus { outline: 0; }
+.drawer[data-state='closed'] { animation: drawer-out 200ms var(--ease) forwards; }
+@keyframes drawer-in {
+  from { opacity: 0; transform: translateX(48px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes drawer-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateX(48px); }
+}
+@keyframes overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes overlay-out { from { opacity: 1; } to { opacity: 0; } }
+
+.drawer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px 16px 24px;
+  border-bottom: 1px solid var(--line);
+}
+.drawer-title { font-family: var(--font-display); font-size: 26px; font-weight: 450; letter-spacing: -0.015em; line-height: 1.15; }
+.drawer-title .mono { color: var(--fg-muted); font-size: 15px; letter-spacing: 0; }
+.drawer-sub { margin-top: 6px; color: var(--fg-muted); font-size: 14px; line-height: 1.45; }
+.drawer-sub a { display: inline-flex; align-items: baseline; gap: 5px; color: var(--fg-2); text-decoration: underline; text-decoration-color: var(--line-3); text-underline-offset: 3px; overflow-wrap: anywhere; }
+.drawer-sub a:hover { color: var(--fg); text-decoration-color: currentColor; }
+.drawer-head .icon-button { flex: none; margin-top: -2px; }
+
+.drawer-body {
+  flex: 1;
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  padding: 20px 24px 28px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.drawer-body .why { margin-top: 0; }
+.drawer-body .change-order { margin-top: 0; }
+.drawer-body .try-textarea { min-height: 300px; }
+
+.drawer-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 14px 24px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-raised);
+}
+
+/* Progress as three ruled columns: the rule fills as each step happens. */
+.co-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.co-steps li { display: grid; gap: 2px; padding-top: 10px; border-top: 2px solid var(--line-2); }
+.co-steps strong { display: inline-flex; align-items: center; gap: 6px; color: var(--fg-muted); font-size: 13.5px; font-weight: 600; }
+.co-steps span { color: var(--fg-faint); font-size: 12.5px; }
+.co-steps .is-done { border-top-color: var(--brand); }
+.co-steps .is-done strong { color: var(--fg); }
+.co-steps .is-done svg { color: var(--brand); }
+.co-steps .is-current { border-top-color: var(--warn); }
+.co-steps .is-current strong { color: var(--fg); }
+.co-steps .is-current span { color: var(--warn); }
+.co-steps .is-declined { border-top-color: var(--alert); }
+.co-steps .is-declined strong { color: var(--alert); }
 
 .app-workspace-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-workspace-select {
@@ -553,6 +680,10 @@
   .try-step .button { justify-self: stretch; }
   .try-sow { padding-left: 46px; background: linear-gradient(to right, transparent 34px, var(--alert-line) 34px 35px, transparent 35px), var(--paper); }
   .app-archive { margin-left: 0; }
+  .drawer-head { padding: 14px 14px 12px 18px; }
+  .drawer-body { padding: 16px 18px 24px; }
+  .drawer-foot { padding: 12px 18px; }
+  .drawer-foot .button { flex: 1 1 auto; }
   .app-signin { padding: 24px 18px; }
 }
 

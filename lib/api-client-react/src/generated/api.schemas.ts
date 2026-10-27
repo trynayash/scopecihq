@@ -415,6 +415,12 @@ export interface TrackedChangeOrder {
   decidedAt: string | null;
 }
 
+export interface ExcludedItem {
+  item: string;
+  clauseRef: string;
+  clauseTitle: string;
+}
+
 export interface PullRequestResult {
   evaluationId: string;
   number: number;
@@ -431,6 +437,8 @@ export interface PullRequestResult {
   estimate: string | null;
   changeOrder: DemoChangeOrder | null;
   trackedChangeOrder: TrackedChangeOrder | null;
+  /** Work this pull request builds that the scope excludes, each with the clause that excludes it. Empty unless the result names excluded work. */
+  excluded: ExcludedItem[];
   checkedAt: string;
 }
 

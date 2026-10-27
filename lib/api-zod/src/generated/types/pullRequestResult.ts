@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { DemoChangeOrder } from './demoChangeOrder';
+import type { ExcludedItem } from './excludedItem';
 import type { PullRequestResultPrState } from './pullRequestResultPrState';
 import type { PullRequestResultVerdict } from './pullRequestResultVerdict';
 import type { TrackedChangeOrder } from './trackedChangeOrder';
@@ -26,5 +27,7 @@ export interface PullRequestResult {
   estimate: string | null;
   changeOrder: DemoChangeOrder | null;
   trackedChangeOrder: TrackedChangeOrder | null;
+  /** Work this pull request builds that the scope excludes, each with the clause that excludes it. Empty unless the result names excluded work. */
+  excluded: ExcludedItem[];
   checkedAt: Date;
 }

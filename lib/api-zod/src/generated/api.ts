@@ -835,6 +835,11 @@ export const ListProjectPullRequestsResponse = zod.object({
   "sentAt": zod.coerce.date().nullable(),
   "decidedAt": zod.coerce.date().nullable()
 }),zod.null()]),
+  "excluded": zod.array(zod.object({
+  "item": zod.string(),
+  "clauseRef": zod.string(),
+  "clauseTitle": zod.string()
+})).describe('Work this pull request builds that the scope excludes, each with the clause that excludes it. Empty unless the result names excluded work.'),
   "checkedAt": zod.coerce.date()
 }))
 })

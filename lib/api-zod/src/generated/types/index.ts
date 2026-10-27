@@ -23,6 +23,7 @@ export * from './demoScopeClause';
 export * from './demoScopeInput';
 export * from './demoSowInput';
 export * from './errorResponse';
+export * from './excludedItem';
 export * from './getDemoGithubPrParams';
 export * from './gitHubRepository';
 export * from './gitHubRepositoryList';

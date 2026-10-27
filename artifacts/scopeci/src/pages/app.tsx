@@ -1,6 +1,7 @@
-import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Route, Switch, useLocation, useParams } from 'wouter';
 import { useQueryClient } from '@tanstack/react-query';
+import * as Dialog from '@radix-ui/react-dialog';
 import { SiGithub } from 'react-icons/si';
 import {
   getGetProjectQueryKey,
@@ -47,6 +48,7 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   CopyIcon,
+  CrossIcon,
   ExternalIcon,
   FolderIcon,
   Icon,
@@ -867,16 +869,90 @@ function RepositorySection({ project }: { project: Project }) {
 /* Pull requests ----------------------------------------------------- */
 
 function changeOrderSummary(tracked: TrackedChangeOrder | null): string {
-  if (!tracked || tracked.status === 'DRAFT') return 'Not sent yet';
+  if (!tracked || tracked.status === 'DRAFT') return 'Change order not sent yet';
   if (tracked.status === 'SENT') return `${tracked.reference} sent ${relativeTime(tracked.sentAt!)}, waiting on the client`;
   const price = tracked.amount ? `, ${money(tracked.amount)}` : '';
   return tracked.status === 'APPROVED' ? `${tracked.reference} approved${price}` : `${tracked.reference} declined`;
 }
 
+const CHANGE_ORDER_TONE: Record<TrackedChangeOrder['status'], string> = {
+  DRAFT: '',
+  SENT: 'is-warn',
+  APPROVED: 'is-ok',
+  DECLINED: 'is-alert',
+};
+
 /** "Subject: …" on the first line, then the message, as the draft box shows it. */
 function splitMessage(text: string): { subject?: string; body: string } {
   const match = text.match(/^Subject: (.*)\r?\n\r?\n([\s\S]*)$/);
   return match ? { subject: match[1].slice(0, 300), body: match[2].slice(0, 10_000) } : { body: text.slice(0, 10_000) };
+}
+
+const shortDate = (value: string | Date) =>
+  new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+
+/**
+ * What a PM needs to read first: the clause and the excluded work it names,
+ * or, when nothing was excluded but someone still has to decide, the reason.
+ * In-scope results have nothing to pin.
+ */
+function WhyLine({ pr, tone }: { pr: PullRequestResult; tone: 'alert' | 'warn' | 'ok' }) {
+  if (pr.excluded.length > 0) {
+    // One line per clause, in the order the items were found.
+    const clauses: Array<{ ref: string; title: string; items: string[] }> = [];
+    for (const { item, clauseRef, clauseTitle } of pr.excluded) {
+      const clause = clauses.find((c) => c.ref === clauseRef);
+      if (clause) clause.items.push(item);
+      else clauses.push({ ref: clauseRef, title: clauseTitle, items: [item] });
+    }
+    return (
+      <div className={`why is-${tone === 'ok' ? 'neutral' : tone}`}>
+        {clauses.map((clause) => (
+          <p key={clause.ref}>
+            <span className="why-clause">
+              <span className="mono">{clause.ref}</span> {clause.title} excludes
+            </span>{' '}
+            <strong>{clause.items.join(', ')}</strong>
+          </p>
+        ))}
+      </div>
+    );
+  }
+  if (tone === 'ok') return null;
+  return (
+    <div className={`why is-${tone}`}>
+      <p className="why-reason">{pr.reason}</p>
+    </div>
+  );
+}
+
+/** Drafted, sent, answered: where the change order stands, newest step last. */
+function ChangeOrderSteps({ pr }: { pr: PullRequestResult }) {
+  const tracked = pr.trackedChangeOrder;
+  const status = tracked?.status ?? 'DRAFT';
+  const sent = status !== 'DRAFT';
+  const steps = [
+    { label: 'Drafted', state: 'done', note: shortDate(pr.checkedAt) },
+    { label: 'Sent', state: sent ? 'done' : 'next', note: tracked?.sentAt ? shortDate(tracked.sentAt) : 'Not yet' },
+    status === 'APPROVED'
+      ? { label: 'Approved', state: 'done', note: tracked?.decidedAt ? shortDate(tracked.decidedAt) : '' }
+      : status === 'DECLINED'
+        ? { label: 'Declined', state: 'declined', note: tracked?.decidedAt ? shortDate(tracked.decidedAt) : '' }
+        : { label: 'Client’s answer', state: sent ? 'current' : 'next', note: sent ? 'Waiting' : '' },
+  ];
+  return (
+    <ol className="co-steps" aria-label="Change order progress">
+      {steps.map((step) => (
+        <li key={step.label} className={`is-${step.state}`}>
+          <strong>
+            {step.state === 'done' && <Icon icon={TickIcon} size={13} strokeWidth={2} />}
+            {step.label}
+          </strong>
+          <span>{step.note}</span>
+        </li>
+      ))}
+    </ol>
+  );
 }
 
 function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestResult }) {
@@ -911,52 +987,75 @@ function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestRe
   };
 
   return (
-    <details className="pr-row-draft" open={tracked?.status === 'SENT' || undefined}>
-      <summary>
-        Change order <span className="pr-row-co-status">· {changeOrderSummary(tracked)}</span>
-      </summary>
-      {decided ? (
-        <p className="try-help">
-          {tracked!.status === 'APPROVED'
-            ? 'The client approved it. This work is covered on this and later pull requests.'
-            : 'The client declined it. Take the work out of this pull request, or absorb it knowingly.'}
-        </p>
-      ) : (
-        <>
-          <form className="co-hours" onSubmit={price}>
-            <div className="field">
-              <label htmlFor={`co-hours-${pr.evaluationId}`}>
-                Hours{' '}
-                <span className="field-optional">
-                  {project.hourlyRate ? `priced at ${money(project.hourlyRate)} an hour` : 'set an hourly rate in settings to show a price'}
-                </span>
-              </label>
-              <div className="try-inline">
-                <input
-                  id={`co-hours-${pr.evaluationId}`}
-                  type="number"
-                  min={0}
-                  max={10000}
-                  inputMode="numeric"
-                  value={hours}
-                  onChange={(e) => setHours(e.target.value)}
-                />
-                <button type="submit" className="button button-quiet" disabled={update.isPending}>
-                  Update the draft
-                </button>
+    <>
+      <header className="drawer-head">
+        <div>
+          <Dialog.Title className="drawer-title">
+            Change order{tracked && <span className="mono"> {tracked.reference}</span>}
+          </Dialog.Title>
+          <Dialog.Description className="drawer-sub">
+            For{' '}
+            <a href={pr.url} target="_blank" rel="noreferrer">
+              #{pr.number} {pr.title}
+              <Icon icon={ExternalIcon} size={12} />
+            </a>
+          </Dialog.Description>
+        </div>
+        <Dialog.Close className="icon-button" aria-label="Close the change order">
+          <Icon icon={CrossIcon} size={18} />
+        </Dialog.Close>
+      </header>
+
+      <div className="drawer-body">
+        <ChangeOrderSteps pr={pr} />
+        <WhyLine pr={pr} tone={verdictOf(pr.verdict).tone} />
+
+        {decided ? (
+          <p className="try-help">
+            {tracked!.status === 'APPROVED'
+              ? 'The client approved it. This work is covered on this and later pull requests.'
+              : 'The client declined it. Take the work out of this pull request, or absorb it knowingly.'}
+          </p>
+        ) : (
+          <>
+            <form className="co-hours" onSubmit={price}>
+              <div className="field">
+                <label htmlFor="co-hours">
+                  Hours{' '}
+                  <span className="field-optional">
+                    {project.hourlyRate
+                      ? `priced at ${money(project.hourlyRate)} an hour`
+                      : 'set an hourly rate in settings to show a price'}
+                  </span>
+                </label>
+                <div className="try-inline">
+                  <input
+                    id="co-hours"
+                    type="number"
+                    min={0}
+                    max={10000}
+                    inputMode="numeric"
+                    value={hours}
+                    onChange={(e) => setHours(e.target.value)}
+                  />
+                  <button type="submit" className="button button-quiet" disabled={update.isPending}>
+                    Update the draft
+                  </button>
+                </div>
               </div>
-            </div>
-          </form>
-          <ChangeOrderBox id={`change-order-${pr.evaluationId}`} text={text} onChange={setText} showHeading={false} />
-        </>
-      )}
-      {error && (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
-      )}
+            </form>
+            <ChangeOrderBox id="change-order-text" text={text} onChange={setText} />
+          </>
+        )}
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+
       {!decided && (
-        <div className="app-actions">
+        <footer className="drawer-foot">
           {tracked?.status !== 'SENT' && (
             <button
               type="button"
@@ -970,34 +1069,97 @@ function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestRe
           <button type="button" className="button button-quiet" disabled={update.isPending} onClick={() => save({ status: 'APPROVED' })}>
             Client approved
           </button>
-          <button type="button" className="try-link" disabled={update.isPending} onClick={() => save({ status: 'DECLINED' })}>
+          <button type="button" className="button button-quiet button-danger" disabled={update.isPending} onClick={() => save({ status: 'DECLINED' })}>
             Client declined
           </button>
-        </div>
+        </footer>
       )}
-    </details>
+    </>
   );
 }
 
-function PullRequestRow({ project, pr }: { project: Project; pr: PullRequestResult }) {
+/**
+ * The change order opens beside the list rather than inside it, so the list
+ * stays readable and the PM keeps their place. Radix Dialog keeps focus in
+ * the panel and closes on Escape; focus goes back to the row's button, which
+ * the list remembers because the panel's own buttons may be gone by then.
+ */
+function ChangeOrderDrawer({
+  project,
+  pr,
+  onClose,
+  returnFocus,
+}: {
+  project: Project;
+  pr: PullRequestResult | null;
+  onClose: () => void;
+  returnFocus: () => void;
+}) {
+  // Keep the last pull request while the panel animates closed.
+  const last = useRef(pr);
+  if (pr) last.current = pr;
+  const shown = pr ?? last.current;
+
+  return (
+    <Dialog.Root open={pr !== null} onOpenChange={(open) => !open && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="drawer-overlay" />
+        <Dialog.Content
+          className="drawer"
+          data-testid="change-order-drawer"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            returnFocus();
+          }}
+        >
+          {shown && <ChangeOrderPanel key={shown.evaluationId} project={project} pr={shown} />}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function PullRequestRow({ pr, onOpen }: { pr: PullRequestResult; onOpen: (button: HTMLButtonElement) => void }) {
   const verdict = verdictOf(pr.verdict);
+  const tracked = pr.trackedChangeOrder;
+  // With excluded items the why line already says it; the full reason
+  // follows as detail. Otherwise the why line is the reason itself.
+  const reasonBelow = pr.excluded.length > 0 || verdict.tone === 'ok';
 
   return (
     <li className={`verdict-card is-${verdict.tone} pr-row`} data-testid="pr-result">
-      <p className="verdict-card-label mono">{verdict.label}</p>
+      <div className="pr-row-head">
+        <p className="verdict-card-label">{verdict.label}</p>
+        <p className="pr-row-meta mono">
+          {pr.prState === 'OPEN' ? 'open' : pr.prState === 'MERGED' ? 'merged' : 'closed'} · checked{' '}
+          {relativeTime(pr.checkedAt)}
+        </p>
+      </div>
       <p className="pr-row-title">
         <a href={pr.url} target="_blank" rel="noreferrer">
           #{pr.number} {pr.title}
           <Icon icon={ExternalIcon} size={13} />
         </a>
       </p>
-      <p className="verdict-card-clause mono">
-        {pr.branch ? `${pr.branch} · ` : ''}
-        {pr.prState === 'OPEN' ? 'open' : pr.prState === 'MERGED' ? 'merged' : 'closed'} · checked {relativeTime(pr.checkedAt)}
-      </p>
-      <p className="verdict-card-reason">{pr.reason}</p>
+      {pr.branch && <p className="verdict-card-clause mono">{pr.branch}</p>}
+      <WhyLine pr={pr} tone={verdict.tone} />
+      {reasonBelow && <p className={pr.excluded.length > 0 ? 'pr-row-detail' : 'verdict-card-reason'}>{pr.reason}</p>}
       {pr.estimate && <p className="verdict-card-estimate">Estimated impact: {pr.estimate}</p>}
-      {(pr.changeOrder || pr.trackedChangeOrder) && <ChangeOrderPanel project={project} pr={pr} />}
+      {(pr.changeOrder || tracked) && (
+        <div className="pr-row-co">
+          <span className={`chip ${tracked ? CHANGE_ORDER_TONE[tracked.status] : ''}`}>{changeOrderSummary(tracked)}</span>
+          <button
+            type="button"
+            className="button button-quiet button-sm"
+            aria-haspopup="dialog"
+            onClick={(event) => onOpen(event.currentTarget)}
+            data-testid="button-open-change-order"
+          >
+            Open change order
+            <Icon icon={ArrowRightIcon} size={14} />
+          </button>
+        </div>
+      )}
     </li>
   );
 }
@@ -1006,6 +1168,9 @@ function PullRequestsSection({ project }: { project: Project }) {
   const results = useListProjectPullRequests(project.id, {
     query: { queryKey: getListProjectPullRequestsQueryKey(project.id), refetchInterval: 30_000 },
   });
+  const [openId, setOpenId] = useState<string | null>(null);
+  const opener = useRef<HTMLButtonElement | null>(null);
+  const open = results.data?.pullRequests.find((pr) => pr.evaluationId === openId) ?? null;
 
   return (
     <section className="try-step" aria-labelledby="prs-title">
@@ -1026,10 +1191,23 @@ function PullRequestsSection({ project }: { project: Project }) {
       {results.data && results.data.pullRequests.length > 0 && (
         <ul className="pr-list">
           {results.data.pullRequests.map((pr) => (
-            <PullRequestRow key={pr.evaluationId} project={project} pr={pr} />
+            <PullRequestRow
+              key={pr.evaluationId}
+              pr={pr}
+              onOpen={(button) => {
+                opener.current = button;
+                setOpenId(pr.evaluationId);
+              }}
+            />
           ))}
         </ul>
       )}
+      <ChangeOrderDrawer
+        project={project}
+        pr={open}
+        onClose={() => setOpenId(null)}
+        returnFocus={() => opener.current?.focus()}
+      />
     </section>
   );
 }
