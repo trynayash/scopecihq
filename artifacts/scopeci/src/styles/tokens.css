@@ -78,9 +78,10 @@
   --max: 1200px;
   --gutter: clamp(20px, 4vw, 40px);
   --header-h: 64px;
+  --radius-xs: 4px;
   --radius-s: 6px;
-  --radius: 10px;
-  --radius-l: 16px;
+  --radius: 8px;
+  --radius-l: 12px;
 
   /* Motion */
   --ease: cubic-bezier(0.22, 0.68, 0.24, 1);
