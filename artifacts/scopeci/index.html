@@ -4,19 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ScopeCI — Catch scope creep in pull requests</title>
-    <meta name="description" content="ScopeCI checks each pull request against the statement of work your client signed, so out-of-scope work is flagged before it merges. In development; join the waitlist." />
+    <meta name="description" content="ScopeCI checks each pull request against the statement of work your client signed, names the clause when work falls outside it, and drafts the change order. Early access for agencies on GitHub." />
     <meta name="robots" content="index, follow" />
-    <meta name="theme-color" content="#073c31" />
-    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0a0f0d" media="(prefers-color-scheme: dark)" />
+    <meta name="color-scheme" content="light dark" />
     <meta property="og:site_name" content="ScopeCI" />
     <meta property="og:title" content="ScopeCI — Catch scope creep in pull requests" />
-    <meta property="og:description" content="ScopeCI checks each pull request against the statement of work your client signed, so out-of-scope work is flagged before it merges. In development; join the waitlist." />
+    <meta property="og:description" content="ScopeCI checks each pull request against the statement of work your client signed, names the clause when work falls outside it, and drafts the change order. Early access for agencies on GitHub." />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="/" />
     <meta property="og:image" content="/assets/logo-with-bg-and-wordmark.png" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="ScopeCI — Catch scope creep in pull requests" />
-    <meta name="twitter:description" content="ScopeCI checks each pull request against the statement of work your client signed, so out-of-scope work is flagged before it merges. In development; join the waitlist." />
+    <meta name="twitter:description" content="ScopeCI checks each pull request against the statement of work your client signed, names the clause when work falls outside it, and drafts the change order. Early access for agencies on GitHub." />
     <meta name="twitter:image" content="/assets/logo-with-bg-and-wordmark.png" />
     <link rel="icon" href="/favicons/favicon.ico" sizes="any" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicons/favicon-16x16.png" />
@@ -31,14 +32,26 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=Newsreader:ital,opsz,wght@0,6..72,400..600;1,6..72,400..500&display=swap"
     />
+    <!-- Applies the saved or system theme before the first paint, so a dark
+         page never flashes light. Same storage key and values as next-themes. -->
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('theme');
+          var dark = saved === 'dark' || (saved !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.classList.add(dark ? 'dark' : 'light');
+          document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+        } catch (e) {}
+      })();
+    </script>
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
         "@type": "WebApplication",
         "name": "ScopeCI",
-        "description": "Checks agency pull requests against the client's statement of work. In development; not available yet.",
+        "description": "Checks agency pull requests against the client's statement of work and drafts change orders for out-of-scope work. Early access.",
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "Web"
       }

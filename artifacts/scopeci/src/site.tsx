@@ -1,17 +1,18 @@
 import { useEffect, useState } from 'react';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Menu, Monitor, Moon, Sun, X } from 'lucide-react';
+import { useTheme } from 'next-themes';
 import { SiGithub, SiLinear } from 'react-icons/si';
 
 /**
  * Pieces every public page shares: paths, analytics, page metadata, the
- * masthead and the footer.
+ * logo, the theme controls, the masthead and the footer.
  */
 
-export const WORDMARK = '/assets/logo-wordmark.png';
 export const ICON_MARK = '/assets/logo-icon.png';
 
 /* Absolute paths, so in-page anchors also work from routes other than "/". */
 export const BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
+export const HOME_PATH = `${BASE}/`;
 export const PRIVACY_PATH = `${BASE}/privacy`;
 export const TRY_PATH = `${BASE}/try`;
 export const APP_PATH = `${BASE}/app`;
@@ -111,26 +112,110 @@ export function usePageMeta(title: string, description: string) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Vendor marks                                                        */
+/* Marks                                                               */
 /* ------------------------------------------------------------------ */
 
 /**
  * Official GitHub / Linear marks (Simple Icons paths via react-icons),
  * drawn in `currentColor` so they sit inside the ScopeCI palette. They name the
- * tools ScopeCI is being built for. No partnership is implied. Jira is not
- * supported, so its mark is not shown.
+ * tools ScopeCI is being built for. No partnership is implied.
  */
 export function VendorMark({ name, size = 14 }: { name: 'github' | 'linear'; size?: number }) {
   const Mark = name === 'github' ? SiGithub : SiLinear;
   return <Mark className="vendor-mark" size={size} aria-hidden="true" focusable="false" />;
 }
 
+/**
+ * The supplied mark with the name set as live text, so the wordmark follows
+ * the theme instead of being a dark picture on a dark page.
+ */
+export function Logo({ compact = false }: { compact?: boolean }) {
+  return (
+    <span className="logo">
+      <img className="logo-mark" src={ICON_MARK} alt="" width="288" height="270" decoding="async" />
+      <span className={`logo-word ${compact ? 'is-compact' : ''}`}>
+        Scope<span>CI</span>
+      </span>
+    </span>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Theme                                                               */
+/* ------------------------------------------------------------------ */
+
+/** next-themes only knows the theme after mount; render nothing until then. */
+function useMounted() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  return mounted;
+}
+
+/** One button that flips between light and dark. */
+export function ThemeToggle() {
+  const { resolvedTheme, setTheme } = useTheme();
+  const mounted = useMounted();
+  const dark = mounted && resolvedTheme === 'dark';
+  return (
+    <button
+      type="button"
+      className="icon-button theme-toggle"
+      onClick={() => setTheme(dark ? 'light' : 'dark')}
+      aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'}
+      title={dark ? 'Light theme' : 'Dark theme'}
+      data-testid="button-theme-toggle"
+    >
+      {mounted ? dark ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" /> : <span className="theme-toggle-blank" />}
+    </button>
+  );
+}
+
+const THEME_OPTIONS = [
+  { value: 'system', label: 'System', Icon: Monitor },
+  { value: 'light', label: 'Light', Icon: Sun },
+  { value: 'dark', label: 'Dark', Icon: Moon },
+] as const;
+
+/** System, light or dark, as a three-way switch. */
+export function ThemeSwitch() {
+  const { theme, setTheme } = useTheme();
+  const mounted = useMounted();
+  return (
+    <div className="theme-switch" role="group" aria-label="Theme">
+      {THEME_OPTIONS.map(({ value, label, Icon }) => {
+        const checked = mounted && (theme ?? 'system') === value;
+        return (
+          <button
+            key={value}
+            type="button"
+            aria-pressed={checked}
+            className={checked ? 'is-active' : ''}
+            onClick={() => setTheme(value)}
+            title={label}
+          >
+            <Icon size={14} aria-hidden="true" />
+            <span className="sr-only">{label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* Navigation                                                          */
 /* ------------------------------------------------------------------ */
 
+const NAV_LINKS = [
+  { href: anchor('how-it-works'), label: 'How it works', testId: 'link-how-it-works' },
+  { href: anchor('policy'), label: 'Policies', testId: 'link-policy' },
+  { href: TRY_PATH, label: 'Try it', testId: 'link-try' },
+  { href: anchor('questions'), label: 'Questions', testId: 'link-questions' },
+];
+
 export function Navbar() {
   const [scrolled, setScrolled] = useState(false);
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -139,41 +224,81 @@ export function Navbar() {
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
+  // The menu covers the page on a phone: hold the page still and let
+  // Escape or a wider window close it.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    const wide = window.matchMedia('(min-width: 1021px)');
+    const onWide = () => wide.matches && setOpen(false);
+    document.documentElement.classList.add('menu-open');
+    window.addEventListener('keydown', onKey);
+    wide.addEventListener('change', onWide);
+    return () => {
+      document.documentElement.classList.remove('menu-open');
+      window.removeEventListener('keydown', onKey);
+      wide.removeEventListener('change', onWide);
+    };
+  }, [open]);
+
   return (
-    <header className={`masthead ${scrolled ? 'is-scrolled' : ''}`}>
-      <nav className="masthead-inner container" aria-label="Primary">
-        <a className="brand" href={anchor('top')} data-testid="link-brand">
-          <picture className="brand-logo">
-            <source media="(max-width: 719px)" srcSet={ICON_MARK} />
-            <img
-              src={WORDMARK}
-              alt="ScopeCI"
-              width="651"
-              height="217"
-              decoding="async"
-            />
-          </picture>
+    <header className={`site-header ${scrolled || open ? 'is-scrolled' : ''} ${open ? 'is-open' : ''}`}>
+      <div className="container site-header-inner">
+        <a className="brand" href={anchor('top')} aria-label="ScopeCI home" data-testid="link-brand">
+          <Logo />
         </a>
 
-        <div className="masthead-actions">
-          <a className="masthead-link" href={anchor('how-it-works')} data-testid="link-how-it-works">
-            How it works
-          </a>
-          <a className="masthead-link" href={TRY_PATH} data-testid="link-try">
-            Try it
-          </a>
-          <a className="masthead-link" href={anchor('questions')} data-testid="link-questions">
-            Questions
-          </a>
-          <a className="masthead-link" href={APP_PATH} data-testid="link-sign-in">
+        <nav className="site-nav" aria-label="Primary">
+          {NAV_LINKS.map((link) => (
+            <a key={link.href} className="site-nav-link" href={link.href} data-testid={link.testId}>
+              {link.label}
+            </a>
+          ))}
+        </nav>
+
+        <div className="site-header-actions">
+          <ThemeToggle />
+          <a className="site-nav-link site-signin" href={APP_PATH} data-testid="link-sign-in">
             Sign in
           </a>
-          <a className="button button-primary button-sm" href={anchor('waitlist')} data-testid="button-join-waitlist-nav">
-            Join waitlist
+          <a className="button button-primary button-sm site-cta" href={anchor('waitlist')} data-testid="button-join-waitlist-nav">
+            Join the pilot
             <ArrowRight size={14} aria-hidden="true" />
           </a>
+          <button
+            type="button"
+            className="icon-button menu-toggle"
+            aria-expanded={open}
+            aria-controls="mobile-menu"
+            aria-label={open ? 'Close menu' : 'Open menu'}
+            onClick={() => setOpen((value) => !value)}
+          >
+            {open ? <X size={18} aria-hidden="true" /> : <Menu size={18} aria-hidden="true" />}
+          </button>
         </div>
-      </nav>
+      </div>
+
+      <div id="mobile-menu" className="mobile-menu" hidden={!open}>
+        <nav className="container mobile-menu-inner" aria-label="Menu">
+          {NAV_LINKS.map((link) => (
+            <a key={link.href} href={link.href} onClick={() => setOpen(false)}>
+              {link.label}
+            </a>
+          ))}
+          <a href={APP_PATH} onClick={() => setOpen(false)}>
+            Sign in
+          </a>
+          <div className="mobile-menu-foot">
+            <a className="button button-primary button-lg" href={anchor('waitlist')} onClick={() => setOpen(false)}>
+              Join the pilot
+              <ArrowRight size={15} aria-hidden="true" />
+            </a>
+            <ThemeSwitch />
+          </div>
+        </nav>
+      </div>
     </header>
   );
 }
@@ -184,30 +309,34 @@ export function Navbar() {
 
 export function Footer() {
   return (
-    <footer className="footer">
+    <footer className="site-footer">
       <div className="container">
-        <div className="footer-top">
+        <div className="footer-grid">
           <div className="footer-brand">
-            <img
-              src={WORDMARK}
-              alt="ScopeCI"
-              width="651"
-              height="217"
-              loading="lazy"
-              decoding="async"
-            />
-            <p>Scope checks for agency pull requests.</p>
+            <a href={anchor('top')} aria-label="ScopeCI home">
+              <Logo />
+            </a>
+            <p>
+              Scope checks for agency pull requests. Built for teams that sell fixed-price and milestone work.
+            </p>
           </div>
-          <nav className="footer-links mono" aria-label="Footer">
+          <nav className="footer-col" aria-labelledby="footer-product">
+            <h2 id="footer-product">Product</h2>
             <a href={anchor('how-it-works')} data-testid="link-how-footer">How it works</a>
-            <a href={TRY_PATH} data-testid="link-try-footer">Try it</a>
-            <a href={anchor('waitlist')} data-testid="link-waitlist-footer">Waitlist</a>
+            <a href={anchor('policy')}>Policies</a>
+            <a href={TRY_PATH} data-testid="link-try-footer">Try it on your SOW</a>
+            <a href={APP_PATH}>Sign in</a>
+          </nav>
+          <nav className="footer-col" aria-labelledby="footer-company">
+            <h2 id="footer-company">ScopeCI</h2>
+            <a href={anchor('waitlist')} data-testid="link-waitlist-footer">Join the pilot</a>
+            <a href={anchor('questions')}>Questions</a>
             <a href={PRIVACY_PATH} data-testid="link-privacy-footer">Privacy</a>
           </nav>
         </div>
-        <div className="footer-bottom mono">
-          <span>© 2026 ScopeCI</span>
-          <span>In development</span>
+        <div className="footer-bottom">
+          <span>© 2026 ScopeCI · Early access</span>
+          <ThemeSwitch />
         </div>
       </div>
     </footer>

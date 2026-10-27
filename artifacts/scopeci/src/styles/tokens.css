@@ -1,0 +1,163 @@
+/* ==================================================================
+   Tokens
+
+   Every colour is a role, not a hue, so a component never says which
+   theme it is in. `.dark` on <html> swaps the roles; index.html sets it
+   before the first paint and next-themes keeps it in step afterwards.
+   ================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* Grounds */
+  --bg: #f6f4ef;
+  --bg-raised: #fcfbf8;
+  --bg-sunken: #eeece5;
+  --bg-hover: rgba(17, 23, 20, 0.04);
+  --paper: #fffdf8;
+  --paper-edge: #e7e2d6;
+
+  /* Ink */
+  --fg: #111714;
+  --fg-2: #2c3631;
+  --fg-muted: #4f5b53;
+  --fg-faint: #636d65;
+
+  /* Hairlines carry most of the structure, so there are three weights */
+  --line: rgba(17, 23, 20, 0.09);
+  --line-2: rgba(17, 23, 20, 0.15);
+  --line-3: rgba(17, 23, 20, 0.26);
+
+  /* Brand: the forest greens of the mark */
+  --brand: #0d5c48;
+  --brand-ink: #073c31;
+  --brand-bright: #3f8a68;
+  --brand-wash: #e1eee5;
+  --brand-line: rgba(13, 92, 72, 0.32);
+
+  /* Signals */
+  --alert: #a14a31;
+  --alert-wash: #f7e5dc;
+  --alert-line: rgba(161, 74, 49, 0.3);
+  --warn: #87601a;
+  --warn-wash: #f5ecd6;
+  --warn-line: rgba(135, 96, 26, 0.3);
+  --ok: var(--brand);
+  --ok-wash: var(--brand-wash);
+  --ok-line: var(--brand-line);
+  --highlight: rgba(236, 178, 64, 0.42);
+
+  /* Controls */
+  --button-bg: #0b2a22;
+  --button-bg-hover: #0d5c48;
+  --button-fg: #f6f4ef;
+  --input-bg: #fffdf9;
+  --focus: #3f8a68;
+
+  /* Depth */
+  --shadow-1: 0 1px 2px rgba(17, 23, 20, 0.06);
+  --shadow-2: 0 1px 2px rgba(17, 23, 20, 0.05), 0 10px 28px -14px rgba(17, 23, 20, 0.2);
+  --shadow-3: 0 2px 6px rgba(17, 23, 20, 0.05), 0 36px 72px -30px rgba(10, 36, 26, 0.38);
+
+  /* Type */
+  --font-display: 'Newsreader', 'Iowan Old Style', 'Source Serif Pro', Georgia, serif;
+  --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, 'SFMono-Regular', 'Cascadia Mono', Consolas, monospace;
+
+  /* Fluid type scale. Display sizes are set in the serif; everything a
+     person reads or operates is set in Geist. */
+  --t-hero: clamp(2.5rem, 1.35rem + 3.1vw, 4.25rem);
+  --t-display: clamp(2.1rem, 1.45rem + 2.7vw, 3.6rem);
+  --t-title: clamp(1.45rem, 1.2rem + 0.9vw, 1.9rem);
+  --t-lede: clamp(1.06rem, 1rem + 0.25vw, 1.2rem);
+  --t-body: 1rem;
+  --t-small: 0.875rem;
+  --t-micro: 0.75rem;
+
+  /* Layout */
+  --max: 1200px;
+  --gutter: clamp(20px, 4vw, 40px);
+  --header-h: 64px;
+  --radius-s: 6px;
+  --radius: 10px;
+  --radius-l: 16px;
+
+  /* Motion */
+  --ease: cubic-bezier(0.22, 0.68, 0.24, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --fast: 160ms;
+  --slow: 520ms;
+
+  /* shadcn/ui palette, consumed by src/components/ui */
+  --background: 45 29% 95%;
+  --foreground: 150 15% 8%;
+  --border: 90 8% 85%;
+  --input: 90 8% 80%;
+  --ring: 153 37% 39%;
+  --primary: 164 58% 11%;
+  --primary-foreground: 45 29% 95%;
+  --muted-foreground: 140 7% 33%;
+  --card: 45 38% 98%;
+  --card-foreground: 150 15% 8%;
+  --destructive: 14 53% 41%;
+  --destructive-foreground: 45 29% 95%;
+}
+
+/* `.on-dark` lends the dark roles to one panel on a light page. */
+.dark,
+.on-dark {
+  color-scheme: dark;
+
+  --bg: #0a0f0d;
+  --bg-raised: #111814;
+  --bg-sunken: #070a09;
+  --bg-hover: rgba(226, 240, 231, 0.05);
+  --paper: #141b17;
+  --paper-edge: #253029;
+
+  --fg: #e9eee9;
+  --fg-2: #c9d3cc;
+  --fg-muted: #9aa89f;
+  --fg-faint: #808e84;
+
+  --line: rgba(226, 240, 231, 0.08);
+  --line-2: rgba(226, 240, 231, 0.14);
+  --line-3: rgba(226, 240, 231, 0.24);
+
+  --brand: #78c9a1;
+  --brand-ink: #a6e0c2;
+  --brand-bright: #78c9a1;
+  --brand-wash: rgba(120, 201, 161, 0.11);
+  --brand-line: rgba(120, 201, 161, 0.34);
+
+  --alert: #eb9f84;
+  --alert-wash: rgba(235, 159, 132, 0.11);
+  --alert-line: rgba(235, 159, 132, 0.34);
+  --warn: #e3bf7b;
+  --warn-wash: rgba(227, 191, 123, 0.11);
+  --warn-line: rgba(227, 191, 123, 0.32);
+  --highlight: rgba(236, 178, 64, 0.3);
+
+  --button-bg: #e9eee9;
+  --button-bg-hover: #ffffff;
+  --button-fg: #08100c;
+  --input-bg: #0d1310;
+  --focus: #78c9a1;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 1px 2px rgba(0, 0, 0, 0.35), 0 14px 32px -16px rgba(0, 0, 0, 0.7);
+  --shadow-3: 0 2px 6px rgba(0, 0, 0, 0.35), 0 40px 80px -30px rgba(0, 0, 0, 0.85);
+
+  --background: 150 20% 5%;
+  --foreground: 135 12% 92%;
+  --border: 140 10% 16%;
+  --input: 140 10% 20%;
+  --ring: 151 41% 63%;
+  --primary: 135 12% 92%;
+  --primary-foreground: 150 33% 5%;
+  --muted-foreground: 143 8% 61%;
+  --card: 147 17% 8%;
+  --card-foreground: 135 12% 92%;
+  --destructive: 15 72% 72%;
+  --destructive-foreground: 150 33% 5%;
+}
