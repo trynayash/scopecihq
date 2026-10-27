@@ -651,7 +651,7 @@ function Evidence() {
 const QUESTIONS: ReadonlyArray<{ q: string; a: string }> = [
   {
     q: 'Does an AI model read our contracts?',
-    a: "No. The check is a set of plain rules that compare clause text with the changed files and the linked issue. No language model sees your contract or your code. The trade-off is that it's only as precise as the SOW: a clause that spells out its exclusions gets a firm answer, a vague one gets sent for review.",
+    a: "No. The check is plain rules that compare clause text with the changed files and the linked issue, so no language model sees your contract or your code. The trade-off is that it can only be as precise as the SOW, and the rules are still being taught to read SOWs beyond our test projects.",
   },
   {
     q: "Will it block my team's merges?",
