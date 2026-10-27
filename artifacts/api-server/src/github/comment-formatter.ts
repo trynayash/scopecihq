@@ -6,8 +6,11 @@ export interface CommentFormatInput {
   projectName: string;
   issueIdentifier?: string;
   prNumber: number;
-  headSha: string;
+  /** Omitted when there is no real commit, as in the public demo. */
+  headSha?: string;
   evaluation: CommercialEvaluation;
+  /** The project page in ScopeCI, where the change order draft is. */
+  detailsUrl?: string;
 }
 
 /**
@@ -24,95 +27,63 @@ export function sanitizeMarkdown(input: string): string {
     .replace(/`/g, "&#96;");
 }
 
+/** The same words the ScopeCI app uses for each answer. */
+export const VERDICT_LABELS: Record<CommercialEvaluation["state"], string> = {
+  IN_SCOPE: "In scope",
+  APPROVED_CHANGE: "Covered by an approved change",
+  REVIEW_REQUIRED: "Needs a decision",
+  CHANGE_REQUIRED: "Change order needed",
+  BLOCKED: "Excluded work",
+  OVERRIDDEN: "Overridden",
+};
+
+const MERGE_NOTE: Record<CommercialEvaluation["checkConclusion"], string> = {
+  neutral: "ScopeCI only reports on this project. It doesn't affect merging.",
+  success: "Nothing to do.",
+  action_required: "The ScopeCI check asks for a decision before this merges.",
+  failure: "The ScopeCI check fails until this work is approved as a change.",
+};
+
 /**
- * Generates the idempotent ScopeCI PR review comment markdown.
+ * The comment ScopeCI keeps on each pull request, rewritten in place on
+ * every push. Written for the developers and project managers who read it.
  */
 export function formatScopeCIComment(input: CommentFormatInput): string {
-  const { projectName, issueIdentifier, prNumber, headSha, evaluation } = input;
-
-  const safeProject = sanitizeMarkdown(projectName);
-  const safeIssue = issueIdentifier ? sanitizeMarkdown(issueIdentifier) : "Unlinked";
-  const shortSha = headSha.substring(0, 7);
-
-  const statusLabel = formatStatusLabel(evaluation.state);
-
-  const evidenceRows = evaluation.evidence.map((e) => {
-    const icon = e.tone === "ok" ? "✓" : e.tone === "warn" ? "⚠" : "ℹ";
-    return `| **${sanitizeMarkdown(e.source)}** | \`${sanitizeMarkdown(e.value)}\` | ${icon} ${sanitizeMarkdown(e.result)} |`;
-  }).join("\n");
-
-  let deltaSection = "";
-  if (evaluation.detectedDelta && evaluation.detectedDelta.length > 0) {
-    deltaSection = `\n**Detected Scope Elements:**\n${evaluation.detectedDelta.map((d) => `- ${sanitizeMarkdown(d)}`).join("\n")}\n`;
-  }
-
+  const { projectName, issueIdentifier, prNumber, headSha, evaluation, detailsUrl } = input;
+  const reason = evaluation.evidenceBundle?.decisionExplanation?.reason;
   const estimate = describeEstimate(evaluation);
-  const commercialImpact = estimate ? `\n> **Estimated impact**: ${sanitizeMarkdown(estimate)}\n` : "";
+
+  const facts = [
+    `| Project | ${sanitizeMarkdown(projectName)} |`,
+    `| Pull request | #${prNumber}${headSha ? ` (\`${sanitizeMarkdown(headSha.substring(0, 7))}\`)` : ""} |`,
+    ...(issueIdentifier ? [`| Linked issue | ${sanitizeMarkdown(issueIdentifier)} |`] : []),
+    ...(estimate ? [`| Estimated impact | ${sanitizeMarkdown(estimate)} |`] : []),
+  ];
+
+  const found =
+    evaluation.detectedDelta.length > 0
+      ? `\n**What ScopeCI found**\n${evaluation.detectedDelta.map((d) => `- ${sanitizeMarkdown(d)}`).join("\n")}\n`
+      : "";
+
+  const evidence =
+    evaluation.evidence.length > 0
+      ? `\n<details>\n<summary>Evidence</summary>\n\n| Source | Reference | Result |\n|---|---|---|\n${evaluation.evidence
+          .map((e) => `| ${sanitizeMarkdown(e.source)} | \`${sanitizeMarkdown(e.value)}\` | ${sanitizeMarkdown(e.result)} |`)
+          .join("\n")}\n\n</details>\n`
+      : "";
+
+  const link = detailsUrl
+    ? `\n[${evaluation.state === "CHANGE_REQUIRED" ? "Open the change order draft" : "Open this project"} in ScopeCI](${detailsUrl})\n`
+    : "";
 
   return `${COMMENT_MARKER}
-### 🔍 ScopeCI Commercial Review — ${statusLabel}
+### ScopeCI: ${VERDICT_LABELS[evaluation.state] ?? evaluation.state}
 
-| Attribute | Details |
+${reason ? `${sanitizeMarkdown(reason)}\n` : ""}
+| | |
 |---|---|
-| **Project** | ${safeProject} |
-| **Work Item** | ${safeIssue} |
-| **Pull Request** | #${prNumber} (\`${shortSha}\`) |
-| **Policy Mode** | \`${evaluation.policyMode}\` (Non-blocking) |
-| **Commercial State** | ${formatStateDescription(evaluation.state)} |
-
-| Source | Reference | Assessment |
-|---|---|---|
-${evidenceRows}
-${commercialImpact}${deltaSection}
-${
-  evaluation.evidenceBundle?.decisionExplanation
-    ? `<details>
-<summary><b>Why This Decision (Commercial Provenance)</b></summary>
-
-- **Reason**: ${sanitizeMarkdown(evaluation.evidenceBundle.decisionExplanation.reason)}
-- **Recommended Action**: \`${sanitizeMarkdown(evaluation.evidenceBundle.decisionExplanation.recommendedAction)}\`
-- **Review Reason**: \`${sanitizeMarkdown(evaluation.reviewReasonCode || "NONE")}\`
-- **Commercial Confidence**: ${Math.round(evaluation.commercialConfidence * 100)}%
-- **Evaluation Identity**: \`${evaluation.identityHash.substring(0, 16)}...\`
-- **Grounded Evidence IDs**: ${evaluation.evidenceBundle.decisionExplanation.evidenceIds.map((id) => `\`${sanitizeMarkdown(id)}\``).join(", ")}
-</details>
-`
-    : ""
-}---
-*ScopeCI is operating in **Observe** mode. Merges are not blocked. This assessment provides commercial alignment evidence and does not constitute formal legal determination.*
+${facts.join("\n")}
+${found}${evidence}${link}
+<sub>${MERGE_NOTE[evaluation.checkConclusion] ?? ""}</sub>
 `;
-}
-
-function formatStatusLabel(state: CommercialEvaluation["state"]): string {
-  switch (state) {
-    case "IN_SCOPE":
-      return "🟢 IN SCOPE";
-    case "APPROVED_CHANGE":
-      return "🟢 APPROVED CHANGE";
-    case "REVIEW_REQUIRED":
-      return "🟡 REVIEW REQUIRED";
-    case "CHANGE_REQUIRED":
-      return "🟠 CHANGE ORDER REQUIRED";
-    case "BLOCKED":
-      return "⚪ OBSERVED EXCLUSION";
-    case "OVERRIDDEN":
-      return "⚪ OVERRIDDEN";
-  }
-}
-
-function formatStateDescription(state: CommercialEvaluation["state"]): string {
-  switch (state) {
-    case "IN_SCOPE":
-      return "Work items align with active statement of work deliverables";
-    case "APPROVED_CHANGE":
-      return "Authorized under approved change order specification";
-    case "REVIEW_REQUIRED":
-      return "Awaiting commercial scope confirmation by project management";
-    case "CHANGE_REQUIRED":
-      return "Scope boundary expansion detected — commercial agreement recommended";
-    case "BLOCKED":
-      return "Identified as outside contracted scope baseline";
-    case "OVERRIDDEN":
-      return "Authorized via project management administrative override";
-  }
 }

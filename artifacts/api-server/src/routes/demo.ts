@@ -7,7 +7,7 @@ import {
   describeEstimate,
   draftChangeOrder,
   evaluateCommercialScope,
-  formatGitHubPRComment,
+  pullRequestAsWorkItem,
   type ChangedFile,
   type LinearIssue,
   type PullRequest,
@@ -22,6 +22,7 @@ import {
   ParseDemoSowResponse,
 } from "@workspace/api-zod";
 import { rateLimiter } from "../middlewares/rate-limit.js";
+import { formatScopeCIComment } from "../github/comment-formatter.js";
 
 /**
  * The public "try it with your SOW" demo. It runs the real parser and
@@ -108,7 +109,7 @@ router.post("/demo/evaluate", evaluateLimiter, (req, res): void => {
         status: "Open",
         estimateHours: issue.estimateHours ?? undefined,
       }
-    : { id: "the PR", title: "", status: "Open", estimateHours: estimateHours ?? undefined };
+    : pullRequestAsWorkItem(estimateHours ?? undefined);
 
   // A rate of 0 means none given: the demo never prices work at a made-up rate.
   const rate = hourlyRate && hourlyRate > 0 ? hourlyRate : 0;
@@ -120,16 +121,13 @@ router.post("/demo/evaluate", evaluateLimiter, (req, res): void => {
     hourlyRate: rate,
   });
 
-  const forComment = issue
-    ? evaluation
-    : { ...evaluation, evidence: evaluation.evidence.filter((row) => row.source !== "LINEAR") };
   // Without an issue the hours are the visitor's own, so say so.
   const wording = (text: string) =>
     issue
       ? text
       : text
-          .replace("(the linked issue has no estimate)", "(enter the hours to price it)")
-          .replace("from the estimate on the PR", "from the hours you entered")
+          .replace("(no linked issue with an estimate)", "(enter the hours to price it)")
+          .replace("from the hours given for this pull request", "from the hours you entered")
           .replace("at the configured hourly rate", "at the rate you entered")
           .replace("no hourly rate is configured", "no hourly rate was entered");
   const estimate = describeEstimate(evaluation);
@@ -150,7 +148,14 @@ router.post("/demo/evaluate", evaluateLimiter, (req, res): void => {
       delta: evaluation.detectedDelta,
       clause: clause ? { clauseRef: clause.clauseRef, title: clause.title } : null,
       estimate: estimate ? wording(estimate) : null,
-      comment: wording(formatGitHubPRComment(forComment)),
+      // The same comment a connected repository gets, so the demo shows the real thing.
+      comment: wording(
+        formatScopeCIComment({
+          projectName: (projectName ?? scope.title) || "Your project",
+          prNumber: pr.number ?? 1,
+          evaluation,
+        }),
+      ),
       changeOrder: changeOrder ? { subject: changeOrder.subject, body: changeOrder.body } : null,
     }),
   );

@@ -32,6 +32,7 @@ import {
   phraseNamesCapability,
   textCoversMatch,
 } from "./contract-matcher.js";
+import { isPullRequestWorkItem } from "./work-item.js";
 
 export interface Phase4EvaluationInput {
   baseline?: ScopeBaseline;
@@ -578,7 +579,7 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
       });
     }
 
-    primaryReason = `Contract ${explicitlyExcludedCapabilities[0].clause.clauseRef} explicitly excludes ${explicitlyExcludedCapabilities.map((e) => e.capability.name).join(", ")}. Change Order authorization required.`;
+    primaryReason = `Contract ${explicitlyExcludedCapabilities[0].clause.clauseRef} explicitly excludes ${explicitlyExcludedCapabilities.map((e) => e.capability.name).join(", ")}. It needs an approved change order.`;
   } else if (
     weaklyExcludedCapabilities.length > 0 ||
     uncontractedCapabilities.length > 0 ||
@@ -743,15 +744,18 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
     };
   }
 
-  // Build legacy evidence array for backward compatibility
-  evidence.push({
-    source: "LINEAR",
-    mark: "linear",
-    label: "Work Item",
-    value: `${issue.id} · ${issue.title}`,
-    result: "linked",
-    tone: "ok",
-  });
+  // Build legacy evidence array for backward compatibility. A pull request
+  // standing in as its own work item has no issue to show.
+  if (!isPullRequestWorkItem(issue.id)) {
+    evidence.push({
+      source: "LINEAR",
+      mark: "linear",
+      label: "Work Item",
+      value: `${issue.id} · ${issue.title}`,
+      result: "linked",
+      tone: "ok",
+    });
+  }
 
   evidence.push({
     source: "GITHUB",

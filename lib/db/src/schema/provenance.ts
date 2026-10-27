@@ -30,7 +30,7 @@ export const organizationsTable = pgTable(
     index("org_slug_idx").on(table.slug),
     index("org_created_at_idx").on(table.createdAt),
   ]
-);
+).enableRLS();
 
 export const organizationsRelations = relations(organizationsTable, ({ many }) => ({
   contracts: many(contractsTable),
@@ -67,7 +67,7 @@ export const contractsTable = pgTable(
     index("contract_status_idx").on(table.status),
     index("contract_created_at_idx").on(table.createdAt),
   ]
-);
+).enableRLS();
 
 export const contractsRelations = relations(contractsTable, ({ one, many }) => ({
   organization: one(organizationsTable, {
@@ -101,7 +101,7 @@ export const scopeBaselinesTable = pgTable(
     index("baseline_contract_idx").on(table.contractId),
     index("baseline_status_idx").on(table.status),
   ]
-);
+).enableRLS();
 
 export const scopeBaselinesRelations = relations(scopeBaselinesTable, ({ one, many }) => ({
   contract: one(contractsTable, {
@@ -145,9 +145,20 @@ export const changeOrdersTable = pgTable(
     estimatedValueMin: integer("estimated_value_min").notNull(),
     estimatedValueMax: integer("estimated_value_max").notNull(),
     currency: varchar("currency", { length: 10 }).default("USD").notNull(),
-    status: varchar("status", { length: 50 }).default("PENDING").notNull(), // PENDING, APPROVED, REJECTED
+    // PENDING, APPROVED, REJECTED; change orders tracked in the app also use DRAFT and SENT.
+    status: varchar("status", { length: 50 }).default("PENDING").notNull(),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
     rejectedAt: timestamp("rejected_at", { withTimezone: true }),
+    // Tracked in the app: the project (projects.id in accounts.ts; no foreign
+    // key so the schema files don't import each other), the pull request
+    // that raised it, what it covers, and the message that was sent.
+    projectId: uuid("project_id"),
+    pullRequestId: uuid("pull_request_id").references(() => pullRequestsTable.id, { onDelete: "set null" }),
+    itemsJson: jsonb("items_json"),
+    hours: integer("hours"),
+    messageSubject: text("message_subject"),
+    messageBody: text("message_body"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -156,8 +167,10 @@ export const changeOrdersTable = pgTable(
     index("co_contract_idx").on(table.contractId),
     index("co_reference_idx").on(table.reference),
     index("co_status_idx").on(table.status),
+    index("co_project_idx").on(table.projectId),
+    uniqueIndex("co_pull_request_uidx").on(table.pullRequestId),
   ]
-);
+).enableRLS();
 
 export const changeOrdersRelations = relations(changeOrdersTable, ({ one }) => ({
   organization: one(organizationsTable, {
@@ -195,6 +208,10 @@ export const contractClausesTable = pgTable(
     boundaryType: varchar("boundary_type", { length: 50 }).notNull(), // INCLUSION, EXCLUSION, ASSUMPTION, LIMITATION, OTHER
     sourcePage: integer("source_page"),
     sourceLocation: varchar("source_location", { length: 255 }),
+    // A checklist confirmed in the app stores its items here; older rows
+    // leave these empty and have them read from the legal text instead.
+    inclusionsJson: jsonb("inclusions_json"),
+    exclusionsJson: jsonb("exclusions_json"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
@@ -202,7 +219,7 @@ export const contractClausesTable = pgTable(
     index("clause_number_idx").on(table.clauseNumber),
     index("clause_boundary_idx").on(table.boundaryType),
   ]
-);
+).enableRLS();
 
 export const contractClausesRelations = relations(contractClausesTable, ({ one, many }) => ({
   scopeBaseline: one(scopeBaselinesTable, {
@@ -238,7 +255,7 @@ export const deliverablesTable = pgTable(
     index("deliv_baseline_idx").on(table.scopeBaselineId),
     index("deliv_clause_idx").on(table.clauseId),
   ]
-);
+).enableRLS();
 
 export const deliverablesRelations = relations(deliverablesTable, ({ one, many }) => ({
   scopeBaseline: one(scopeBaselinesTable, {
@@ -277,7 +294,7 @@ export const projectLinksTable = pgTable(
     index("projlink_org_idx").on(table.organizationId),
     index("projlink_repo_idx").on(table.repositoryFullName),
   ]
-);
+).enableRLS();
 
 export const projectLinksRelations = relations(projectLinksTable, ({ one, many }) => ({
   organization: one(organizationsTable, {
@@ -315,7 +332,7 @@ export const issuesTable = pgTable(
     index("issue_org_idx").on(table.organizationId),
     index("issue_identifier_idx").on(table.identifier),
   ]
-);
+).enableRLS();
 
 export const issuesRelations = relations(issuesTable, ({ one, many }) => ({
   organization: one(organizationsTable, {
@@ -350,7 +367,7 @@ export const issueDeliverableLinksTable = pgTable(
     index("idl_issue_idx").on(table.issueId),
     index("idl_deliverable_idx").on(table.deliverableId),
   ]
-);
+).enableRLS();
 
 export const issueDeliverableLinksRelations = relations(issueDeliverableLinksTable, ({ one }) => ({
   issue: one(issuesTable, {
@@ -377,6 +394,8 @@ export const pullRequestsTable = pgTable(
     projectLinkId: uuid("project_link_id").references(() => projectLinksTable.id, {
       onDelete: "set null",
     }),
+    // projects.id (accounts.ts); no foreign key so the two schema files don't import each other.
+    projectId: uuid("project_id"),
     externalProvider: varchar("external_provider", { length: 50 }).default("GITHUB").notNull(),
     externalId: varchar("external_id", { length: 255 }).notNull(),
     number: integer("number").notNull(),
@@ -404,8 +423,9 @@ export const pullRequestsTable = pgTable(
     index("pr_number_idx").on(table.number),
     index("pr_state_idx").on(table.state),
     index("pr_head_branch_idx").on(table.headBranch),
+    index("pr_project_idx").on(table.projectId),
   ]
-);
+).enableRLS();
 
 export const pullRequestsRelations = relations(pullRequestsTable, ({ one, many }) => ({
   organization: one(organizationsTable, {
@@ -444,7 +464,7 @@ export const prIssueLinksTable = pgTable(
     index("pil_pr_idx").on(table.pullRequestId),
     index("pil_issue_idx").on(table.issueId),
   ]
-);
+).enableRLS();
 
 export const prIssueLinksRelations = relations(prIssueLinksTable, ({ one }) => ({
   pullRequest: one(pullRequestsTable, {
@@ -485,7 +505,7 @@ export const prDiffAnalysesTable = pgTable(
     index("diff_analysis_head_sha_idx").on(table.headSha),
     index("diff_analysis_status_idx").on(table.status),
   ]
-);
+).enableRLS();
 
 export const prDiffAnalysesRelations = relations(prDiffAnalysesTable, ({ one, many }) => ({
   pullRequest: one(pullRequestsTable, {
@@ -538,6 +558,8 @@ export const commercialEvaluationsTable = pgTable(
     estimatedValueMax: integer("estimated_value_max"),
     currency: varchar("currency", { length: 10 }).default("USD"),
     reason: text("reason").notNull(),
+    estimateSummary: text("estimate_summary"),
+    changeOrderDraftJson: jsonb("change_order_draft_json"),
     evaluatorVersion: varchar("evaluator_version", { length: 50 }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
@@ -551,7 +573,7 @@ export const commercialEvaluationsTable = pgTable(
     index("eval_identity_hash_idx").on(table.evaluationIdentityHash),
     index("eval_created_at_idx").on(table.createdAt),
   ]
-);
+).enableRLS();
 
 export const commercialEvaluationsRelations = relations(commercialEvaluationsTable, ({ one, many }) => ({
   pullRequest: one(pullRequestsTable, {
@@ -595,7 +617,7 @@ export const commercialApprovalsTable = pgTable(
     index("approval_eval_idx").on(table.commercialEvaluationId),
     index("approval_type_idx").on(table.approvalType),
   ]
-);
+).enableRLS();
 
 export const commercialApprovalsRelations = relations(commercialApprovalsTable, ({ one }) => ({
   evaluation: one(commercialEvaluationsTable, {
@@ -632,7 +654,7 @@ export const commercialEventsTable = pgTable(
     index("cevt_type_idx").on(table.eventType),
     index("cevt_occurred_at_idx").on(table.occurredAt),
   ]
-);
+).enableRLS();
 
 export const commercialEventsRelations = relations(commercialEventsTable, ({ one }) => ({
   organization: one(organizationsTable, {

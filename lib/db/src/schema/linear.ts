@@ -48,7 +48,7 @@ export const linearConnectionsTable = pgTable(
     index("linear_conn_workspace_idx").on(table.linearWorkspaceId),
     index("linear_conn_status_idx").on(table.status),
   ]
-);
+).enableRLS();
 
 export const linearConnectionsRelations = relations(linearConnectionsTable, ({ one }) => ({
   organization: one(organizationsTable, {
@@ -87,7 +87,7 @@ export const linearWebhookDeliveriesTable = pgTable(
     index("linear_delivery_workspace_idx").on(table.linearWorkspaceId),
     index("linear_delivery_expires_idx").on(table.expiresAt),
   ]
-);
+).enableRLS();
 
 /* ==================================================================
    3. Linear OAuth States
@@ -114,7 +114,7 @@ export const linearOAuthStatesTable = pgTable(
     index("linear_oauth_state_org_idx").on(table.organizationId),
     index("linear_oauth_state_expires_idx").on(table.expiresAt),
   ]
-);
+).enableRLS();
 
 export const linearOAuthStatesRelations = relations(linearOAuthStatesTable, ({ one }) => ({
   organization: one(organizationsTable, {

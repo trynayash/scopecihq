@@ -227,6 +227,330 @@ export interface DemoEvaluation {
   changeOrder: DemoChangeOrder | null;
 }
 
+export interface SessionUser {
+  id: string;
+  login: string;
+  /** @nullable */
+  name: string | null;
+  /** @nullable */
+  avatarUrl: string | null;
+}
+
+export type SessionOrganizationRole = typeof SessionOrganizationRole[keyof typeof SessionOrganizationRole];
+
+
+export const SessionOrganizationRole = {
+  OWNER: 'OWNER',
+  MEMBER: 'MEMBER',
+} as const;
+
+export interface SessionOrganization {
+  id: string;
+  name: string;
+  role: SessionOrganizationRole;
+}
+
+export interface SessionInfo {
+  signInAvailable: boolean;
+  user: SessionUser | null;
+  organization: SessionOrganization | null;
+  /** Every workspace the person belongs to; empty when signed out */
+  workspaces: SessionOrganization[];
+}
+
+/**
+ * OBSERVE only reports; REVIEW asks for a decision on the check; ENFORCE fails the check on excluded work.
+ */
+export type PolicyMode = typeof PolicyMode[keyof typeof PolicyMode];
+
+
+export const PolicyMode = {
+  OBSERVE: 'OBSERVE',
+  REVIEW: 'REVIEW',
+  ENFORCE: 'ENFORCE',
+} as const;
+
+export interface ProjectCreateInput {
+  /**
+     * @minLength 1
+     * @maxLength 160
+     */
+  name: string;
+  /**
+     * @maxLength 160
+     * @nullable
+     */
+  clientName?: string | null;
+  /**
+     * @minimum 0
+     * @maximum 100000
+     * @nullable
+     */
+  hourlyRate?: number | null;
+}
+
+export interface ProjectUpdateInput {
+  /**
+     * @minLength 1
+     * @maxLength 160
+     */
+  name?: string;
+  /**
+     * @maxLength 160
+     * @nullable
+     */
+  clientName?: string | null;
+  /**
+     * @minimum 0
+     * @maximum 100000
+     * @nullable
+     */
+  hourlyRate?: number | null;
+  policyMode?: PolicyMode;
+}
+
+export interface LinkedRepository {
+  fullName: string;
+  installationId: string;
+}
+
+export interface ProjectCounts {
+  checked: number;
+  changeOrders: number;
+  decisions: number;
+  /** Sent and still waiting on the client */
+  changeOrdersSent: number;
+  changeOrdersApproved: number;
+  /** Total of approved change orders that have a price, in the project's currency */
+  approvedValue: number;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  /** @nullable */
+  clientName: string | null;
+  /** @nullable */
+  hourlyRate: number | null;
+  currency: string;
+  policyMode: PolicyMode;
+  repository: LinkedRepository | null;
+  /** @nullable */
+  scopeVersion: string | null;
+  /** @nullable */
+  scopeSavedAt: string | null;
+  createdAt: string;
+  counts: ProjectCounts;
+}
+
+export interface ProjectList {
+  projects: Project[];
+}
+
+export interface SavedScope {
+  version: string;
+  savedAt: string;
+  title: string;
+  clauses: DemoScopeClause[];
+}
+
+export interface ProjectDetail {
+  project: Project;
+  scope: SavedScope | null;
+}
+
+export interface RepositoryLinkInput {
+  /** @minimum 1 */
+  installationId: number;
+  /** @minimum 1 */
+  repositoryId: number;
+}
+
+export type PullRequestResultPrState = typeof PullRequestResultPrState[keyof typeof PullRequestResultPrState];
+
+
+export const PullRequestResultPrState = {
+  OPEN: 'OPEN',
+  CLOSED: 'CLOSED',
+  MERGED: 'MERGED',
+} as const;
+
+export type PullRequestResultVerdict = typeof PullRequestResultVerdict[keyof typeof PullRequestResultVerdict];
+
+
+export const PullRequestResultVerdict = {
+  IN_SCOPE: 'IN_SCOPE',
+  REVIEW_REQUIRED: 'REVIEW_REQUIRED',
+  CHANGE_REQUIRED: 'CHANGE_REQUIRED',
+  APPROVED_CHANGE: 'APPROVED_CHANGE',
+  BLOCKED: 'BLOCKED',
+  OVERRIDDEN: 'OVERRIDDEN',
+} as const;
+
+export type TrackedChangeOrderStatus = typeof TrackedChangeOrderStatus[keyof typeof TrackedChangeOrderStatus];
+
+
+export const TrackedChangeOrderStatus = {
+  DRAFT: 'DRAFT',
+  SENT: 'SENT',
+  APPROVED: 'APPROVED',
+  DECLINED: 'DECLINED',
+} as const;
+
+export interface TrackedChangeOrder {
+  id: string;
+  reference: string;
+  status: TrackedChangeOrderStatus;
+  items: string[];
+  /** @nullable */
+  hours: number | null;
+  /** @nullable */
+  amount: number | null;
+  currency: string;
+  subject: string;
+  body: string;
+  /** @nullable */
+  sentAt: string | null;
+  /** @nullable */
+  decidedAt: string | null;
+}
+
+export interface PullRequestResult {
+  evaluationId: string;
+  number: number;
+  title: string;
+  url: string;
+  /** @nullable */
+  branch: string | null;
+  prState: PullRequestResultPrState;
+  /** @nullable */
+  headSha: string | null;
+  verdict: PullRequestResultVerdict;
+  reason: string;
+  /** @nullable */
+  estimate: string | null;
+  changeOrder: DemoChangeOrder | null;
+  trackedChangeOrder: TrackedChangeOrder | null;
+  checkedAt: string;
+}
+
+export interface PullRequestResultList {
+  pullRequests: PullRequestResult[];
+}
+
+export interface GitHubRepository {
+  installationId: number;
+  accountLogin: string;
+  id: number;
+  fullName: string;
+  private: boolean;
+  /** @nullable */
+  linkedProjectId: string | null;
+}
+
+export interface GitHubRepositoryList {
+  /** @nullable */
+  installUrl: string | null;
+  repositories: GitHubRepository[];
+}
+
+export type ChangeOrderUpdateInputStatus = typeof ChangeOrderUpdateInputStatus[keyof typeof ChangeOrderUpdateInputStatus];
+
+
+export const ChangeOrderUpdateInputStatus = {
+  SENT: 'SENT',
+  APPROVED: 'APPROVED',
+  DECLINED: 'DECLINED',
+} as const;
+
+export interface ChangeOrderUpdateInput {
+  /** @maxLength 36 */
+  evaluationId: string;
+  /**
+     * @minimum 0
+     * @maximum 10000
+     * @nullable
+     */
+  hours?: number | null;
+  status?: ChangeOrderUpdateInputStatus;
+  /** @maxLength 300 */
+  subject?: string;
+  /** @maxLength 10000 */
+  body?: string;
+}
+
+export interface SwitchWorkspaceInput {
+  /** @maxLength 36 */
+  organizationId: string;
+}
+
+export interface WorkspaceUpdateInput {
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  name: string;
+}
+
+export type WorkspaceMemberRole = typeof WorkspaceMemberRole[keyof typeof WorkspaceMemberRole];
+
+
+export const WorkspaceMemberRole = {
+  OWNER: 'OWNER',
+  MEMBER: 'MEMBER',
+} as const;
+
+export interface WorkspaceMember {
+  userId: string;
+  login: string;
+  /** @nullable */
+  name: string | null;
+  /** @nullable */
+  avatarUrl: string | null;
+  role: WorkspaceMemberRole;
+  joinedAt: string;
+  you: boolean;
+}
+
+export interface WorkspaceInvite {
+  id: string;
+  /** @nullable */
+  createdBy: string | null;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export type WorkspaceInfoRole = typeof WorkspaceInfoRole[keyof typeof WorkspaceInfoRole];
+
+
+export const WorkspaceInfoRole = {
+  OWNER: 'OWNER',
+  MEMBER: 'MEMBER',
+} as const;
+
+export interface WorkspaceInfo {
+  id: string;
+  name: string;
+  role: WorkspaceInfoRole;
+  members: WorkspaceMember[];
+  /** Open invites; only shown to owners */
+  invites: WorkspaceInvite[];
+}
+
+export interface InviteCreated {
+  id: string;
+  url: string;
+  expiresAt: string;
+}
+
+export interface InvitePreview {
+  workspaceName: string;
+  /** @nullable */
+  invitedBy: string | null;
+  expiresAt: string;
+  alreadyMember: boolean;
+}
+
 export type GetDemoGithubPrParams = {
 /**
  * @maxLength 300

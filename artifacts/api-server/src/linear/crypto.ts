@@ -23,20 +23,23 @@ export interface EncryptedPayload {
 
 const DEFAULT_KEY_VERSION = "v1";
 
+const DEFAULT_KEY_ENV = "LINEAR_TOKEN_ENCRYPTION_KEY";
+
 /**
  * Resolves a 32-byte AES-256 key for a specific key version, supporting zero-downtime key rotation.
- * Checks environment variable `LINEAR_TOKEN_ENCRYPTION_KEY_<VERSION>` first,
- * then falls back to `LINEAR_TOKEN_ENCRYPTION_KEY`, then a deterministic test key.
+ * Checks environment variable `<keyEnv>_<VERSION>` first (LINEAR_TOKEN_ENCRYPTION_KEY_V1 by
+ * default), then falls back to `<keyEnv>`, then a deterministic test key.
  */
-export function resolveEncryptionKey(keyVersion: string = DEFAULT_KEY_VERSION): Buffer {
-  const versionedEnvName = `LINEAR_TOKEN_ENCRYPTION_KEY_${keyVersion.toUpperCase()}`;
-  const rawKey =
-    process.env[versionedEnvName] ||
-    process.env.LINEAR_TOKEN_ENCRYPTION_KEY;
+export function resolveEncryptionKey(
+  keyVersion: string = DEFAULT_KEY_VERSION,
+  keyEnv: string = DEFAULT_KEY_ENV
+): Buffer {
+  const versionedEnvName = `${keyEnv}_${keyVersion.toUpperCase()}`;
+  const rawKey = process.env[versionedEnvName] || process.env[keyEnv];
 
   if (!rawKey) {
     if (process.env.NODE_ENV === "production") {
-      throw new Error("LINEAR_TOKEN_ENCRYPTION_KEY must be explicitly configured in production.");
+      throw new Error(`${keyEnv} must be explicitly configured in production.`);
     }
     // Deterministic fallback for test/local development
     return crypto.createHash("sha256").update("scopeci-alpha-deterministic-test-encryption-key-32b").digest();
@@ -51,13 +54,14 @@ export function resolveEncryptionKey(keyVersion: string = DEFAULT_KEY_VERSION): 
  */
 export function encryptToken(
   plaintext: string,
-  keyVersion: string = DEFAULT_KEY_VERSION
+  keyVersion: string = DEFAULT_KEY_VERSION,
+  keyEnv: string = DEFAULT_KEY_ENV
 ): EncryptedPayload {
   if (!plaintext) {
     throw new Error("Cannot encrypt empty token payload");
   }
 
-  const key = resolveEncryptionKey(keyVersion);
+  const key = resolveEncryptionKey(keyVersion, keyEnv);
   const iv = crypto.randomBytes(12); // Standard 96-bit IV for AES-GCM
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
 
@@ -77,13 +81,13 @@ export function encryptToken(
  * Decrypts an authenticated AES-256-GCM encrypted payload using the key version specified in the payload.
  * Throws an error if the authentication tag does not match or if the ciphertext has been tampered with.
  */
-export function decryptToken(payload: EncryptedPayload): string {
+export function decryptToken(payload: EncryptedPayload, keyEnv: string = DEFAULT_KEY_ENV): string {
   if (!payload || !payload.ciphertext || !payload.iv || !payload.authTag) {
     throw new Error("Invalid encrypted payload structure");
   }
 
   const keyVersion = payload.keyVersion || DEFAULT_KEY_VERSION;
-  const key = resolveEncryptionKey(keyVersion);
+  const key = resolveEncryptionKey(keyVersion, keyEnv);
   const iv = Buffer.from(payload.iv, "hex");
   const authTag = Buffer.from(payload.authTag, "hex");
 

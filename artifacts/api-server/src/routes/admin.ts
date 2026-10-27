@@ -71,7 +71,7 @@ function sessionCookie(value: string, maxAgeSeconds: number): string {
  * Bearer <key>` / `x-admin-key` for scripts. Uses constant-time comparison.
  * Returns 401 if the secret is not configured or nothing valid was sent.
  */
-function requireAdmin(req: Request, res: Response, next: NextFunction): void {
+export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
   // Everything behind this carries signup emails; keep it out of any cache.
   res.setHeader("Cache-Control", "no-store");
 

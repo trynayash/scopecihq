@@ -6,6 +6,8 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './changeOrderUpdateInput';
+export * from './changeOrderUpdateInputStatus';
 export * from './demoChangedFile';
 export * from './demoChangedFileStatus';
 export * from './demoChangeOrder';
@@ -22,6 +24,37 @@ export * from './demoScopeInput';
 export * from './demoSowInput';
 export * from './errorResponse';
 export * from './getDemoGithubPrParams';
+export * from './gitHubRepository';
+export * from './gitHubRepositoryList';
 export * from './healthStatus';
+export * from './inviteCreated';
+export * from './invitePreview';
+export * from './linkedRepository';
+export * from './policyMode';
+export * from './project';
+export * from './projectCounts';
+export * from './projectCreateInput';
+export * from './projectDetail';
+export * from './projectList';
+export * from './projectUpdateInput';
+export * from './pullRequestResult';
+export * from './pullRequestResultList';
+export * from './pullRequestResultPrState';
+export * from './pullRequestResultVerdict';
+export * from './repositoryLinkInput';
+export * from './savedScope';
+export * from './sessionInfo';
+export * from './sessionOrganization';
+export * from './sessionOrganizationRole';
+export * from './sessionUser';
+export * from './switchWorkspaceInput';
+export * from './trackedChangeOrder';
+export * from './trackedChangeOrderStatus';
 export * from './waitlistSignup';
 export * from './waitlistSignupInput';
+export * from './workspaceInfo';
+export * from './workspaceInfoRole';
+export * from './workspaceInvite';
+export * from './workspaceMember';
+export * from './workspaceMemberRole';
+export * from './workspaceUpdateInput';

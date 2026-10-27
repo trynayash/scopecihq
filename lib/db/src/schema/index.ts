@@ -17,7 +17,7 @@ export const waitlistSignupsTable = pgTable("waitlist_signups", {
   utmTerm: varchar("utm_term", { length: 200 }),
   referrer: varchar("referrer", { length: 2000 }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}).enableRLS();
 
 export const insertWaitlistSignupSchema = createInsertSchema(waitlistSignupsTable).omit({
   id: true,
@@ -36,7 +36,7 @@ export const siteEventsTable = pgTable("site_events", {
   referrer: varchar("referrer", { length: 2000 }),
   landingPage: varchar("landing_page", { length: 2000 }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}).enableRLS();
 
 export const insertSiteEventSchema = createInsertSchema(siteEventsTable).omit({
   id: true,
@@ -53,3 +53,5 @@ export type SiteEvent = typeof siteEventsTable.$inferSelect;
 export * from "./provenance.js";
 export * from "./github.js";
 export * from "./linear.js";
+export * from "./accounts.js";
+export * from "./settings.js";

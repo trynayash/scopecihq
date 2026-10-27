@@ -219,3 +219,640 @@ export const GetDemoGithubPrResponse = zod.object({
 })
 
 
+/**
+ * @summary Who is signed in, and whether GitHub sign-in is set up on this server
+ */
+export const GetSessionResponse = zod.object({
+  "signInAvailable": zod.boolean(),
+  "user": zod.union([zod.object({
+  "id": zod.string(),
+  "login": zod.string(),
+  "name": zod.string().nullable(),
+  "avatarUrl": zod.string().nullable()
+}),zod.null()]),
+  "organization": zod.union([zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "role": zod.enum(['OWNER', 'MEMBER'])
+}),zod.null()]),
+  "workspaces": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "role": zod.enum(['OWNER', 'MEMBER'])
+})).describe('Every workspace the person belongs to; empty when signed out')
+})
+
+
+/**
+ * @summary Sign out
+ */
+export const EndSessionResponse = zod.void()
+
+
+/**
+ * @summary Work in another workspace the signed-in person belongs to
+ */
+export const switchWorkspaceBodyOrganizationIdMax = 36;
+
+
+
+export const SwitchWorkspaceBody = zod.object({
+  "organizationId": zod.string().max(switchWorkspaceBodyOrganizationIdMax)
+})
+
+export const SwitchWorkspaceResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "role": zod.enum(['OWNER', 'MEMBER'])
+})
+
+
+/**
+ * @summary The current workspace, its members and, for owners, its open invites
+ */
+export const GetWorkspaceResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "role": zod.enum(['OWNER', 'MEMBER']),
+  "members": zod.array(zod.object({
+  "userId": zod.string(),
+  "login": zod.string(),
+  "name": zod.string().nullable(),
+  "avatarUrl": zod.string().nullable(),
+  "role": zod.enum(['OWNER', 'MEMBER']),
+  "joinedAt": zod.coerce.date(),
+  "you": zod.boolean()
+})),
+  "invites": zod.array(zod.object({
+  "id": zod.string(),
+  "createdBy": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "expiresAt": zod.coerce.date()
+})).describe('Open invites; only shown to owners')
+})
+
+
+/**
+ * @summary Rename the workspace (owners only)
+ */
+export const updateWorkspaceBodyNameMax = 120;
+
+
+
+export const UpdateWorkspaceBody = zod.object({
+  "name": zod.string().min(1).max(updateWorkspaceBodyNameMax)
+})
+
+export const UpdateWorkspaceResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "role": zod.enum(['OWNER', 'MEMBER']),
+  "members": zod.array(zod.object({
+  "userId": zod.string(),
+  "login": zod.string(),
+  "name": zod.string().nullable(),
+  "avatarUrl": zod.string().nullable(),
+  "role": zod.enum(['OWNER', 'MEMBER']),
+  "joinedAt": zod.coerce.date(),
+  "you": zod.boolean()
+})),
+  "invites": zod.array(zod.object({
+  "id": zod.string(),
+  "createdBy": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "expiresAt": zod.coerce.date()
+})).describe('Open invites; only shown to owners')
+})
+
+
+/**
+ * @summary Make a single-use invite link, valid for seven days (owners only)
+ */
+export const CreateInviteResponse = zod.object({
+  "id": zod.string(),
+  "url": zod.string(),
+  "expiresAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Cancel an invite that hasn't been used (owners only)
+ */
+export const revokeInvitePathInviteIdMax = 36;
+
+
+
+export const RevokeInviteParams = zod.object({
+  "inviteId": zod.coerce.string().max(revokeInvitePathInviteIdMax)
+})
+
+export const RevokeInviteResponse = zod.void()
+
+
+/**
+ * @summary Remove someone from the workspace (owners only)
+ */
+export const removeMemberPathUserIdMax = 36;
+
+
+
+export const RemoveMemberParams = zod.object({
+  "userId": zod.coerce.string().max(removeMemberPathUserIdMax)
+})
+
+export const RemoveMemberResponse = zod.void()
+
+
+/**
+ * @summary Which workspace an invite link is for
+ */
+export const getInvitePathTokenMax = 100;
+
+
+
+export const GetInviteParams = zod.object({
+  "token": zod.coerce.string().max(getInvitePathTokenMax)
+})
+
+export const GetInviteResponse = zod.object({
+  "workspaceName": zod.string(),
+  "invitedBy": zod.string().nullable(),
+  "expiresAt": zod.coerce.date(),
+  "alreadyMember": zod.boolean()
+})
+
+
+/**
+ * @summary Join the workspace an invite link is for, and switch to it
+ */
+export const acceptInvitePathTokenMax = 100;
+
+
+
+export const AcceptInviteParams = zod.object({
+  "token": zod.coerce.string().max(acceptInvitePathTokenMax)
+})
+
+export const AcceptInviteResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "role": zod.enum(['OWNER', 'MEMBER'])
+})
+
+
+/**
+ * @summary The signed-in organization's projects
+ */
+export const ListProjectsResponse = zod.object({
+  "projects": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "clientName": zod.string().nullable(),
+  "hourlyRate": zod.number().int().nullable(),
+  "currency": zod.string(),
+  "policyMode": zod.enum(['OBSERVE', 'REVIEW', 'ENFORCE']).describe('OBSERVE only reports; REVIEW asks for a decision on the check; ENFORCE fails the check on excluded work.'),
+  "repository": zod.union([zod.object({
+  "fullName": zod.string(),
+  "installationId": zod.string()
+}),zod.null()]),
+  "scopeVersion": zod.string().nullable(),
+  "scopeSavedAt": zod.coerce.date().nullable(),
+  "createdAt": zod.coerce.date(),
+  "counts": zod.object({
+  "checked": zod.number().int(),
+  "changeOrders": zod.number().int(),
+  "decisions": zod.number().int(),
+  "changeOrdersSent": zod.number().int().describe('Sent and still waiting on the client'),
+  "changeOrdersApproved": zod.number().int(),
+  "approvedValue": zod.number().int().describe('Total of approved change orders that have a price, in the project\'s currency')
+})
+}))
+})
+
+
+/**
+ * @summary Start a project for one client engagement
+ */
+export const createProjectBodyNameMax = 160;
+
+export const createProjectBodyClientNameMax = 160;
+
+export const createProjectBodyHourlyRateMin = 0;
+export const createProjectBodyHourlyRateMax = 100000;
+
+
+
+export const CreateProjectBody = zod.object({
+  "name": zod.string().min(1).max(createProjectBodyNameMax),
+  "clientName": zod.string().max(createProjectBodyClientNameMax).nullish(),
+  "hourlyRate": zod.number().int().min(createProjectBodyHourlyRateMin).max(createProjectBodyHourlyRateMax).nullish()
+})
+
+export const CreateProjectResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "clientName": zod.string().nullable(),
+  "hourlyRate": zod.number().int().nullable(),
+  "currency": zod.string(),
+  "policyMode": zod.enum(['OBSERVE', 'REVIEW', 'ENFORCE']).describe('OBSERVE only reports; REVIEW asks for a decision on the check; ENFORCE fails the check on excluded work.'),
+  "repository": zod.union([zod.object({
+  "fullName": zod.string(),
+  "installationId": zod.string()
+}),zod.null()]),
+  "scopeVersion": zod.string().nullable(),
+  "scopeSavedAt": zod.coerce.date().nullable(),
+  "createdAt": zod.coerce.date(),
+  "counts": zod.object({
+  "checked": zod.number().int(),
+  "changeOrders": zod.number().int(),
+  "decisions": zod.number().int(),
+  "changeOrdersSent": zod.number().int().describe('Sent and still waiting on the client'),
+  "changeOrdersApproved": zod.number().int(),
+  "approvedValue": zod.number().int().describe('Total of approved change orders that have a price, in the project\'s currency')
+})
+})
+
+
+/**
+ * @summary A project and its confirmed scope
+ */
+export const getProjectPathProjectIdMax = 36;
+
+
+
+export const GetProjectParams = zod.object({
+  "projectId": zod.coerce.string().max(getProjectPathProjectIdMax)
+})
+
+export const getProjectResponseScopeOneClausesItemClauseRefMax = 40;
+
+export const getProjectResponseScopeOneClausesItemTitleMax = 200;
+
+export const getProjectResponseScopeOneClausesItemIncludedItemMax = 300;
+
+export const getProjectResponseScopeOneClausesItemIncludedMax = 100;
+
+export const getProjectResponseScopeOneClausesItemExcludedItemMax = 300;
+
+export const getProjectResponseScopeOneClausesItemExcludedMax = 100;
+
+
+
+export const GetProjectResponse = zod.object({
+  "project": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "clientName": zod.string().nullable(),
+  "hourlyRate": zod.number().int().nullable(),
+  "currency": zod.string(),
+  "policyMode": zod.enum(['OBSERVE', 'REVIEW', 'ENFORCE']).describe('OBSERVE only reports; REVIEW asks for a decision on the check; ENFORCE fails the check on excluded work.'),
+  "repository": zod.union([zod.object({
+  "fullName": zod.string(),
+  "installationId": zod.string()
+}),zod.null()]),
+  "scopeVersion": zod.string().nullable(),
+  "scopeSavedAt": zod.coerce.date().nullable(),
+  "createdAt": zod.coerce.date(),
+  "counts": zod.object({
+  "checked": zod.number().int(),
+  "changeOrders": zod.number().int(),
+  "decisions": zod.number().int(),
+  "changeOrdersSent": zod.number().int().describe('Sent and still waiting on the client'),
+  "changeOrdersApproved": zod.number().int(),
+  "approvedValue": zod.number().int().describe('Total of approved change orders that have a price, in the project\'s currency')
+})
+}),
+  "scope": zod.union([zod.object({
+  "version": zod.string(),
+  "savedAt": zod.coerce.date(),
+  "title": zod.string(),
+  "clauses": zod.array(zod.object({
+  "clauseRef": zod.string().max(getProjectResponseScopeOneClausesItemClauseRefMax),
+  "title": zod.string().max(getProjectResponseScopeOneClausesItemTitleMax),
+  "included": zod.array(zod.string().max(getProjectResponseScopeOneClausesItemIncludedItemMax)).max(getProjectResponseScopeOneClausesItemIncludedMax),
+  "excluded": zod.array(zod.string().max(getProjectResponseScopeOneClausesItemExcludedItemMax)).max(getProjectResponseScopeOneClausesItemExcludedMax)
+}))
+}),zod.null()])
+})
+
+
+/**
+ * @summary Change a project's name, client, hourly rate or how strict its check is
+ */
+export const updateProjectPathProjectIdMax = 36;
+
+
+
+export const UpdateProjectParams = zod.object({
+  "projectId": zod.coerce.string().max(updateProjectPathProjectIdMax)
+})
+
+export const updateProjectBodyNameMax = 160;
+
+export const updateProjectBodyClientNameMax = 160;
+
+export const updateProjectBodyHourlyRateMin = 0;
+export const updateProjectBodyHourlyRateMax = 100000;
+
+
+
+export const UpdateProjectBody = zod.object({
+  "name": zod.string().min(1).max(updateProjectBodyNameMax).optional(),
+  "clientName": zod.string().max(updateProjectBodyClientNameMax).nullish(),
+  "hourlyRate": zod.number().int().min(updateProjectBodyHourlyRateMin).max(updateProjectBodyHourlyRateMax).nullish(),
+  "policyMode": zod.enum(['OBSERVE', 'REVIEW', 'ENFORCE']).optional().describe('OBSERVE only reports; REVIEW asks for a decision on the check; ENFORCE fails the check on excluded work.')
+})
+
+export const UpdateProjectResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "clientName": zod.string().nullable(),
+  "hourlyRate": zod.number().int().nullable(),
+  "currency": zod.string(),
+  "policyMode": zod.enum(['OBSERVE', 'REVIEW', 'ENFORCE']).describe('OBSERVE only reports; REVIEW asks for a decision on the check; ENFORCE fails the check on excluded work.'),
+  "repository": zod.union([zod.object({
+  "fullName": zod.string(),
+  "installationId": zod.string()
+}),zod.null()]),
+  "scopeVersion": zod.string().nullable(),
+  "scopeSavedAt": zod.coerce.date().nullable(),
+  "createdAt": zod.coerce.date(),
+  "counts": zod.object({
+  "checked": zod.number().int(),
+  "changeOrders": zod.number().int(),
+  "decisions": zod.number().int(),
+  "changeOrdersSent": zod.number().int().describe('Sent and still waiting on the client'),
+  "changeOrdersApproved": zod.number().int(),
+  "approvedValue": zod.number().int().describe('Total of approved change orders that have a price, in the project\'s currency')
+})
+})
+
+
+/**
+ * @summary Archive a project and stop checking its repository
+ */
+export const archiveProjectPathProjectIdMax = 36;
+
+
+
+export const ArchiveProjectParams = zod.object({
+  "projectId": zod.coerce.string().max(archiveProjectPathProjectIdMax)
+})
+
+export const ArchiveProjectResponse = zod.void()
+
+
+/**
+ * @summary Save a confirmed scope checklist as the project's new active baseline
+ */
+export const saveProjectScopePathProjectIdMax = 36;
+
+
+
+export const SaveProjectScopeParams = zod.object({
+  "projectId": zod.coerce.string().max(saveProjectScopePathProjectIdMax)
+})
+
+export const saveProjectScopeBodyTitleMax = 200;
+
+export const saveProjectScopeBodyClausesItemClauseRefMax = 40;
+
+export const saveProjectScopeBodyClausesItemTitleMax = 200;
+
+export const saveProjectScopeBodyClausesItemIncludedItemMax = 300;
+
+export const saveProjectScopeBodyClausesItemIncludedMax = 100;
+
+export const saveProjectScopeBodyClausesItemExcludedItemMax = 300;
+
+export const saveProjectScopeBodyClausesItemExcludedMax = 100;
+
+export const saveProjectScopeBodyClausesMax = 60;
+
+
+
+export const SaveProjectScopeBody = zod.object({
+  "title": zod.string().max(saveProjectScopeBodyTitleMax),
+  "clauses": zod.array(zod.object({
+  "clauseRef": zod.string().max(saveProjectScopeBodyClausesItemClauseRefMax),
+  "title": zod.string().max(saveProjectScopeBodyClausesItemTitleMax),
+  "included": zod.array(zod.string().max(saveProjectScopeBodyClausesItemIncludedItemMax)).max(saveProjectScopeBodyClausesItemIncludedMax),
+  "excluded": zod.array(zod.string().max(saveProjectScopeBodyClausesItemExcludedItemMax)).max(saveProjectScopeBodyClausesItemExcludedMax)
+})).min(1).max(saveProjectScopeBodyClausesMax)
+})
+
+export const saveProjectScopeResponseClausesItemClauseRefMax = 40;
+
+export const saveProjectScopeResponseClausesItemTitleMax = 200;
+
+export const saveProjectScopeResponseClausesItemIncludedItemMax = 300;
+
+export const saveProjectScopeResponseClausesItemIncludedMax = 100;
+
+export const saveProjectScopeResponseClausesItemExcludedItemMax = 300;
+
+export const saveProjectScopeResponseClausesItemExcludedMax = 100;
+
+
+
+export const SaveProjectScopeResponse = zod.object({
+  "version": zod.string(),
+  "savedAt": zod.coerce.date(),
+  "title": zod.string(),
+  "clauses": zod.array(zod.object({
+  "clauseRef": zod.string().max(saveProjectScopeResponseClausesItemClauseRefMax),
+  "title": zod.string().max(saveProjectScopeResponseClausesItemTitleMax),
+  "included": zod.array(zod.string().max(saveProjectScopeResponseClausesItemIncludedItemMax)).max(saveProjectScopeResponseClausesItemIncludedMax),
+  "excluded": zod.array(zod.string().max(saveProjectScopeResponseClausesItemExcludedItemMax)).max(saveProjectScopeResponseClausesItemExcludedMax)
+}))
+})
+
+
+/**
+ * @summary Check pull requests from this repository against the project's scope
+ */
+export const linkProjectRepositoryPathProjectIdMax = 36;
+
+
+
+export const LinkProjectRepositoryParams = zod.object({
+  "projectId": zod.coerce.string().max(linkProjectRepositoryPathProjectIdMax)
+})
+
+
+
+
+
+export const LinkProjectRepositoryBody = zod.object({
+  "installationId": zod.number().int().min(1),
+  "repositoryId": zod.number().int().min(1)
+})
+
+export const LinkProjectRepositoryResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "clientName": zod.string().nullable(),
+  "hourlyRate": zod.number().int().nullable(),
+  "currency": zod.string(),
+  "policyMode": zod.enum(['OBSERVE', 'REVIEW', 'ENFORCE']).describe('OBSERVE only reports; REVIEW asks for a decision on the check; ENFORCE fails the check on excluded work.'),
+  "repository": zod.union([zod.object({
+  "fullName": zod.string(),
+  "installationId": zod.string()
+}),zod.null()]),
+  "scopeVersion": zod.string().nullable(),
+  "scopeSavedAt": zod.coerce.date().nullable(),
+  "createdAt": zod.coerce.date(),
+  "counts": zod.object({
+  "checked": zod.number().int(),
+  "changeOrders": zod.number().int(),
+  "decisions": zod.number().int(),
+  "changeOrdersSent": zod.number().int().describe('Sent and still waiting on the client'),
+  "changeOrdersApproved": zod.number().int(),
+  "approvedValue": zod.number().int().describe('Total of approved change orders that have a price, in the project\'s currency')
+})
+})
+
+
+/**
+ * @summary Stop checking this project's repository
+ */
+export const unlinkProjectRepositoryPathProjectIdMax = 36;
+
+
+
+export const UnlinkProjectRepositoryParams = zod.object({
+  "projectId": zod.coerce.string().max(unlinkProjectRepositoryPathProjectIdMax)
+})
+
+export const UnlinkProjectRepositoryResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "clientName": zod.string().nullable(),
+  "hourlyRate": zod.number().int().nullable(),
+  "currency": zod.string(),
+  "policyMode": zod.enum(['OBSERVE', 'REVIEW', 'ENFORCE']).describe('OBSERVE only reports; REVIEW asks for a decision on the check; ENFORCE fails the check on excluded work.'),
+  "repository": zod.union([zod.object({
+  "fullName": zod.string(),
+  "installationId": zod.string()
+}),zod.null()]),
+  "scopeVersion": zod.string().nullable(),
+  "scopeSavedAt": zod.coerce.date().nullable(),
+  "createdAt": zod.coerce.date(),
+  "counts": zod.object({
+  "checked": zod.number().int(),
+  "changeOrders": zod.number().int(),
+  "decisions": zod.number().int(),
+  "changeOrdersSent": zod.number().int().describe('Sent and still waiting on the client'),
+  "changeOrdersApproved": zod.number().int(),
+  "approvedValue": zod.number().int().describe('Total of approved change orders that have a price, in the project\'s currency')
+})
+})
+
+
+/**
+ * Creates the change order for the pull request behind the given result on first use. Hours are priced at the project's hourly rate. An approved change order covers that work on this and later pull requests, and the pull request is checked again straight away.
+ * @summary Track the change order for a flagged pull request, price it, and record what the client decided
+ */
+export const updateChangeOrderPathProjectIdMax = 36;
+
+
+
+export const UpdateChangeOrderParams = zod.object({
+  "projectId": zod.coerce.string().max(updateChangeOrderPathProjectIdMax)
+})
+
+export const updateChangeOrderBodyEvaluationIdMax = 36;
+
+export const updateChangeOrderBodyHoursMin = 0;
+export const updateChangeOrderBodyHoursMax = 10000;
+
+export const updateChangeOrderBodySubjectMax = 300;
+
+export const updateChangeOrderBodyBodyMax = 10000;
+
+
+
+export const UpdateChangeOrderBody = zod.object({
+  "evaluationId": zod.string().max(updateChangeOrderBodyEvaluationIdMax),
+  "hours": zod.number().int().min(updateChangeOrderBodyHoursMin).max(updateChangeOrderBodyHoursMax).nullish(),
+  "status": zod.enum(['SENT', 'APPROVED', 'DECLINED']).optional(),
+  "subject": zod.string().max(updateChangeOrderBodySubjectMax).optional(),
+  "body": zod.string().max(updateChangeOrderBodyBodyMax).optional()
+})
+
+export const UpdateChangeOrderResponse = zod.object({
+  "id": zod.string(),
+  "reference": zod.string(),
+  "status": zod.enum(['DRAFT', 'SENT', 'APPROVED', 'DECLINED']),
+  "items": zod.array(zod.string()),
+  "hours": zod.number().int().nullable(),
+  "amount": zod.number().int().nullable(),
+  "currency": zod.string(),
+  "subject": zod.string(),
+  "body": zod.string(),
+  "sentAt": zod.coerce.date().nullable(),
+  "decidedAt": zod.coerce.date().nullable()
+})
+
+
+/**
+ * @summary The latest result for each checked pull request, newest first
+ */
+export const listProjectPullRequestsPathProjectIdMax = 36;
+
+
+
+export const ListProjectPullRequestsParams = zod.object({
+  "projectId": zod.coerce.string().max(listProjectPullRequestsPathProjectIdMax)
+})
+
+export const ListProjectPullRequestsResponse = zod.object({
+  "pullRequests": zod.array(zod.object({
+  "evaluationId": zod.string(),
+  "number": zod.number().int(),
+  "title": zod.string(),
+  "url": zod.string(),
+  "branch": zod.string().nullable(),
+  "prState": zod.enum(['OPEN', 'CLOSED', 'MERGED']),
+  "headSha": zod.string().nullable(),
+  "verdict": zod.enum(['IN_SCOPE', 'REVIEW_REQUIRED', 'CHANGE_REQUIRED', 'APPROVED_CHANGE', 'BLOCKED', 'OVERRIDDEN']),
+  "reason": zod.string(),
+  "estimate": zod.string().nullable(),
+  "changeOrder": zod.union([zod.object({
+  "subject": zod.string(),
+  "body": zod.string()
+}),zod.null()]),
+  "trackedChangeOrder": zod.union([zod.object({
+  "id": zod.string(),
+  "reference": zod.string(),
+  "status": zod.enum(['DRAFT', 'SENT', 'APPROVED', 'DECLINED']),
+  "items": zod.array(zod.string()),
+  "hours": zod.number().int().nullable(),
+  "amount": zod.number().int().nullable(),
+  "currency": zod.string(),
+  "subject": zod.string(),
+  "body": zod.string(),
+  "sentAt": zod.coerce.date().nullable(),
+  "decidedAt": zod.coerce.date().nullable()
+}),zod.null()]),
+  "checkedAt": zod.coerce.date()
+}))
+})
+
+
+/**
+ * @summary Repositories the signed-in person can see through the ScopeCI GitHub App
+ */
+export const ListGitHubRepositoriesResponse = zod.object({
+  "installUrl": zod.string().nullable(),
+  "repositories": zod.array(zod.object({
+  "installationId": zod.number().int(),
+  "accountLogin": zod.string(),
+  "id": zod.number().int(),
+  "fullName": zod.string(),
+  "private": zod.boolean(),
+  "linkedProjectId": zod.string().nullable()
+}))
+})
+
+

@@ -147,8 +147,8 @@ async function run() {
       assert.strictEqual(res.status, 200);
       assert.strictEqual(res.body.state, "CHANGE_REQUIRED");
       assert.strictEqual(res.body.clause.clauseRef, "§3.1");
-      assert.ok(res.body.comment.includes("CHANGE REQUIRED"));
-      assert.ok(!res.body.comment.includes("Work Item"), "no fake linked-issue row without an issue");
+      assert.ok(res.body.comment.includes("ScopeCI: Change order needed"));
+      assert.ok(!res.body.comment.includes("Linked issue"), "no fake linked-issue row without an issue");
       assert.strictEqual(res.body.changeOrder.subject, "Change request: gift cards (Harbor & Pine Online Store)");
       assert.ok(res.body.estimate.includes("from the hours you entered"), res.body.estimate);
       assert.ok(res.body.changeOrder.body.includes("$1,440"), "12h at $120");
