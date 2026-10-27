@@ -1,0 +1,12 @@
+{
+  "id": "HP-12",
+  "identifier": "HP-12",
+  "title": "Loyalty points at checkout",
+  "description": "Customers earn points on each order.",
+  "status": "In Progress",
+  "estimateHours": 16,
+  "labels": [
+    "storefront"
+  ],
+  "updatedAt": "2026-10-12T09:00:00Z"
+}

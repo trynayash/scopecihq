@@ -6,7 +6,9 @@
   "contractClauseId": "clause_4_2",
   "issueId": "ENG-184",
   "pullRequestId": "pr_1842",
-  "detectedDelta": [],
+  "detectedDelta": [
+    "Covered by approved Change Order CO #12: Organization Roles and Permissions Subsystem: organization_rbac"
+  ],
   "estimatedHours": {
     "min": 0,
     "max": 0
@@ -18,5 +20,6 @@
     "status": "available"
   },
   "recommendedAction": "PROCEED",
-  "checkConclusion": "success"
+  "checkConclusion": "success",
+  "estimateSource": "NOT_ESTIMATED"
 }

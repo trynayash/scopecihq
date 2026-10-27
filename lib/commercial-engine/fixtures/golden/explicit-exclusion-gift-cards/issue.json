@@ -1,0 +1,11 @@
+{
+  "id": "HP-13",
+  "identifier": "HP-13",
+  "title": "Gift cards",
+  "description": "Sell and redeem gift cards in the store.",
+  "status": "In Progress",
+  "labels": [
+    "storefront"
+  ],
+  "updatedAt": "2026-10-12T09:00:00Z"
+}

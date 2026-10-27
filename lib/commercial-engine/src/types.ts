@@ -184,7 +184,7 @@ export interface DetectedCapability {
   evidenceLocation: string; // file path or identifier
   evidenceText: string;
   confidence: number;
-  extractionMethod: 'STATIC_AST' | 'DIFF_PATH' | 'SYMBOL_DETECTION' | 'SEMANTIC_INTERPRETATION';
+  extractionMethod: 'STATIC_AST' | 'DIFF_PATH' | 'SYMBOL_DETECTION' | 'SEMANTIC_INTERPRETATION' | 'CONTRACT_PHRASE_MATCH';
 }
 
 export interface ContractEvidence {
@@ -280,6 +280,7 @@ export interface EvidenceBundle {
   scopeDelta: ScopeDeltaStatement[];
   impact: {
     estimatedHours: { min: number; max: number };
+    estimateSource: EstimateSource;
     commercialValue: {
       currency: string;
       min: number;
@@ -317,6 +318,13 @@ export const DEFAULT_POLICY_CONFIG: PolicyConfig = {
 /* 6. Commercial Evaluation Full Output                               */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Where an evaluation's hours come from. The evaluator never makes up effort:
+ * it uses the linked issue's own estimate, or reports the work as not
+ * estimated.
+ */
+export type EstimateSource = 'LINEAR_ISSUE_ESTIMATE' | 'NOT_ESTIMATED';
+
 export interface EvaluationEvidence {
   source: 'SOW' | 'LINEAR' | 'GITHUB' | 'CHANGE_ORDER' | 'SYSTEM';
   mark: 'sow' | 'linear' | 'github' | 'approval' | 'system';
@@ -342,7 +350,9 @@ export interface CommercialEvaluation {
   evidenceBundle: EvidenceBundle;
   identityHash: string;
   detectedDelta: string[];
+  /** Hours of the linked issue's own estimate; zero when there is none (see estimateSource). */
   estimatedHours: { min: number; max: number };
+  estimateSource: EstimateSource;
   commercialValue: { currency: string; min: number; max: number; status?: 'available' | 'unavailable' };
   recommendedAction: RecommendedAction;
   checkConclusion: CheckRunConclusion;

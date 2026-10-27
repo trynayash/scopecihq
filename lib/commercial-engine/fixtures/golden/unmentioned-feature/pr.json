@@ -1,0 +1,28 @@
+{
+  "id": "pr_44",
+  "number": 44,
+  "title": "Add a wishlist",
+  "body": "Closes HP-15.",
+  "baseBranch": "main",
+  "headBranch": "feat/hp-15-wishlist",
+  "headSha": "d4e5f60718293a4b5c6d7e8f9012345678901234",
+  "filesChanged": 2,
+  "additions": 115,
+  "deletions": 0,
+  "changedFiles": [
+    {
+      "path": "src/wishlist/wishlist.ts",
+      "module": "wishlist",
+      "status": "added",
+      "additions": 70,
+      "deletions": 0
+    },
+    {
+      "path": "src/wishlist/WishlistButton.tsx",
+      "module": "wishlist",
+      "status": "added",
+      "additions": 45,
+      "deletions": 0
+    }
+  ]
+}

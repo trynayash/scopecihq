@@ -12,6 +12,7 @@ const __dirname = path.dirname(__filename);
 
 export interface ReplayResult {
   fixtureName: string;
+  detectedDelta: string[];
   matched: boolean;
   actualState: string;
   expectedState: string;
@@ -23,6 +24,11 @@ export interface ReplayResult {
 }
 
 export async function replayFixture(fixtureArg: string): Promise<ReplayResult> {
+  return replayFixtureSync(fixtureArg);
+}
+
+/** Same as replayFixture, for callers that run synchronously (the simulator). */
+export function replayFixtureSync(fixtureArg: string): ReplayResult {
   // Resolve fixture directory
   let fixtureDir = fixtureArg;
   if (!fs.existsSync(fixtureDir)) {
@@ -126,6 +132,25 @@ export async function replayFixture(fixtureArg: string): Promise<ReplayResult> {
     if (expected.commercialConfidence && evaluation.commercialConfidence !== expected.commercialConfidence) {
       details.push(`Confidence notice: expected ${expected.commercialConfidence}, got ${evaluation.commercialConfidence}`);
     }
+    // Hours are checked so an invented estimate can't creep back in unnoticed.
+    if (
+      expected.estimatedHours &&
+      (evaluation.estimatedHours.min !== expected.estimatedHours.min ||
+        evaluation.estimatedHours.max !== expected.estimatedHours.max)
+    ) {
+      matched = false;
+      details.push(
+        `Estimate mismatch: expected ${expected.estimatedHours.min}-${expected.estimatedHours.max}h, got ${evaluation.estimatedHours.min}-${evaluation.estimatedHours.max}h`
+      );
+    }
+    if (expected.estimateSource && evaluation.estimateSource !== expected.estimateSource) {
+      matched = false;
+      details.push(`Estimate source mismatch: expected ${expected.estimateSource}, got ${evaluation.estimateSource}`);
+    }
+    if (expected.checkConclusion && evaluation.checkConclusion !== expected.checkConclusion) {
+      matched = false;
+      details.push(`Check conclusion mismatch: expected ${expected.checkConclusion}, got ${evaluation.checkConclusion}`);
+    }
   }
 
   // Verify identity hash
@@ -157,6 +182,7 @@ export async function replayFixture(fixtureArg: string): Promise<ReplayResult> {
 
   return {
     fixtureName,
+    detectedDelta: evaluation.detectedDelta,
     matched,
     actualState: evaluation.state,
     expectedState: expected?.state || 'N/A',

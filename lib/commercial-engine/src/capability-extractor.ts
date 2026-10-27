@@ -39,7 +39,7 @@ export interface CapabilityExtractionResult {
  * Hard Requirements 21 & 22: Distinguishes pure refactors/tests from true capability additions.
  */
 export class CapabilityExtractor {
-  public static readonly TAXONOMY_VERSION = "cap_tax_2026_09_v1";
+  public static readonly TAXONOMY_VERSION = "cap_tax_2026_10_v2";
 
   extract(input: CapabilityExtractionInput): CapabilityExtractionResult {
     const { pullRequest, issue } = input;
@@ -48,9 +48,10 @@ export class CapabilityExtractor {
     // Analyze technical categories (Hard Requirement 21: False Positive Protection)
     const technicalCategories = this.classifyTechnicalScope(pullRequest.changedFiles);
 
-    // 1. Extract capabilities from file paths and structural locations
+    // 1. Extract capabilities from file paths and structural locations.
+    // A deleted file is work being removed, not built.
     let capIndex = 1;
-    for (const file of pullRequest.changedFiles) {
+    for (const file of pullRequest.changedFiles.filter((f) => f.status !== "deleted")) {
       const detected = this.detectCapabilitiesFromFile(file, capIndex);
       for (const cap of detected) {
         capabilities.push(cap);

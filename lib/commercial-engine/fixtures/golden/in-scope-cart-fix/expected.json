@@ -1,0 +1,23 @@
+{
+  "state": "IN_SCOPE",
+  "taxonomy": "CLEARLY_IN_SCOPE",
+  "commercialConfidence": 0.95,
+  "issueId": "HP-14",
+  "pullRequestId": "pr_43",
+  "detectedDelta": [
+    "Matches \"shopping cart\", included in §3.1 Storefront and Checkout, and 1 more included item."
+  ],
+  "estimatedHours": {
+    "min": 0,
+    "max": 0
+  },
+  "estimateSource": "NOT_ESTIMATED",
+  "commercialValue": {
+    "currency": "USD",
+    "min": 0,
+    "max": 0,
+    "status": "available"
+  },
+  "recommendedAction": "PROCEED",
+  "checkConclusion": "success"
+}

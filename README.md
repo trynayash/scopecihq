@@ -8,7 +8,7 @@ ScopeCI is a tool I'm building for software agencies that do fixed-price client 
 
 1. A statement of work written in Markdown is parsed into a scope baseline: clauses, deliverables, inclusions and exclusions.
 2. When a pull request changes, ScopeCI collects the changed files and the linked Linear issue.
-3. A rule-based evaluator (no AI model) compares the change with the baseline and returns one of: in scope, change required, review required, approved change, or overridden.
+3. A rule-based evaluator (no AI model) compares the change with the baseline and returns one of: in scope, change required, review required, approved change, or overridden. It matches the SOW's own wording against the changed file paths, the pull request title and branch, and the linked issue. Work that matches an exclusion in the code or a title needs a change order; work the SOW doesn't mention, or that only a description mentions, goes to a person for review. Hours come only from the linked issue's estimate and are reported as not estimated when it has none.
 4. The result is reported as a GitHub check run and a pull request comment. The policy mode decides what happens next: observe (report only, never blocks a merge), review or enforce.
 
 ## What's in the repo
