@@ -29,8 +29,8 @@ const STATE_COOKIE = "scopeci_oauth";
 const STATE_TTL_SECONDS = 10 * 60;
 const signInLimiter = rateLimiter({ windowMs: 60_000, max: 20, message: "Too many sign-in attempts. Wait a minute." });
 
-function signInAvailable(): boolean {
-  if (!oauthConfig()) return false;
+async function signInAvailable(): Promise<boolean> {
+  if (!(await oauthConfig())) return false;
   // Tokens are stored encrypted; production must not fall back to the test key.
   return process.env.NODE_ENV !== "production" || Boolean(process.env.GITHUB_TOKEN_ENCRYPTION_KEY);
 }
@@ -42,9 +42,9 @@ function safeNext(value: unknown): string {
     : "/app";
 }
 
-router.get("/auth/github", signInLimiter, (req, res): void => {
-  const config = oauthConfig();
-  if (!config || !signInAvailable()) {
+router.get("/auth/github", signInLimiter, async (req, res): Promise<void> => {
+  const config = await oauthConfig();
+  if (!config || !(await signInAvailable())) {
     res.redirect(302, "/app?signin=unavailable");
     return;
   }
@@ -128,7 +128,7 @@ router.get("/session", async (req, res): Promise<void> => {
   res.setHeader("Cache-Control", "no-store");
   res.json(
     GetSessionResponse.parse({
-      signInAvailable: signInAvailable(),
+      signInAvailable: await signInAvailable(),
       user: account
         ? { id: account.userId, login: account.login, name: account.name, avatarUrl: account.avatarUrl }
         : null,

@@ -1,31 +1,61 @@
+import crypto from "node:crypto";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { WebhookService } from "../github/webhook-service.js";
-import { MockGitHubClient, type IGitHubClient } from "../github/github-client.js";
-import { GitHubAppClient, appConfigFromEnv } from "../github/app-client.js";
+import { MockGitHubClient } from "../github/github-client.js";
+import { GitHubAppClient } from "../github/app-client.js";
+import { gitHubAppSettings } from "../github/app-settings.js";
 import { MockIssueProvider, NoIssueProvider } from "../github/issue-provider.js";
 import { logger } from "../lib/logger.js";
 
 const router: IRouter = Router();
 
-// Default service instance for the route (configurable via environment or injection)
-const defaultSecret = process.env.GITHUB_WEBHOOK_SECRET || "mock_scopeci_webhook_secret";
+// Outside production, without an App, webhooks are checked against this fixed
+// secret and answered by the in-memory client: local development and the
+// test suites need no configuration.
+const MOCK_WEBHOOK_SECRET = "mock_scopeci_webhook_secret";
 export const defaultGitHubClient = new MockGitHubClient();
 export const defaultIssueProvider = new MockIssueProvider();
 
-// The real App client when its credentials are set; the in-memory one for
-// local development and the test suites.
-const appConfig = appConfigFromEnv();
-const gitHubClient: IGitHubClient = appConfig ? new GitHubAppClient(appConfig) : defaultGitHubClient;
+let override: WebhookService | null = null;
+let built: { key: string; service: WebhookService } | undefined;
 
-export let activeWebhookService = new WebhookService({
-  webhookSecret: defaultSecret,
-  gitHubClient,
-  // The mock's sample issues must never reach real pull requests.
-  issueProvider: appConfig ? new NoIssueProvider() : defaultIssueProvider,
-});
+/** Test hook: use this service instead of one built from the App's settings. */
+export function setWebhookService(service: WebhookService | null): void {
+  override = service;
+}
 
-export function setWebhookService(service: WebhookService): void {
-  activeWebhookService = service;
+/**
+ * The service for the GitHub App as currently configured, rebuilt when its
+ * credentials change (an App created on the admin page applies at once).
+ * Null in production until an App is set up: there is nothing safe to check
+ * a signature against, and nowhere real to post results.
+ */
+export async function currentWebhookService(): Promise<WebhookService | null> {
+  if (override) return override;
+  const app = await gitHubAppSettings();
+  const isProduction = process.env.NODE_ENV === "production";
+  const real = Boolean(app.appId && app.privateKey);
+  const webhookSecret = app.webhookSecret || (isProduction ? undefined : MOCK_WEBHOOK_SECRET);
+  if (!webhookSecret || (isProduction && !real)) return null;
+
+  const key = crypto
+    .createHash("sha256")
+    .update([real, app.appId, app.slug, app.privateKey, webhookSecret].join("\0"))
+    .digest("hex");
+  if (built?.key !== key) {
+    built = {
+      key,
+      service: new WebhookService({
+        webhookSecret,
+        gitHubClient: real
+          ? new GitHubAppClient({ appId: app.appId!, privateKey: app.privateKey!, slug: app.slug })
+          : defaultGitHubClient,
+        // The mock's sample issues must never reach real pull requests.
+        issueProvider: real ? new NoIssueProvider() : defaultIssueProvider,
+      }),
+    };
+  }
+  return built.service;
 }
 
 /**
@@ -46,7 +76,12 @@ router.post("/webhooks/github", async (req: Request, res: Response): Promise<voi
   logger.info({ deliveryId, eventType }, "Received GitHub webhook request");
 
   try {
-    const { shouldProcess, reason } = await activeWebhookService.precheckAndPersistDelivery(
+    const service = await currentWebhookService();
+    if (!service) {
+      res.status(503).json({ error: "GitHub isn't set up on this server yet." });
+      return;
+    }
+    const { shouldProcess, reason } = await service.precheckAndPersistDelivery(
       { deliveryId, eventType, signature },
       rawBody,
       req.body
@@ -63,7 +98,7 @@ router.post("/webhooks/github", async (req: Request, res: Response): Promise<voi
 
     // Genuinely asynchronous processing: dispatch in background, respond 202 Accepted
     setImmediate(() => {
-      activeWebhookService
+      service
         .processPullRequestEvent(deliveryId, req.body)
         .catch((err) => {
           logger.error({ deliveryId, err: err.message }, "Background webhook processing failed");

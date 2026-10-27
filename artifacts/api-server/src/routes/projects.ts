@@ -26,7 +26,7 @@ import {
   UpdateProjectResponse,
 } from "@workspace/api-zod";
 import { composeChangeOrder, type ChangeOrderItem } from "@workspace/commercial-engine";
-import { activeWebhookService } from "./github.js";
+import { currentWebhookService } from "./github.js";
 import { rateLimiter } from "../middlewares/rate-limit.js";
 import { accountOf, requireAccount, sameOriginWrites, type Account } from "../lib/session.js";
 import { checklistFromRecord, loadActiveBaseline, saveChecklist } from "../lib/scope-store.js";
@@ -353,7 +353,7 @@ router.get("/github/repositories", gitHubLimiter, async (_req, res): Promise<voi
   res.setHeader("Cache-Control", "no-store");
   res.json(
     ListGitHubRepositoriesResponse.parse({
-      installUrl: installUrl(),
+      installUrl: await installUrl(),
       repositories: repositories.map((r) => ({ ...r, linkedProjectId: linkedBy.get(String(r.id)) ?? null })),
     }),
   );
@@ -581,9 +581,11 @@ router.put("/projects/:projectId/change-order", async (req, res): Promise<void> 
     // Check the pull request again now, so the GitHub check reflects the
     // approval without waiting for another push.
     setImmediate(() => {
-      activeWebhookService.reevaluatePullRequest(pr.id).catch((err) => {
-        req.log.warn({ err, pullRequestId: pr.id }, "Re-check after change order approval failed");
-      });
+      currentWebhookService()
+        .then((service) => service?.reevaluatePullRequest(pr.id))
+        .catch((err) => {
+          req.log.warn({ err, pullRequestId: pr.id }, "Re-check after change order approval failed");
+        });
     });
   }
 

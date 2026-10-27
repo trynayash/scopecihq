@@ -5,9 +5,22 @@ ScopeCI uses one GitHub App for two things:
 - **Sign in with GitHub.** The App's OAuth credentials identify the person and let ScopeCI ask GitHub which of the App's installations and repositories they can see. That is how a repository is linked to a project without trusting anything the browser sends.
 - **Checking pull requests.** When a pull request on a connected repository is opened or updated, ScopeCI reads its title, branch, description and changed files, checks them against the project's confirmed scope, and posts a check run (`scopeci / commercial`) and one comment, which it updates on every push.
 
-The real client lives in `artifacts/api-server/src/github/app-client.ts`. Without `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` the server falls back to an in-memory client, which is what the test suites use; production refuses to accept webhooks in that state.
+The real client lives in `artifacts/api-server/src/github/app-client.ts`. Without an App the server falls back to an in-memory client, which is what the test suites use; production answers webhooks with `503` in that state.
 
-## 1. Register the App
+## The quick way: create it from the admin page
+
+The server needs `ADMIN_SECRET`, `GITHUB_TOKEN_ENCRYPTION_KEY` (`openssl rand -hex 32`; the App's keys are stored encrypted with it) and `APP_BASE_URL` (its public `https://` address, where GitHub will send webhooks).
+
+1. Open `/admin` and sign in with `ADMIN_SECRET`.
+2. Under **GitHub App**, pick a name (unique across GitHub) and, if an organization should own the App, its name. Choose **Create GitHub App**.
+3. GitHub shows the App with every setting below already filled in. Confirm it. GitHub sends you back to the admin page, and the server stores the App's ID, client secret, private key and webhook secret, encrypted, in the database.
+4. Choose **Install on a repository**.
+
+Sign-in and pull request checks work from that moment; there is nothing to copy into environment variables and no restart. **Forget this App** on the same page removes the stored credentials (the App stays on GitHub until you delete it there).
+
+Variables set in the environment (section 2) take precedence over the stored App, field by field. While `GITHUB_APP_ID` is set, the admin page shows that App and won't create another.
+
+## 1. Register the App by hand
 
 On GitHub: **Settings → Developer settings → GitHub Apps → New GitHub App** (or the same under an organization's settings, if the organization should own it). Use your deployed address in place of `https://scopeci.example.com`.
 
@@ -43,6 +56,8 @@ After creating the App:
 
 ## 2. Configure the server
 
+Only needed for an App registered by hand.
+
 | Variable | Value |
 | :-- | :-- |
 | `APP_BASE_URL` | `https://scopeci.example.com`. Used for the OAuth callback and the links on check runs and comments. |
@@ -53,7 +68,6 @@ After creating the App:
 | `GITHUB_APP_PRIVATE_KEY` | The `.pem` contents. Real newlines, `\n` escapes, or the whole file base64-encoded all work. |
 | `GITHUB_WEBHOOK_SECRET` | The webhook secret |
 | `GITHUB_TOKEN_ENCRYPTION_KEY` | A long random string (`openssl rand -hex 32`). Encrypts the GitHub user tokens ScopeCI stores. Sign-in stays off in production until it is set. |
-| `ENABLE_INTEGRATION_ROUTES` | `true`, so production accepts GitHub webhooks |
 
 `GITHUB_API_URL` and `GITHUB_WEB_URL` default to `https://api.github.com` and `https://github.com`; set them for GitHub Enterprise Server.
 

@@ -54,3 +54,4 @@ export * from "./provenance.js";
 export * from "./github.js";
 export * from "./linear.js";
 export * from "./accounts.js";
+export * from "./settings.js";

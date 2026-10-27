@@ -999,8 +999,167 @@ function formatDate(iso: string) {
   );
 }
 
+interface GitHubAppStatus {
+  configured: boolean;
+  source: 'environment' | 'admin' | null;
+  slug: string | null;
+  owner: string | null;
+  settingsUrl: string | null;
+  installUrl: string | null;
+  signInReady: boolean;
+  webhooksReady: boolean;
+  encryptionReady: boolean;
+  baseUrl: string;
+}
+
+const SETUP_RESULTS: Record<string, string> = {
+  created: 'GitHub App created. Install it on a repository, then sign in at /app.',
+  expired: 'That setup was already used or is over an hour old. Start again.',
+  failed: "GitHub didn't hand over the App's keys. Start again; if it keeps failing, check the server log.",
+};
+
+/** Creates ScopeCI's GitHub App with GitHub's manifest flow, or shows the one in use. */
+function GitHubAppPanel({ onSignedOut }: { onSignedOut: () => void }) {
+  const [status, setStatus] = useState<GitHubAppStatus | null>(null);
+  const [name, setName] = useState('ScopeCI');
+  const [organization, setOrganization] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [notice] = useState(
+    () => SETUP_RESULTS[new URLSearchParams(window.location.search).get('github') ?? ''] ?? '',
+  );
+
+  const load = useCallback(async () => {
+    const res = await adminFetch('/github-app');
+    if (res.status === 401) return onSignedOut();
+    if (!res.ok) throw new Error('load failed');
+    setStatus(await res.json());
+  }, [onSignedOut]);
+
+  useEffect(() => {
+    // Don't show the result again on a refresh.
+    if (window.location.search.includes('github=')) window.history.replaceState(null, '', window.location.pathname);
+    load().catch(() => setError("Couldn't load the GitHub App's status."));
+  }, [load]);
+
+  const create = async (event: FormEvent) => {
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const res = await adminFetch('/github-app/manifest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim(), organization: organization.trim() }),
+      });
+      if (res.status === 401) return onSignedOut();
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body.error ?? "Couldn't start. Try again.");
+        setBusy(false);
+        return;
+      }
+      // GitHub takes the manifest as a form post, shows it for confirmation,
+      // then sends the browser back to the API, which returns here.
+      const form = document.createElement('form');
+      form.method = 'post';
+      form.action = body.action;
+      const field = document.createElement('input');
+      field.type = 'hidden';
+      field.name = 'manifest';
+      field.value = JSON.stringify(body.manifest);
+      form.appendChild(field);
+      document.body.appendChild(form);
+      form.submit();
+    } catch {
+      setError("Couldn't reach the API.");
+      setBusy(false);
+    }
+  };
+
+  const forget = async () => {
+    if (!window.confirm("Forget this GitHub App? Sign-in and pull request checks stop until you create one again. The App stays on GitHub until you delete it there.")) return;
+    setError('');
+    try {
+      const res = await adminFetch('/github-app', { method: 'DELETE' });
+      if (res.status === 401) return onSignedOut();
+      await load();
+    } catch {
+      setError("Couldn't forget the App. Try again.");
+    }
+  };
+
+  return (
+    <section className="admin-panel" aria-labelledby="github-app-heading">
+      <h2 id="github-app-heading" className="mono">GitHub App</h2>
+      {notice && <p className="admin-notice mono" role="status">{notice}</p>}
+      {!status ? (
+        !error && <p className="admin-hint mono">Checking…</p>
+      ) : status.configured ? (
+        <>
+          <p className="admin-sub mono">
+            {status.slug ? `Connected as ${status.slug}` : 'Connected'}
+            {status.owner ? `, owned by ${status.owner}` : ''}
+            {status.source === 'environment' ? ', set in environment variables.' : '.'}
+          </p>
+          <ul className="admin-checks mono">
+            <li data-ok={status.signInReady}>{status.signInReady ? 'Ready' : 'Not ready'}: Sign in with GitHub</li>
+            <li data-ok={status.webhooksReady}>{status.webhooksReady ? 'Ready' : 'Not ready'}: pull request checks</li>
+          </ul>
+          <div className="admin-actions">
+            {status.installUrl && (
+              <a className="button button-primary" href={status.installUrl}>Install on a repository</a>
+            )}
+            {status.settingsUrl && (
+              <a className="button button-quiet" href={status.settingsUrl}>App settings on GitHub</a>
+            )}
+            {status.source === 'admin' && (
+              <button type="button" className="button button-quiet" onClick={forget}>Forget this App</button>
+            )}
+          </div>
+        </>
+      ) : (
+        <form className="admin-setup" onSubmit={create}>
+          <p className="admin-sub mono">
+            ScopeCI needs one GitHub App for sign-in and pull request checks. GitHub shows you its settings to
+            confirm, then sends you back here. Webhooks will go to {status.baseUrl}.
+          </p>
+          {!status.encryptionReady && (
+            <p className="admin-error mono">Set GITHUB_TOKEN_ENCRYPTION_KEY on the server first. The App's keys are stored encrypted with it.</p>
+          )}
+          <label className="mono" htmlFor="app-name">App name, unique on GitHub</label>
+          <input
+            id="app-name"
+            className="admin-key-input mono"
+            value={name}
+            maxLength={34}
+            onChange={(e) => setName(e.target.value)}
+            required
+          />
+          <label className="mono" htmlFor="app-org">GitHub organization to own it (optional)</label>
+          <input
+            id="app-org"
+            className="admin-key-input mono"
+            value={organization}
+            maxLength={39}
+            placeholder="Leave empty to create it on your own account"
+            onChange={(e) => setOrganization(e.target.value)}
+          />
+          <div className="admin-actions">
+            <button type="submit" className="button button-primary" disabled={busy || !status.encryptionReady}>
+              {busy ? 'Opening GitHub…' : 'Create GitHub App'}
+            </button>
+          </div>
+        </form>
+      )}
+      {error && <p className="admin-error mono" role="alert">{error}</p>}
+    </section>
+  );
+}
+
 function AdminWaitlist() {
-  usePageMeta('Admin — Waitlist', 'Internal admin page.');
+  usePageMeta('Admin', 'Internal admin page.');
 
   const [view, setView] = useState<AdminView>('checking');
   const [key, setKey] = useState('');
@@ -1060,6 +1219,8 @@ function AdminWaitlist() {
       setBusy(false);
     }
   };
+
+  const signedOut = useCallback(() => setView('signed-out'), []);
 
   const signOut = async () => {
     await adminFetch('/session', { method: 'DELETE' }).catch(() => {});
@@ -1153,8 +1314,8 @@ function AdminWaitlist() {
         <div className="container">
           <div className="admin-header">
             <div>
-              <h1 className="mono">Waitlist</h1>
-              <p className="admin-sub mono">ScopeCI early access signups</p>
+              <h1 className="mono">Admin</h1>
+              <p className="admin-sub mono">The GitHub App, and early access signups</p>
             </div>
             <div className="admin-actions">
               <button type="button" className="button button-quiet" onClick={refresh} disabled={busy}>
@@ -1170,6 +1331,8 @@ function AdminWaitlist() {
               </button>
             </div>
           </div>
+
+          <GitHubAppPanel onSignedOut={signedOut} />
 
           {stats && (
             <div className="admin-stats">
@@ -1265,6 +1428,7 @@ function Router() {
         <Route path="/app" nest>
           <AppPage />
         </Route>
+        <Route path="/admin" component={AdminWaitlist} />
         <Route path="/admin/waitlist" component={AdminWaitlist} />
         <Route component={NotFound} />
       </Switch>

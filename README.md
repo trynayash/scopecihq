@@ -2,7 +2,7 @@
 
 ScopeCI is a tool I'm building for software agencies that do fixed-price client work. It checks each pull request against what the client signed, so work outside the agreed scope is caught before it ships.
 
-**Status: pilot.** The site is live at [scopeci.onrender.com](https://scopeci.onrender.com), with a public demo at `/try` that runs the real check on a pasted statement of work. The signed-in app at `/app` (sign in with GitHub, projects, confirmed scope, connected repository, checked pull requests with change order drafts) works end to end against GitHub once a GitHub App is registered and configured; see [docs/github-app.md](docs/github-app.md). The Linear integration is built and tested but not yet connected per workspace.
+**Status: pilot.** The site is live at [scopeci.onrender.com](https://scopeci.onrender.com), with a public demo at `/try` that runs the real check on a pasted statement of work. The signed-in app at `/app` (sign in with GitHub, projects, confirmed scope, connected repository, checked pull requests with change order drafts) works end to end against GitHub once a GitHub App is set up, which takes one click on the admin page; see [docs/github-app.md](docs/github-app.md). The Linear integration is built and tested but not yet connected per workspace.
 
 ## How it works
 

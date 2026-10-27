@@ -8,6 +8,7 @@ import sessionRouter from "./session";
 import projectsRouter from "./projects";
 import workspaceRouter from "./workspace";
 import githubRouter from "./github";
+import githubSetupRouter from "./github-setup";
 import linearRouter from "./linear";
 import { logger } from "../lib/logger";
 
@@ -22,8 +23,15 @@ router.use(demoRouter);         // public "try it" demo; stores nothing
 router.use(sessionRouter);      // sign in with GitHub; reports when sign-in isn't configured
 router.use(projectsRouter);     // the signed-in app; every route needs a session
 router.use(workspaceRouter);    // members, invites and switching workspaces
+router.use(githubSetupRouter);  // create the GitHub App from the admin page
 
-// Integration routes — gated in production.
+// The GitHub webhook is always mounted: it checks every delivery against the
+// App's webhook secret, and in production answers 503 until a GitHub App is
+// set up (from the environment, or on the admin page). It never falls back to
+// the fixed test secret there.
+router.use(githubRouter);
+
+// Linear routes — gated in production.
 // In development/test these are always available so existing workflows and
 // test suites continue to work unchanged. In production they require the
 // explicit opt-in flag ENABLE_INTEGRATION_ROUTES=true, preventing the public
@@ -32,10 +40,10 @@ const isProduction = process.env.NODE_ENV === "production";
 const integrationRoutesEnabled =
   process.env.ENABLE_INTEGRATION_ROUTES === "true";
 
-// Outside production the routers fall back to fixed mock secrets so the test
+// Outside production the router falls back to fixed mock secrets so the test
 // suites run without configuration. In production that fallback would let
-// anyone who reads this repository sign a valid webhook, so each router is
-// only mounted when its real secrets are present.
+// anyone who reads this repository sign a valid webhook, so it is only
+// mounted when its real secrets are present.
 const missingEnv = (names: string[]) => names.filter((name) => !process.env[name]);
 
 function mountIntegration(name: string, integration: IRouter, requiredEnv: string[]) {
@@ -48,9 +56,6 @@ function mountIntegration(name: string, integration: IRouter, requiredEnv: strin
 }
 
 if (!isProduction || integrationRoutesEnabled) {
-  // Without the App's credentials the webhook would fall back to the in-memory
-  // client and silently post nothing, so production needs all three.
-  mountIntegration("github", githubRouter, ["GITHUB_WEBHOOK_SECRET", "GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY"]);
   mountIntegration("linear", linearRouter, [
     "LINEAR_CLIENT_ID",
     "LINEAR_CLIENT_SECRET",

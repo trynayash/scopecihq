@@ -11,6 +11,7 @@ import {
   prDiffAnalysesTable,
   projectsTable,
   scopeBaselinesTable,
+  appSettingsTable,
   usersTable,
   webhookDeliveriesTable,
 } from "@workspace/db/schema";
@@ -37,6 +38,7 @@ const { NoIssueProvider } = await import("../github/issue-provider.js");
 const { WebhookService } = await import("../github/webhook-service.js");
 const { setWebhookService } = await import("../routes/github.js");
 const { COMMENT_MARKER } = await import("../github/comment-formatter.js");
+const { forgetGitHubAppSettings } = await import("../github/app-settings.js");
 
 /* ------------------------------------------------------------------ */
 /* A fake GitHub                                                       */
@@ -79,6 +81,7 @@ const fake = {
     ],
   } as Record<string, Array<{ id: number; body: string; user: { login: string; type: string } }>>,
   jwtChecked: 0,
+  conversions: 0,
   nextId: 100,
 };
 
@@ -112,6 +115,24 @@ async function fakeGitHub(url: string, init: RequestInit): Promise<Response> {
     return token
       ? json({ access_token: token, refresh_token: "refresh-1", expires_in: 28800 })
       : json({ error: "bad_verification_code" });
+  }
+
+  if (path === "/app-manifests/manifest-code/conversions" && method === "POST") {
+    fake.conversions++;
+    return json(
+      {
+        id: 777,
+        slug: "scopeci-made-here",
+        name: "ScopeCI Made Here",
+        owner: { login: "harbor-agency" },
+        html_url: "https://github.com/organizations/harbor-agency/settings/apps/scopeci-made-here",
+        client_id: "Iv1.stored-client",
+        client_secret: "stored-client-secret",
+        webhook_secret: "stored-webhook-secret",
+        pem: PRIVATE_PEM,
+      },
+      201,
+    );
   }
 
   const userToken = auth?.replace(/^Bearer /, "") ?? "";
@@ -213,7 +234,7 @@ type Reply = { status: number; body: any; headers: http.IncomingHttpHeaders };
 function call(
   server: http.Server,
   path: string,
-  options: { method?: string; body?: unknown; cookie?: string; origin?: string } = {},
+  options: { method?: string; body?: unknown; cookie?: string; origin?: string; headers?: Record<string, string> } = {},
 ): Promise<Reply> {
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : 0;
@@ -229,6 +250,7 @@ function call(
           "x-forwarded-for": "203.0.113.80",
           ...(options.cookie ? { cookie: options.cookie } : {}),
           ...(options.origin ? { origin: options.origin } : {}),
+          ...options.headers,
           ...(payload ? { "content-type": "application/json", "content-length": Buffer.byteLength(payload) } : {}),
         },
       },
@@ -848,6 +870,126 @@ async function run() {
         .from(webhookDeliveriesTable)
         .where(and(eq(webhookDeliveriesTable.repositoryFullName, "harbor-agency/storefront"), eq(webhookDeliveriesTable.status, "PROCESSED")));
       assert.ok(rows.length >= 2);
+    });
+
+    await scenario("An admin creates the GitHub App from the admin page; its keys are stored encrypted and used", async () => {
+      process.env.ADMIN_SECRET = "product-admin-secret";
+      const admin = { "x-admin-key": "product-admin-secret" };
+      const fromEnv = ["GITHUB_APP_ID", "GITHUB_APP_SLUG", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"].map(
+        (name) => [name, process.env[name]] as const,
+      );
+      try {
+        assert.strictEqual((await call(server, "/api/admin/github-app")).status, 401);
+        assert.strictEqual((await call(server, "/api/admin/github-app/manifest", { body: { name: "X" } })).status, 401);
+
+        // While the App comes from the environment, the page doesn't replace it.
+        const envStatus = await call(server, "/api/admin/github-app", { headers: admin });
+        assert.strictEqual(envStatus.body.source, "environment");
+        const refused = await call(server, "/api/admin/github-app/manifest", { body: { name: "ScopeCI" }, headers: admin });
+        assert.strictEqual(refused.status, 409);
+
+        for (const [name] of fromEnv) delete process.env[name];
+        await db.delete(appSettingsTable);
+        forgetGitHubAppSettings();
+        setWebhookService(null);
+
+        const empty = await call(server, "/api/admin/github-app", { headers: admin });
+        assert.strictEqual(empty.body.configured, false);
+        assert.strictEqual(empty.body.baseUrl, "http://localhost:3000");
+        assert.strictEqual((await call(server, "/api/session")).body.signInAvailable, false);
+
+        const bad = await call(server, "/api/admin/github-app/manifest", {
+          body: { name: "ScopeCI", organization: "not an org!" },
+          headers: admin,
+        });
+        assert.strictEqual(bad.status, 400);
+
+        const start = async () => {
+          const reply = await call(server, "/api/admin/github-app/manifest", {
+            body: { name: "ScopeCI Made Here", organization: "harbor-agency" },
+            headers: admin,
+          });
+          assert.strictEqual(reply.status, 200);
+          const action = new URL(reply.body.action);
+          assert.strictEqual(action.origin + action.pathname, `${WEB}/organizations/harbor-agency/settings/apps/new`);
+          return { state: action.searchParams.get("state")!, manifest: reply.body.manifest };
+        };
+
+        const first = await start();
+        assert.deepStrictEqual(first.manifest.hook_attributes, { url: "http://localhost:3000/api/webhooks/github", active: true });
+        assert.strictEqual(first.manifest.redirect_url, "http://localhost:3000/api/setup/github-app/callback");
+        assert.deepStrictEqual(first.manifest.callback_urls, ["http://localhost:3000/api/auth/github/callback"]);
+        assert.deepStrictEqual(first.manifest.default_events, ["pull_request"]);
+        assert.deepStrictEqual(first.manifest.default_permissions, {
+          pull_requests: "write",
+          checks: "write",
+          contents: "read",
+          metadata: "read",
+        });
+
+        // A code sent with someone else's state is refused, and ends the setup.
+        const forged = await call(server, `/api/setup/github-app/callback?code=manifest-code&state=forged`);
+        assert.strictEqual(forged.headers.location, "/admin/waitlist?github=expired");
+        const late = await call(server, `/api/setup/github-app/callback?code=manifest-code&state=${first.state}`);
+        assert.strictEqual(late.headers.location, "/admin/waitlist?github=expired");
+        assert.strictEqual(fake.conversions, 0);
+
+        const second = await start();
+        const done = await call(server, `/api/setup/github-app/callback?code=manifest-code&state=${second.state}`);
+        assert.strictEqual(done.status, 302);
+        assert.strictEqual(done.headers.location, "/admin/waitlist?github=created");
+        assert.strictEqual(fake.conversions, 1);
+        const replay = await call(server, `/api/setup/github-app/callback?code=manifest-code&state=${second.state}`);
+        assert.strictEqual(replay.headers.location, "/admin/waitlist?github=expired");
+
+        const [row] = await db.select().from(appSettingsTable).where(eq(appSettingsTable.key, "github_app"));
+        const stored = JSON.stringify(row.valueJson);
+        for (const secretValue of ["stored-client-secret", "stored-webhook-secret", "BEGIN RSA PRIVATE KEY"]) {
+          assert.ok(!stored.includes(secretValue), `${secretValue} is not stored in plain text`);
+        }
+
+        const status = await call(server, "/api/admin/github-app", { headers: admin });
+        assert.strictEqual(status.body.configured, true);
+        assert.strictEqual(status.body.source, "admin");
+        assert.strictEqual(status.body.slug, "scopeci-made-here");
+        assert.strictEqual(status.body.signInReady, true);
+        assert.strictEqual(status.body.webhooksReady, true);
+        assert.strictEqual(status.body.installUrl, "https://github.com/apps/scopeci-made-here/installations/new");
+
+        // Sign-in and webhooks now run on the stored App.
+        assert.strictEqual((await call(server, "/api/session")).body.signInAvailable, true);
+        const signInStart = await call(server, "/api/auth/github");
+        assert.strictEqual(new URL(String(signInStart.headers.location)).searchParams.get("client_id"), "Iv1.stored-client");
+
+        const payload = JSON.stringify({ action: "opened", installation: { id: 999 } });
+        const sign = (key: string) => `sha256=${crypto.createHmac("sha256", key).update(payload).digest("hex")}`;
+        const deliver = async (signature: string) => {
+          const address = server.address() as { port: number };
+          const res = await fetch(`http://127.0.0.1:${address.port}/api/webhooks/github`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-github-event": "pull_request",
+              "x-github-delivery": `del_${crypto.randomUUID()}`,
+              "x-hub-signature-256": signature,
+            },
+            body: payload,
+          });
+          return res.status;
+        };
+        assert.strictEqual(await deliver(sign("mock_scopeci_webhook_secret")), 401);
+        assert.notStrictEqual(await deliver(sign("stored-webhook-secret")), 401);
+
+        assert.strictEqual((await call(server, "/api/admin/github-app", { method: "DELETE", headers: admin })).status, 204);
+        assert.strictEqual((await call(server, "/api/admin/github-app", { headers: admin })).body.configured, false);
+        assert.strictEqual((await call(server, "/api/admin/github-app", { method: "DELETE", headers: admin })).status, 404);
+      } finally {
+        for (const [name, value] of fromEnv) process.env[name] = value;
+        await db.delete(appSettingsTable);
+        forgetGitHubAppSettings();
+        setWebhookService(service);
+        delete process.env.ADMIN_SECRET;
+      }
     });
 
     await scenario("The App JWT is RS256 and expires within ten minutes", async () => {

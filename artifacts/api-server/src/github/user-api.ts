@@ -1,3 +1,4 @@
+import { gitHubAppSettings } from "./app-settings.js";
 import { API_HEADERS, gitHubApiUrl, gitHubRequest, gitHubWebUrl, nextPage } from "./github-http.js";
 
 /**
@@ -37,9 +38,8 @@ export interface GitHubRepository {
   private: boolean;
 }
 
-export function oauthConfig(): { clientId: string; clientSecret: string } | null {
-  const clientId = process.env.GITHUB_CLIENT_ID;
-  const clientSecret = process.env.GITHUB_CLIENT_SECRET;
+export async function oauthConfig(): Promise<{ clientId: string; clientSecret: string } | null> {
+  const { clientId, clientSecret } = await gitHubAppSettings();
   return clientId && clientSecret ? { clientId, clientSecret } : null;
 }
 
@@ -57,7 +57,7 @@ type TokenResponse = {
 };
 
 async function tokenRequest(params: Record<string, string>): Promise<GitHubOAuthTokens> {
-  const config = oauthConfig();
+  const config = await oauthConfig();
   if (!config) throw new Error("GitHub sign-in is not configured");
   const { data } = await gitHubRequest<TokenResponse>(`${gitHubWebUrl()}/login/oauth/access_token`, {
     method: "POST",
@@ -143,7 +143,7 @@ export async function listInstallationRepositories(token: string, installationId
 }
 
 /** Where to send someone to install the App on their account or organization. */
-export function installUrl(): string | null {
-  const slug = process.env.GITHUB_APP_SLUG;
+export async function installUrl(): Promise<string | null> {
+  const { slug } = await gitHubAppSettings();
   return slug ? `${gitHubWebUrl()}/apps/${encodeURIComponent(slug)}/installations/new` : null;
 }

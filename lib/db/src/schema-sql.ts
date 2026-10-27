@@ -30,7 +30,8 @@ export const SCHEMA_TABLES: string[] = [
   "organization_members",
   "projects",
   "user_sessions",
-  "users"
+  "users",
+  "app_settings"
 ];
 
 /** The whole schema, as statements that only create what is missing. */
@@ -312,6 +313,9 @@ export const SCHEMA_STATEMENTS: string[] = [
   "ALTER TABLE \"users\" ADD COLUMN IF NOT EXISTS \"last_login_at\" timestamp with time zone DEFAULT now() NOT NULL;",
   "DO $$ BEGIN ALTER TABLE \"users\" ADD CONSTRAINT \"users_github_user_id_unique\" UNIQUE(\"github_user_id\"); EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;",
   "ALTER TABLE \"users\" ENABLE ROW LEVEL SECURITY;",
+  "CREATE TABLE IF NOT EXISTS \"app_settings\" (\n\t\"key\" varchar(100) PRIMARY KEY NOT NULL,\n\t\"value_json\" jsonb NOT NULL,\n\t\"updated_at\" timestamp with time zone DEFAULT now() NOT NULL\n);",
+  "ALTER TABLE \"app_settings\" ADD COLUMN IF NOT EXISTS \"updated_at\" timestamp with time zone DEFAULT now() NOT NULL;",
+  "ALTER TABLE \"app_settings\" ENABLE ROW LEVEL SECURITY;",
   "DO $$ BEGIN ALTER TABLE \"change_orders\" ADD CONSTRAINT \"change_orders_organization_id_organizations_id_fk\" FOREIGN KEY (\"organization_id\") REFERENCES \"public\".\"organizations\"(\"id\") ON DELETE restrict ON UPDATE no action; EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;",
   "DO $$ BEGIN ALTER TABLE \"change_orders\" ADD CONSTRAINT \"change_orders_contract_id_contracts_id_fk\" FOREIGN KEY (\"contract_id\") REFERENCES \"public\".\"contracts\"(\"id\") ON DELETE restrict ON UPDATE no action; EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;",
   "DO $$ BEGIN ALTER TABLE \"change_orders\" ADD CONSTRAINT \"change_orders_source_baseline_id_scope_baselines_id_fk\" FOREIGN KEY (\"source_baseline_id\") REFERENCES \"public\".\"scope_baselines\"(\"id\") ON DELETE restrict ON UPDATE no action; EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;",
