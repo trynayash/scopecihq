@@ -85,6 +85,9 @@ p { text-wrap: pretty; }
 .num { font-variant-numeric: tabular-nums; }
 
 .vendor-mark { flex: none; display: block; }
+/* Hugeicons from src/icons.tsx: never squeezed by a flex row, and no
+   inline baseline gap under them. */
+.icon { flex: none; display: block; }
 
 /* ==================================================================
    Type
@@ -164,7 +167,7 @@ p { text-wrap: pretty; }
   min-height: 44px;
   padding-inline: 18px;
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--radius);
   font-size: 14.5px;
   font-weight: 550;
   letter-spacing: -0.01em;
@@ -211,7 +214,7 @@ p { text-wrap: pretty; }
 .button-danger { color: var(--alert); }
 .button-danger:hover:not([disabled]) { border-color: var(--alert-line); background: var(--alert-wash); color: var(--alert); }
 
-.button-sm { min-height: 36px; padding-inline: 14px; font-size: 13.5px; }
+.button-sm { min-height: 36px; padding-inline: 14px; border-radius: var(--radius-s); font-size: 13.5px; }
 .button-lg { min-height: 50px; padding-inline: 24px; font-size: 15.5px; }
 
 .icon-button {
@@ -220,7 +223,7 @@ p { text-wrap: pretty; }
   width: 36px;
   height: 36px;
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--radius-s);
   color: var(--fg-muted);
   transition: color var(--fast) var(--ease), background-color var(--fast) var(--ease), border-color var(--fast) var(--ease);
 }
@@ -232,6 +235,7 @@ p { text-wrap: pretty; }
   height: 13px;
   border: 1.5px solid color-mix(in srgb, currentColor 30%, transparent);
   border-top-color: currentColor;
+  /* Round on purpose: a spinner is a working control, not decoration. */
   border-radius: 50%;
   animation: spin 0.72s linear infinite;
 }
@@ -286,11 +290,13 @@ p { text-wrap: pretty; }
 .scope-add input:focus {
   outline: 0;
   border-color: var(--brand-bright);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-bright) 22%, transparent);
+  /* A second hairline rather than a soft halo: the field reads as focused
+     without a glow around it. */
+  box-shadow: 0 0 0 1px var(--brand-bright);
 }
 .field input:disabled { opacity: 0.6; cursor: not-allowed; }
 .field input.is-invalid { border-color: var(--alert); }
-.field input.is-invalid:focus { box-shadow: 0 0 0 3px var(--alert-wash); }
+.field input.is-invalid:focus { box-shadow: 0 0 0 1px var(--alert); }
 
 .field-error { color: var(--alert); font-size: 13px; line-height: 1.45; }
 
@@ -328,7 +334,7 @@ p { text-wrap: pretty; }
   min-height: 24px;
   padding: 2px 9px;
   border: 1px solid var(--line-2);
-  border-radius: 999px;
+  border-radius: 5px;
   background: var(--bg-raised);
   color: var(--fg-muted);
   font-size: 12px;
@@ -339,16 +345,6 @@ p { text-wrap: pretty; }
 .chip.is-ok { border-color: var(--ok-line); background: var(--ok-wash); color: var(--ok); }
 .chip.is-warn { border-color: var(--warn-line); background: var(--warn-wash); color: var(--warn); }
 .chip.is-alert { border-color: var(--alert-line); background: var(--alert-wash); color: var(--alert); }
-.chip-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-
-.status-dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--brand-bright);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-bright) 20%, transparent);
-}
 
 /* Reveal on scroll: content is visible by default and only hidden once
    the script has marked the page as able to bring it back. */

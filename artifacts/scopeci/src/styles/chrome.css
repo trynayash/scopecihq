@@ -47,7 +47,7 @@
   height: var(--header-h);
 }
 
-.brand { display: inline-flex; align-items: center; padding-block: 8px; border-radius: 6px; }
+.brand { display: inline-flex; align-items: center; padding-block: 8px; border-radius: var(--radius-s); }
 
 .site-nav {
   display: flex;
@@ -57,7 +57,7 @@
 }
 .site-nav-link {
   padding: 8px 12px;
-  border-radius: 999px;
+  border-radius: var(--radius-s);
   color: var(--fg-muted);
   font-size: 14px;
   font-weight: 500;
@@ -113,7 +113,7 @@ html.menu-open { overflow: hidden; }
   gap: 2px;
   padding: 3px;
   border: 1px solid var(--line-2);
-  border-radius: 999px;
+  border-radius: var(--radius);
   background: var(--bg-raised);
 }
 .theme-switch button {
@@ -121,7 +121,8 @@ html.menu-open { overflow: hidden; }
   place-items: center;
   width: 30px;
   height: 26px;
-  border-radius: 999px;
+  /* Outer radius 8px minus the 3px padding, so the corners nest. */
+  border-radius: var(--radius-s);
   color: var(--fg-faint);
   transition: color var(--fast) var(--ease), background-color var(--fast) var(--ease);
 }
@@ -147,7 +148,7 @@ html.menu-open { overflow: hidden; }
   grid-template-columns: minmax(0, 1.6fr) repeat(2, minmax(0, 0.7fr));
   gap: 40px;
 }
-.footer-brand > a { display: inline-flex; border-radius: 6px; }
+.footer-brand > a { display: inline-flex; border-radius: var(--radius-s); }
 .footer-brand p { max-width: 36ch; margin-top: 18px; font-size: 14px; line-height: 1.6; }
 .footer-col { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
 .footer-col h2 {

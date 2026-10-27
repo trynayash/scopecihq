@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { ArrowRight, Menu, Monitor, Moon, Sun, X } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { SiGithub, SiLinear } from 'react-icons/si';
+import { ArrowRightIcon, CrossIcon, Icon, MenuIcon, MoonIcon, SunIcon, SystemThemeIcon } from './icons';
 
 /**
  * Pieces every public page shares: paths, analytics, page metadata, the
@@ -165,15 +165,15 @@ export function ThemeToggle() {
       title={dark ? 'Light theme' : 'Dark theme'}
       data-testid="button-theme-toggle"
     >
-      {mounted ? dark ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" /> : <span className="theme-toggle-blank" />}
+      {mounted ? <Icon icon={dark ? SunIcon : MoonIcon} size={16} /> : <span className="theme-toggle-blank" />}
     </button>
   );
 }
 
 const THEME_OPTIONS = [
-  { value: 'system', label: 'System', Icon: Monitor },
-  { value: 'light', label: 'Light', Icon: Sun },
-  { value: 'dark', label: 'Dark', Icon: Moon },
+  { value: 'system', label: 'System', glyph: SystemThemeIcon },
+  { value: 'light', label: 'Light', glyph: SunIcon },
+  { value: 'dark', label: 'Dark', glyph: MoonIcon },
 ] as const;
 
 /** System, light or dark, as a three-way switch. */
@@ -182,7 +182,7 @@ export function ThemeSwitch() {
   const mounted = useMounted();
   return (
     <div className="theme-switch" role="group" aria-label="Theme">
-      {THEME_OPTIONS.map(({ value, label, Icon }) => {
+      {THEME_OPTIONS.map(({ value, label, glyph }) => {
         const checked = mounted && (theme ?? 'system') === value;
         return (
           <button
@@ -193,7 +193,7 @@ export function ThemeSwitch() {
             onClick={() => setTheme(value)}
             title={label}
           >
-            <Icon size={14} aria-hidden="true" />
+            <Icon icon={glyph} size={14} />
             <span className="sr-only">{label}</span>
           </button>
         );
@@ -207,6 +207,7 @@ export function ThemeSwitch() {
 /* ------------------------------------------------------------------ */
 
 const NAV_LINKS = [
+  { href: anchor('product'), label: 'Product', testId: 'link-product' },
   { href: anchor('how-it-works'), label: 'How it works', testId: 'link-how-it-works' },
   { href: anchor('policy'), label: 'Policies', testId: 'link-policy' },
   { href: TRY_PATH, label: 'Try it', testId: 'link-try' },
@@ -265,7 +266,7 @@ export function Navbar() {
           </a>
           <a className="button button-primary button-sm site-cta" href={anchor('waitlist')} data-testid="button-join-waitlist-nav">
             Join the pilot
-            <ArrowRight size={14} aria-hidden="true" />
+            <Icon icon={ArrowRightIcon} size={14} />
           </a>
           <button
             type="button"
@@ -275,7 +276,7 @@ export function Navbar() {
             aria-label={open ? 'Close menu' : 'Open menu'}
             onClick={() => setOpen((value) => !value)}
           >
-            {open ? <X size={18} aria-hidden="true" /> : <Menu size={18} aria-hidden="true" />}
+            <Icon icon={open ? CrossIcon : MenuIcon} size={18} />
           </button>
         </div>
       </div>
@@ -293,7 +294,7 @@ export function Navbar() {
           <div className="mobile-menu-foot">
             <a className="button button-primary button-lg" href={anchor('waitlist')} onClick={() => setOpen(false)}>
               Join the pilot
-              <ArrowRight size={15} aria-hidden="true" />
+              <Icon icon={ArrowRightIcon} size={16} />
             </a>
             <ThemeSwitch />
           </div>
@@ -322,6 +323,7 @@ export function Footer() {
           </div>
           <nav className="footer-col" aria-labelledby="footer-product">
             <h2 id="footer-product">Product</h2>
+            <a href={anchor('product')} data-testid="link-product-footer">Product</a>
             <a href={anchor('how-it-works')} data-testid="link-how-footer">How it works</a>
             <a href={anchor('policy')}>Policies</a>
             <a href={TRY_PATH} data-testid="link-try-footer">Try it on your SOW</a>
