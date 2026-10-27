@@ -1,5 +1,6 @@
 import { ensureSchema, pool } from "@workspace/db";
 import app from "./app";
+import { keepAliveTarget, startKeepAlive } from "./lib/keep-alive";
 import { logger } from "./lib/logger";
 
 const rawPort = process.env["PORT"];
@@ -40,11 +41,15 @@ const server = app.listen(port, (err) => {
   logger.info({ port }, "Server listening");
 });
 
+const keepAliveUrl = keepAliveTarget();
+const stopKeepAlive = keepAliveUrl ? startKeepAlive(keepAliveUrl) : () => {};
+
 // Render sends SIGTERM on every deploy. Finish in-flight requests (a waitlist
 // signup mid-insert, say) and release the database pool before exiting,
 // rather than dropping them.
 function shutdown(signal: string) {
   logger.info({ signal }, "Shutting down");
+  stopKeepAlive();
   setTimeout(() => process.exit(1), 10_000).unref();
   server.close(() => {
     pool.end().finally(() => process.exit(0));

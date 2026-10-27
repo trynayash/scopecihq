@@ -73,6 +73,8 @@ Only needed for an App registered by hand.
 
 There is no database step: on every start the server creates any missing tables, columns, constraints and indexes, and never drops or changes anything (`lib/db/src/ensure-schema.ts`; run it alone with `pnpm run db:ensure`). It also keeps row level security on for every ScopeCI table, so Supabase's public API can't read them. Set `SCOPECI_SCHEMA_SYNC=off` to turn this off.
 
+On Render the server also calls its own `/api/healthz` every 14.5 minutes, because the free plan puts a service to sleep after 15 minutes without visits and the next visitor waits about a minute (`artifacts/api-server/src/lib/keep-alive.ts`). That keeps one instance running all month, which uses nearly all of a workspace's 750 free instance hours; other free services in the same workspace share what's left, and Render suspends them all if the hours run out. Set `KEEP_ALIVE=off` to stop the pings.
+
 ## 3. Check it works
 
 1. Open `/app`, sign in with GitHub, and create a project.
