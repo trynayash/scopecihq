@@ -6,7 +6,22 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './demoChangedFile';
+export * from './demoChangedFileStatus';
+export * from './demoChangeOrder';
+export * from './demoClauseRef';
+export * from './demoEvaluation';
+export * from './demoEvaluationCheckConclusion';
+export * from './demoEvaluationInput';
+export * from './demoEvaluationState';
+export * from './demoIssue';
+export * from './demoPullRequest';
+export * from './demoScope';
+export * from './demoScopeClause';
+export * from './demoScopeInput';
+export * from './demoSowInput';
 export * from './errorResponse';
+export * from './getDemoGithubPrParams';
 export * from './healthStatus';
 export * from './waitlistSignup';
 export * from './waitlistSignupInput';

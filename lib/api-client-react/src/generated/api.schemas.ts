@@ -20,6 +20,23 @@ export interface WaitlistSignupInput {
      * @nullable
      */
   agency?: string | null;
+  /** @nullable */
+  utmSource?: string | null;
+  /** @nullable */
+  utmMedium?: string | null;
+  /** @nullable */
+  utmCampaign?: string | null;
+  /** @nullable */
+  utmContent?: string | null;
+  /** @nullable */
+  utmTerm?: string | null;
+  /** @nullable */
+  referrer?: string | null;
+  /**
+     * Anti-spam field rendered hidden in the form. People leave it empty; a value means a bot filled it.
+     * @nullable
+     */
+  website_url_hp?: string | null;
 }
 
 export interface WaitlistSignup {
@@ -33,4 +50,187 @@ export interface WaitlistSignup {
 export interface ErrorResponse {
   error: string;
 }
+
+export interface DemoSowInput {
+  /**
+     * @minLength 1
+     * @maxLength 40000
+     */
+  markdown: string;
+}
+
+export interface DemoScopeClause {
+  /** @maxLength 40 */
+  clauseRef: string;
+  /** @maxLength 200 */
+  title: string;
+  /**
+     * @maxItems 100
+     * @items.maxLength 300
+     */
+  included: string[];
+  /**
+     * @maxItems 100
+     * @items.maxLength 300
+     */
+  excluded: string[];
+}
+
+export interface DemoScopeInput {
+  /** @maxLength 200 */
+  title: string;
+  /**
+     * @minItems 1
+     * @maxItems 60
+     */
+  clauses: DemoScopeClause[];
+}
+
+export interface DemoScope {
+  title: string;
+  clauses: DemoScopeClause[];
+  warnings: string[];
+}
+
+export type DemoChangedFileStatus = typeof DemoChangedFileStatus[keyof typeof DemoChangedFileStatus];
+
+
+export const DemoChangedFileStatus = {
+  added: 'added',
+  modified: 'modified',
+  deleted: 'deleted',
+  renamed: 'renamed',
+} as const;
+
+export interface DemoChangedFile {
+  /**
+     * @minLength 1
+     * @maxLength 400
+     */
+  path: string;
+  status?: DemoChangedFileStatus;
+}
+
+export interface DemoPullRequest {
+  /** @nullable */
+  number?: number | null;
+  /**
+     * @minLength 1
+     * @maxLength 300
+     */
+  title: string;
+  /**
+     * @maxLength 200
+     * @nullable
+     */
+  branch?: string | null;
+  /**
+     * @maxLength 5000
+     * @nullable
+     */
+  body?: string | null;
+  /**
+     * @minItems 1
+     * @maxItems 300
+     */
+  files: DemoChangedFile[];
+}
+
+export interface DemoIssue {
+  /**
+     * @minLength 1
+     * @maxLength 40
+     */
+  id: string;
+  /** @maxLength 300 */
+  title: string;
+  /**
+     * @maxLength 5000
+     * @nullable
+     */
+  description?: string | null;
+  /**
+     * @minimum 0
+     * @maximum 10000
+     * @nullable
+     */
+  estimateHours?: number | null;
+}
+
+export interface DemoEvaluationInput {
+  scope: DemoScopeInput;
+  pullRequest: DemoPullRequest;
+  issue?: DemoIssue | null;
+  /**
+     * Used when no issue is given.
+     * @minimum 0
+     * @maximum 10000
+     * @nullable
+     */
+  estimateHours?: number | null;
+  /**
+     * @minimum 0
+     * @maximum 10000
+     * @nullable
+     */
+  hourlyRate?: number | null;
+  /**
+     * @maxLength 120
+     * @nullable
+     */
+  projectName?: string | null;
+}
+
+export type DemoEvaluationState = typeof DemoEvaluationState[keyof typeof DemoEvaluationState];
+
+
+export const DemoEvaluationState = {
+  IN_SCOPE: 'IN_SCOPE',
+  REVIEW_REQUIRED: 'REVIEW_REQUIRED',
+  CHANGE_REQUIRED: 'CHANGE_REQUIRED',
+  APPROVED_CHANGE: 'APPROVED_CHANGE',
+  BLOCKED: 'BLOCKED',
+  OVERRIDDEN: 'OVERRIDDEN',
+} as const;
+
+export type DemoEvaluationCheckConclusion = typeof DemoEvaluationCheckConclusion[keyof typeof DemoEvaluationCheckConclusion];
+
+
+export const DemoEvaluationCheckConclusion = {
+  success: 'success',
+  neutral: 'neutral',
+  action_required: 'action_required',
+  failure: 'failure',
+} as const;
+
+export interface DemoClauseRef {
+  clauseRef: string;
+  title: string;
+}
+
+export interface DemoChangeOrder {
+  subject: string;
+  body: string;
+}
+
+export interface DemoEvaluation {
+  state: DemoEvaluationState;
+  taxonomy: string;
+  checkConclusion: DemoEvaluationCheckConclusion;
+  reason: string;
+  delta: string[];
+  clause: DemoClauseRef | null;
+  /** @nullable */
+  estimate: string | null;
+  /** The pull request comment ScopeCI would post, as Markdown. */
+  comment: string;
+  changeOrder: DemoChangeOrder | null;
+}
+
+export type GetDemoGithubPrParams = {
+/**
+ * @maxLength 300
+ */
+url: string;
+};
 

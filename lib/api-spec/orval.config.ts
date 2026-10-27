@@ -57,9 +57,9 @@ export default defineConfig({
       prettier: true,
       override: {
         zod: {
-          // Orval resolves `auto` from lib/api-spec/package.json, which has no
-          // zod dependency, so orval >= 8.23 falls back to Zod 4 syntax while
-          // the catalog installs zod 3. Pin to match the catalog.
+          // The catalog installs zod 4, which still accepts this v3-style
+          // output (`zod.string().email()` and so on). Pinned so regenerating
+          // doesn't rewrite every generated schema in a different syntax.
           version: 3,
           coerce: {
             query: ['boolean', 'number', 'string'],

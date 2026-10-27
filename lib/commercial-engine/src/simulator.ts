@@ -2,6 +2,7 @@ import path from 'path';
 import { evaluateCommercialScope } from './evaluator.js';
 import { applyChangeOrderApproval, applyHumanOverride } from './transitions.js';
 import { formatEvaluationSummary, formatGitHubPRComment } from './formatter.js';
+import { replayFixtureSync } from './replay.js';
 import {
   SAMPLE_BASELINE_V1,
   SAMPLE_CHANGE_ORDER_12,
@@ -60,11 +61,13 @@ export function runSimulator(): { results: TestResult[]; allPassed: boolean } {
     policyMode: 'REVIEW',
   });
 
+  // Hours are ENG-184's own 20h estimate, not a figure the evaluator makes up.
   const passed2 =
     eval2.state === 'CHANGE_REQUIRED' &&
     eval2.checkConclusion === 'action_required' &&
-    eval2.estimatedHours.min === 18 &&
-    eval2.estimatedHours.max === 24;
+    eval2.estimateSource === 'LINEAR_ISSUE_ESTIMATE' &&
+    eval2.estimatedHours.min === 20 &&
+    eval2.estimatedHours.max === 20;
 
   results.push({
     scenario: 'Case 2: Outside scope (PR #1842 Org Permissions)',
@@ -195,6 +198,34 @@ export function runSimulator(): { results: TestResult[]; allPassed: boolean } {
   console.log(`  Result: ${eval6.state} (Check: ${eval6.checkConclusion}) — ${passed6 ? 'PASS ✓' : 'FAIL ✗'}\n`);
 
   /* ------------------------------------------------------------------ */
+  /* Cases 7-11 — Contract wording outside the demo                     */
+  /* ------------------------------------------------------------------ */
+  // Each fixture pairs its own SOW with a pull request. They exist because
+  // the evaluator once returned IN_SCOPE for work an SOW explicitly
+  // excluded, whenever that work fell outside its built-in capability names.
+  const wordingCases: Array<[fixture: string, scenario: string]> = [
+    ['explicit-exclusion-loyalty', 'Case 7: SOW excludes a loyalty programme; PR builds one'],
+    ['explicit-exclusion-gift-cards', 'Case 8: SOW excludes gift cards; PR builds them'],
+    ['in-scope-cart-fix', 'Case 9: Cart fix under an included "shopping cart"'],
+    ['explicit-exclusion-workspace-roles', 'Case 10: SOW excludes member roles in its own words'],
+    ['unmentioned-feature', 'Case 11: Wishlist the SOW never mentions goes to review'],
+  ];
+  for (const [fixture, scenario] of wordingCases) {
+    console.log(`▶ Running ${scenario}`);
+    const replay = replayFixtureSync(fixture);
+    results.push({
+      scenario,
+      expectedState: replay.expectedState,
+      actualState: replay.actualState,
+      passed: replay.matched,
+      notes: replay.details.length > 0 ? replay.details.join('; ') : undefined,
+    });
+    console.log(`  Result: ${replay.actualState} (${replay.actualTaxonomy}) — ${replay.matched ? 'PASS ✓' : 'FAIL ✗'}`);
+    replay.detectedDelta.forEach((line) => console.log(`    ${line}`));
+    console.log('');
+  }
+
+  /* ------------------------------------------------------------------ */
   /* Verification of Policy Modes                                       */
   /* ------------------------------------------------------------------ */
   console.log('▶ Checking Policy Mode Graduated Trust:');
@@ -230,7 +261,7 @@ export function runSimulator(): { results: TestResult[]; allPassed: boolean } {
 
   const allPassed = results.every((r) => r.passed);
   console.log('================================================================');
-  console.log(` OVERALL STATUS: ${allPassed ? 'ALL 6 GOLDEN CASES PASSED ✓' : 'SOME CASES FAILED ✗'}`);
+  console.log(` OVERALL STATUS: ${allPassed ? `ALL ${results.length} GOLDEN CASES PASSED ✓` : 'SOME CASES FAILED ✗'}`);
   console.log(` IMMUTABLE EVENTS RECORDED: ${eventLog.length} events`);
   console.log('================================================================\n');
 

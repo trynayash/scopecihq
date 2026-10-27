@@ -1,0 +1,21 @@
+{
+  "id": "pr_43",
+  "number": 43,
+  "title": "Fix cart quantity rounding",
+  "body": "Closes HP-14.",
+  "baseBranch": "main",
+  "headBranch": "fix/hp-14-cart-rounding",
+  "headSha": "c3d4e5f60718293a4b5c6d7e8f90123456789012",
+  "filesChanged": 1,
+  "additions": 8,
+  "deletions": 3,
+  "changedFiles": [
+    {
+      "path": "src/checkout/cart.ts",
+      "module": "checkout",
+      "status": "modified",
+      "additions": 8,
+      "deletions": 3
+    }
+  ]
+}

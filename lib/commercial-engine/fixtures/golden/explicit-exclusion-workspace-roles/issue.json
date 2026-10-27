@@ -1,0 +1,12 @@
+{
+  "id": "LED-7",
+  "identifier": "LED-7",
+  "title": "Let owners give members roles",
+  "description": "Owner, editor and viewer roles per workspace.",
+  "status": "In Progress",
+  "estimateHours": 12,
+  "labels": [
+    "accounts"
+  ],
+  "updatedAt": "2026-10-12T09:00:00Z"
+}

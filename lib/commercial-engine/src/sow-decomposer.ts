@@ -257,6 +257,13 @@ export class SOWDecomposer {
       clauses.push(currentClause as z.infer<typeof DecomposedClauseSchema>);
     }
 
+    // Contracts without numbered sections ("## Scope", or text copied out of
+    // a PDF) still say what's in and out: fall back to markdown headings, and
+    // failing that, read the whole document as one clause.
+    if (clauses.length === 0) {
+      clauses.push(...this.parseUnnumbered(lines));
+    }
+
     // If clauses were found, generate deliverables for each clause
     for (const c of clauses) {
       const keywords = [...c.inclusions];
@@ -274,8 +281,7 @@ export class SOWDecomposer {
         title: `${c.title} Subsystem`,
         scopeBoundary: c.legalText || c.title,
         keywords: Array.from(new Set(keywords)),
-        estimatedHours: { min: 20, max: 40 },
-        budgetAllocated: 5000,
+        ...extractStatedEffort(c.legalText || ""),
       });
     }
 
@@ -287,61 +293,170 @@ export class SOWDecomposer {
     };
   }
 
-  /**
-   * Helper to parse explicit exclusions and inclusions from clause legal text.
-   */
+  /** Sections from markdown headings or "Section N" lines, numbered §1, §2, ... in order. */
+  private parseUnnumbered(lines: string[]): z.infer<typeof DecomposedClauseSchema>[] {
+    const sections: Array<{ title: string; body: string[] }> = [];
+    let current: { title: string; body: string[] } | undefined;
+
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (line.startsWith("# ")) continue;
+      const heading =
+        line.match(/^#{2,4}\s+(.+)$/) ?? line.match(/^(?:section|clause)\s+\d+\s*[:.\-–]?\s*(.+)$/i);
+      if (heading) {
+        current = { title: heading[1].replace(/[*_#]/g, "").trim(), body: [] };
+        sections.push(current);
+        continue;
+      }
+      if (!current) {
+        current = { title: "Scope", body: [] };
+        sections.push(current);
+      }
+      current.body.push(line);
+    }
+
+    return sections
+      .filter((section) => section.body.join("").trim().length > 0)
+      .map((section, index) => {
+        const legalText = section.body.join("\n").trim();
+        return {
+          clauseRef: `§${index + 1}`,
+          title: section.title,
+          legalText,
+          ...extractScopeBoundaries(legalText),
+          location: `Section ${index + 1}`,
+        };
+      });
+  }
+
   private extractInclusionsAndExclusions(
     clause: Partial<z.infer<typeof DecomposedClauseSchema>>,
     legalText: string
   ): void {
-    const inclusions: string[] = [];
-    const exclusions: string[] = [];
-
-    // 1. Markdown bullet lists under Explicit Exclusions
-    const sectionExclusionRegex = /(?:\*\*?explicit\s+exclusions?\*\*?|out\s+of\s+scope)\s*:?\s*([\s\S]*?)(?=(?:\*\*?explicit\s+inclusions?\*\*?|\*\*?in\s+scope|###|##|$))/gi;
-    let secMatch: RegExpExecArray | null;
-    while ((secMatch = sectionExclusionRegex.exec(legalText)) !== null) {
-      const block = secMatch[1];
-      const items = block
-        .split(/\r?\n|;/)
-        .map((l) => l.replace(/^[\s*-]+/, "").trim().toLowerCase())
-        .filter((l) => l.length > 2 && !l.startsWith("#"));
-      exclusions.push(...items);
-    }
-
-    // 2. Markdown bullet lists under Explicit Inclusions
-    const sectionInclusionRegex = /(?:\*\*?explicit\s+inclusions?\*\*?|in\s+scope)\s*:?\s*([\s\S]*?)(?=(?:\*\*?explicit\s+exclusions?\*\*?|\*\*?out\s+of\s+scope|###|##|$))/gi;
-    while ((secMatch = sectionInclusionRegex.exec(legalText)) !== null) {
-      const block = secMatch[1];
-      const items = block
-        .split(/\r?\n|;/)
-        .map((l) => l.replace(/^[\s*-]+/, "").trim().toLowerCase())
-        .filter((l) => l.length > 2 && !l.startsWith("#"));
-      inclusions.push(...items);
-    }
-
-    // 3. Prose sentence exclusions (e.g. "Explicitly excludes X, Y, and Z", "Does not include X")
-    const exclusionRegex = /(?:explicitly\s+excludes?|does\s+not\s+include|excludes?)\s+([^.]+)/gi;
-    let match: RegExpExecArray | null;
-    while ((match = exclusionRegex.exec(legalText)) !== null) {
-      const items = match[1]
-        .split(/,|;|\band\b/i)
-        .map((s) => s.trim().toLowerCase().replace(/[^a-z0-9_\s-]/g, ""))
-        .filter((s) => s.length > 2);
-      exclusions.push(...items);
-    }
-
-    // 4. Prose sentence inclusions
-    const inclusionRegex = /(?:includes?|shall\s+deliver|shall\s+implement|features?)\s+([^.]+)/gi;
-    while ((match = inclusionRegex.exec(legalText)) !== null) {
-      const items = match[1]
-        .split(/,|;|\band\b/i)
-        .map((s) => s.trim().toLowerCase().replace(/[^a-z0-9_\s-]/g, ""))
-        .filter((s) => s.length > 2);
-      inclusions.push(...items);
-    }
-
-    clause.inclusions = Array.from(new Set(inclusions));
-    clause.exclusions = Array.from(new Set(exclusions));
+    const { inclusions, exclusions } = extractScopeBoundaries(legalText);
+    clause.inclusions = inclusions;
+    clause.exclusions = exclusions;
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Scope boundaries                                                    */
+/* ------------------------------------------------------------------ */
+
+const BULLET = /^\s*(?:[-*•]|\d+[.)])\s+/;
+
+/** Lowercases an item and trims list markers, markdown emphasis and trailing punctuation. */
+function cleanItem(item: string): string {
+  return item
+    .replace(BULLET, "")
+    .replace(/\*\*|__/g, "")
+    .replace(/^(?:and|or)\s+/i, "")
+    .replace(/[\s.;:,]+$/, "")
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * "A, B, and C" -> ["a", "b", "c"]. A trailing clause such as ", which shall
+ * require a separate Change Order" is commentary on the list, not an item.
+ */
+function splitList(text: string): string[] {
+  return text
+    .split(/,\s*(?:which|unless|except|where|provided|because|but|as)\b/i)[0]
+    .split(/,|;|\band\b/i)
+    .map(cleanItem)
+    .filter((item) => item.length > 2);
+}
+
+/**
+ * Items listed after a header such as "Explicit Exclusions:" or "including:".
+ * A header at the end of its line takes the bullet lines that follow it; a
+ * header with text after the colon takes that text as a comma separated list.
+ */
+function listsAfter(text: string, header: RegExp): string[] {
+  const items: string[] = [];
+  for (const match of text.matchAll(header)) {
+    const rest = text.slice((match.index ?? 0) + match[0].length);
+    const [firstLine, ...nextLines] = rest.split(/\r?\n/);
+
+    if (firstLine.trim()) {
+      items.push(...splitList(firstLine.split(".")[0]));
+      continue;
+    }
+    for (const line of nextLines) {
+      if (!line.trim()) {
+        if (items.length > 0) break;
+        continue;
+      }
+      if (!BULLET.test(line)) break;
+      const item = cleanItem(line);
+      if (item.length > 2) items.push(item);
+    }
+  }
+  return items;
+}
+
+const EXCLUSION_HEADER =
+  /\*{0,2}(?:explicit\s+exclusions?\*{0,2}[ \t]*:?|(?:exclusions|out\s+of\s+scope|not\s+included|excluded|excluding|excludes)\*{0,2}[ \t]*:)/gi;
+const INCLUSION_HEADER =
+  /\*{0,2}(?:explicit\s+inclusions?\*{0,2}[ \t]*:?|(?:inclusions|in\s+scope|included|including|includes)\*{0,2}[ \t]*:)/gi;
+
+/** "Explicitly excludes X, Y and Z." / "Does not include X." on one line. */
+const EXCLUSION_PROSE = /(?:explicitly\s+excludes?|does\s+not\s+include|\bexcludes?)\b[ \t]*:?[ \t]*([^.\n]+)/gi;
+/** "X, Y and Z are explicitly out of scope." */
+const EXCLUSION_PREDICATE =
+  /([^.\n:]+?)\s+(?:is|are)\s+(?:explicitly\s+|expressly\s+|strictly\s+)?(?:out\s+of\s+scope|excluded|not\s+included|not\s+in\s+scope)/gi;
+/** "Includes X and Y." / "shall deliver X." / "is authorized to deliver X." on one line. */
+const INCLUSION_PROSE =
+  /(?:\bincludes?|(?:shall|will|(?:is|are)\s+authori[sz]ed\s+to)\s+(?:deliver|implement|build|provide)|\bfeatures?)\b[ \t]+([^.\n:]+)/gi;
+
+/**
+ * Reads what a clause includes and excludes from its own wording: header
+ * lists ("Explicit Exclusions:", "including:"), "excludes X" sentences and
+ * "X is out of scope" sentences. Used on parsed SOW clauses and on clause rows
+ * stored in the database.
+ */
+export function extractScopeBoundaries(legalText: string): { inclusions: string[]; exclusions: string[] } {
+  // Sentence patterns run one sentence at a time, each capped, so a pasted
+  // document with a very long unbroken line can't make them backtrack for
+  // seconds. No pattern needs to see past a sentence end anyway.
+  const sentences = legalText.split(/(?<=[.!?])\s+|\n/).map((sentence) => sentence.slice(0, 1000));
+  const inSentences = (pattern: RegExp) => sentences.flatMap((sentence) => [...sentence.matchAll(pattern)]);
+
+  const exclusions = [
+    ...listsAfter(legalText, EXCLUSION_HEADER),
+    ...inSentences(EXCLUSION_PROSE).flatMap((m) => splitList(m[1])),
+    ...inSentences(EXCLUSION_PREDICATE).flatMap((m) => splitList(m[1])),
+  ];
+  const inclusions = [
+    ...listsAfter(legalText, INCLUSION_HEADER),
+    ...inSentences(INCLUSION_PROSE).flatMap((m) => splitList(m[1])),
+  ];
+
+  const unique = (items: string[]) => Array.from(new Set(items));
+  const excluded = unique(exclusions);
+  // A phrase the contract excludes is never also counted as included.
+  return { inclusions: unique(inclusions).filter((item) => !excluded.includes(item)), exclusions: excluded };
+}
+
+/**
+ * Hours and budget, only when the clause states them ("Estimated hours:
+ * 40-60", "Budget: $7,500"). Zero means the SOW gave no figure; nothing is
+ * filled in on its behalf.
+ */
+export function extractStatedEffort(legalText: string): {
+  estimatedHours: { min: number; max: number };
+  budgetAllocated: number;
+} {
+  const hours = legalText.match(
+    /(?:estimated\s+(?:effort|hours)|estimate|effort|hours)\s*[:=]\s*(\d+)(?:\s*(?:-|–|to)\s*(\d+))?/i
+  );
+  const budget = legalText.match(/(?:budget|fee)\s*[:=]\s*(?:usd\s*|\$|£|€)?\s*([\d,]+)/i);
+
+  const min = hours ? Number(hours[1]) : 0;
+  const max = hours ? Number(hours[2] ?? hours[1]) : 0;
+  return {
+    estimatedHours: { min, max },
+    budgetAllocated: budget ? Number(budget[1].replace(/,/g, "")) : 0,
+  };
 }

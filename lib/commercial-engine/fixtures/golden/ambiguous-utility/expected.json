@@ -7,19 +7,20 @@
   "issueId": "ENG-204",
   "pullRequestId": "pr_1204",
   "detectedDelta": [
-    "Ambiguous requirement: csv_export"
+    "Ambiguous scope requirement: export_utility (utility/helper not explicitly defined in baseline)"
   ],
   "estimatedHours": {
     "min": 4,
-    "max": 8
+    "max": 4
   },
   "commercialValue": {
     "currency": "USD",
     "min": 600,
-    "max": 1200,
+    "max": 600,
     "status": "available"
   },
   "recommendedAction": "MANUAL_PM_REVIEW",
   "checkConclusion": "action_required",
-  "reviewReasonCode": "AMBIGUOUS_SCOPE"
+  "reviewReasonCode": "AMBIGUOUS_SCOPE",
+  "estimateSource": "LINEAR_ISSUE_ESTIMATE"
 }

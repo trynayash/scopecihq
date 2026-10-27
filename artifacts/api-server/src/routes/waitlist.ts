@@ -29,25 +29,28 @@ function hasPgErrorCode(error: unknown, code: string, depth = 0): boolean {
 }
 
 router.post("/waitlist", waitlistRateLimiter, async (req, res): Promise<void> => {
-  // Bot Honeypot Protection: drop automated bot submissions silently
+  // Bot Honeypot Protection: drop automated bot submissions silently. The
+  // form renders `website_url_hp` hidden; `hp` and `company_role` are older
+  // names kept for clients that still send them. The body is not logged: it
+  // carries whatever email address the bot typed.
   if (req.body?.hp || req.body?.website_url_hp || req.body?.company_role) {
-    req.log.warn({ body: req.body }, "Honeypot triggered on waitlist submission; dropping");
+    req.log.warn("Honeypot triggered on waitlist submission; dropping");
     res.status(201).json({ id: 0, email: "bot@discarded.local", agency: null, createdAt: new Date() });
     return;
   }
 
   const parsed = CreateWaitlistSignupBody.safeParse(req.body);
   if (!parsed.success) {
-    req.log.warn({ errors: parsed.error.flatten() }, "Invalid waitlist signup");
+    req.log.warn({ errors: parsed.error.flatten().fieldErrors }, "Invalid waitlist signup");
     res.status(400).json({ error: "Enter a valid work email and optional agency name." });
     return;
   }
 
-  // Attribution fields are optional — passed through from the frontend's
-  // captured UTM parameters. They are not part of the public form UI.
+  // Attribution is captured by the site from the landing URL. It is never
+  // allowed to fail a signup, so over-long values are truncated, not refused.
   const {
     utmSource, utmMedium, utmCampaign, utmContent, utmTerm, referrer,
-  } = req.body ?? {};
+  } = parsed.data;
 
   try {
     const [signup] = await db
@@ -55,12 +58,12 @@ router.post("/waitlist", waitlistRateLimiter, async (req, res): Promise<void> =>
       .values({
         email: parsed.data.email.trim().toLowerCase(),
         agency: parsed.data.agency?.trim() || null,
-        utmSource: typeof utmSource === "string" ? utmSource.slice(0, 100) : null,
-        utmMedium: typeof utmMedium === "string" ? utmMedium.slice(0, 100) : null,
-        utmCampaign: typeof utmCampaign === "string" ? utmCampaign.slice(0, 200) : null,
-        utmContent: typeof utmContent === "string" ? utmContent.slice(0, 200) : null,
-        utmTerm: typeof utmTerm === "string" ? utmTerm.slice(0, 200) : null,
-        referrer: typeof referrer === "string" ? referrer.slice(0, 2000) : null,
+        utmSource: utmSource?.slice(0, 100) || null,
+        utmMedium: utmMedium?.slice(0, 100) || null,
+        utmCampaign: utmCampaign?.slice(0, 200) || null,
+        utmContent: utmContent?.slice(0, 200) || null,
+        utmTerm: utmTerm?.slice(0, 200) || null,
+        referrer: referrer?.slice(0, 2000) || null,
       })
       .returning();
 

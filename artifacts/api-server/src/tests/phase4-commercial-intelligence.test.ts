@@ -212,7 +212,10 @@ async function runTests() {
     });
 
     assert.notStrictEqual(kwResult.state, "IN_SCOPE", "Keyword 'auth' in title must not independently authorize billing work");
-    assert.strictEqual(kwResult.state, "CHANGE_REQUIRED");
+    // The SOW neither includes nor excludes billing, so a person decides
+    // (Hard Requirement 2: not mentioned is never the same as out of scope).
+    assert.strictEqual(kwResult.state, "REVIEW_REQUIRED");
+    assert.strictEqual(kwResult.reviewReasonCode, "MISSING_CONTRACT_EVIDENCE");
     pass("Keyword 'auth' in title did not override grounded billing diff evidence");
   } catch (e) {
     fail("Keyword matching certainty test failed", e);
@@ -293,14 +296,39 @@ async function runTests() {
         detectedSubsystems: ["organization_rbac"],
       },
       policyConfig: noRateConfig,
-      issue: { id: "ENG-184", identifier: "ENG-184", title: "Add roles", status: "Done" },
+      issue: { id: "ENG-184", identifier: "ENG-184", title: "Add roles", status: "Done", estimateHours: 20 },
     });
 
-    assert.ok(evalNoRate.estimatedHours.max > 0, "estimatedHours must still be provided");
+    assert.strictEqual(evalNoRate.estimatedHours.max, 20, "Hours come from the linked issue's estimate");
+    assert.strictEqual(evalNoRate.estimateSource, "LINEAR_ISSUE_ESTIMATE");
     assert.strictEqual(evalNoRate.commercialValue.status, "unavailable", "Commercial value must be marked unavailable");
     assert.strictEqual(evalNoRate.commercialValue.min, 0);
     assert.strictEqual(evalNoRate.commercialValue.max, 0);
     pass("When hourly rate is unconfigured, estimatedHours is returned and commercialValue.status is 'unavailable'");
+
+    // Without an issue estimate there are no hours to report, and none are made up.
+    const evalNoEstimate = evaluateCommercialScope({
+      baseline: sampleBaseline,
+      pullRequest: {
+        id: "pr_noestimate",
+        number: 1843,
+        title: "feat(auth): add organization roles",
+        branch: "feat/roles",
+        base: "main",
+        author: "dev@apex.com",
+        filesChanged: 1,
+        additions: 200,
+        deletions: 5,
+        changedFiles: [{ path: "src/auth/roles.ts", status: "added", module: "auth", linesAdded: 200, linesDeleted: 5 }],
+        detectedSubsystems: ["organization_rbac"],
+      },
+      issue: { id: "ENG-185", identifier: "ENG-185", title: "Add roles", status: "Done" },
+    });
+    assert.strictEqual(evalNoEstimate.state, "CHANGE_REQUIRED");
+    assert.strictEqual(evalNoEstimate.estimateSource, "NOT_ESTIMATED");
+    assert.strictEqual(evalNoEstimate.estimatedHours.max, 0, "No estimate on the issue means no hours");
+    assert.strictEqual(evalNoEstimate.commercialValue.status, "unavailable");
+    pass("Without an estimate on the linked issue, hours are reported as not estimated rather than invented");
   } catch (e) {
     fail("Commercial value safety test failed", e);
   }
@@ -616,6 +644,12 @@ Explicitly excludes: organization rbac.
     "ambiguous-utility",
     "approved-change",
     "unlinked-pr",
+    // SOWs in their own words, outside the demo's capability names.
+    "explicit-exclusion-loyalty",
+    "explicit-exclusion-gift-cards",
+    "explicit-exclusion-workspace-roles",
+    "in-scope-cart-fix",
+    "unmentioned-feature",
   ];
 
   for (const fixture of goldenFixtures) {

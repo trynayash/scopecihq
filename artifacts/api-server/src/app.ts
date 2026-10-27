@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import express, { type Express } from "express";
+import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
@@ -10,6 +10,13 @@ import { logger } from "./lib/logger";
 import { securityHeaders } from "./middlewares/security-headers";
 
 const app: Express = express();
+
+// Render and Vercel each put one proxy in front of the app. Trusting exactly
+// that hop makes `req.ip` the address the proxy saw, rather than whatever the
+// client wrote into X-Forwarded-For (which would let anyone dodge the rate
+// limiter by sending a fresh header per request). Set TRUST_PROXY_HOPS if the
+// deployment adds another proxy, such as a CDN in front of Render.
+app.set("trust proxy", Number(process.env.TRUST_PROXY_HOPS ?? 1));
 
 // OWASP Security Headers (HSTS, CSP, X-Frame-Options, X-Content-Type-Options)
 app.use(securityHeaders());
@@ -94,6 +101,12 @@ app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
 app.use("/api", router);
 
+// Unknown API paths answer in JSON, like every other API response, instead of
+// Express's HTML "Cannot GET" page.
+app.use("/api", (_req, res) => {
+  res.status(404).json({ error: "Not found." });
+});
+
 /**
  * Serves the built SPA (artifacts/scopeci/dist/public) from the same origin
  * as the API, so the site's relative `fetch("/api/...")` calls work with no
@@ -137,5 +150,31 @@ if (fs.existsSync(publicDir)) {
 } else {
   logger.warn({ publicDir }, "Frontend build not found; serving API only.");
 }
+
+/**
+ * Last-resort error handler. Without it, a malformed JSON body or a rejected
+ * CORS origin reaches Express's default handler, which answers 500 with an
+ * HTML page (and a stack trace outside production).
+ */
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+  if (res.headersSent) {
+    next(err);
+    return;
+  }
+  if (err?.type === "entity.parse.failed") {
+    res.status(400).json({ error: "Request body is not valid JSON." });
+    return;
+  }
+  if (err?.type === "entity.too.large") {
+    res.status(413).json({ error: "Request body is too large." });
+    return;
+  }
+  if (typeof err?.message === "string" && err.message.startsWith("CORS origin not allowed")) {
+    res.status(403).json({ error: "Origin not allowed." });
+    return;
+  }
+  (req.log ?? logger).error({ err }, "Unhandled request error");
+  res.status(500).json({ error: "Something went wrong on our side." });
+});
 
 export default app;

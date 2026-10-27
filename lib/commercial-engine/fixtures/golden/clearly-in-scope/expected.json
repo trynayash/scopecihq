@@ -6,7 +6,9 @@
   "contractClauseId": "clause_4_2",
   "issueId": "ENG-101",
   "pullRequestId": "pr_1042",
-  "detectedDelta": [],
+  "detectedDelta": [
+    "Matches \"password reset\", included in §4.2 User Authentication & Account Management, and 3 more included items."
+  ],
   "estimatedHours": {
     "min": 0,
     "max": 0
@@ -18,5 +20,6 @@
     "status": "available"
   },
   "recommendedAction": "PROCEED",
-  "checkConclusion": "success"
+  "checkConclusion": "success",
+  "estimateSource": "NOT_ESTIMATED"
 }

@@ -1,21 +1,89 @@
+import crypto from "node:crypto";
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { db, waitlistSignupsTable } from "@workspace/db";
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
 import { timingSafeCompare } from "../middlewares/auth.js";
+import { rateLimiter } from "../middlewares/rate-limit.js";
 
 const router: IRouter = Router();
 
+/* ------------------------------------------------------------------ */
+/* Session                                                             */
+/* ------------------------------------------------------------------ */
+
 /**
- * Checks the ADMIN_SECRET env var against the request's `x-admin-key` header
- * or `Authorization: Bearer <key>`. Uses constant-time comparison.
- * Returns 401 if the secret is not configured or does not match.
+ * The admin page signs in once with ADMIN_SECRET and gets back an httpOnly
+ * cookie, so the secret never sits in sessionStorage or in a URL (where it
+ * ends up in browser history and proxy logs). The cookie holds an expiry and
+ * an HMAC of it keyed by ADMIN_SECRET: there is no session table, and
+ * rotating the secret signs everyone out.
+ *
+ * SameSite=Strict means a page on another site can't make the browser send
+ * the cookie, which is what protects the DELETE route from CSRF.
  */
-function requireAdminKey(req: Request, res: Response, next: NextFunction): void {
+const SESSION_COOKIE = "scopeci_admin";
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const SESSION_COOKIE_PATH = "/api/admin";
+
+function signSession(expiresAt: number, secret: string): string {
+  return crypto
+    .createHmac("sha256", secret)
+    .update(`scopeci-admin-session:${expiresAt}`)
+    .digest("base64url");
+}
+
+function issueSessionToken(secret: string): string {
+  const expiresAt = Date.now() + SESSION_TTL_MS;
+  return `${expiresAt}.${signSession(expiresAt, secret)}`;
+}
+
+function isValidSessionToken(token: string, secret: string): boolean {
+  const [rawExpiry, signature] = token.split(".");
+  const expiresAt = Number(rawExpiry);
+  if (!signature || !Number.isFinite(expiresAt) || expiresAt < Date.now()) return false;
+  return timingSafeCompare(signature, signSession(expiresAt, secret));
+}
+
+/** Raw cookie value; session tokens are digits, "." and base64url, so no decoding. */
+function readCookie(req: Request, name: string): string | undefined {
+  for (const part of (req.headers.cookie ?? "").split(";")) {
+    const [key, ...rest] = part.trim().split("=");
+    if (key === name) return rest.join("=");
+  }
+  return undefined;
+}
+
+function sessionCookie(value: string, maxAgeSeconds: number): string {
+  return [
+    `${SESSION_COOKIE}=${value}`,
+    `Path=${SESSION_COOKIE_PATH}`,
+    `Max-Age=${maxAgeSeconds}`,
+    "HttpOnly",
+    "SameSite=Strict",
+    ...(process.env.NODE_ENV === "production" ? ["Secure"] : []),
+  ].join("; ");
+}
+
+/**
+ * Accepts the session cookie, or ADMIN_SECRET itself as `Authorization:
+ * Bearer <key>` / `x-admin-key` for scripts. Uses constant-time comparison.
+ * Returns 401 if the secret is not configured or nothing valid was sent.
+ */
+function requireAdmin(req: Request, res: Response, next: NextFunction): void {
+  // Everything behind this carries signup emails; keep it out of any cache.
+  res.setHeader("Cache-Control", "no-store");
+
   const secret = process.env.ADMIN_SECRET;
   if (!secret) {
     res.status(401).json({ error: "Admin access is not configured." });
+    return;
+  }
+
+  const session = readCookie(req, SESSION_COOKIE);
+  if (session && isValidSessionToken(session, secret)) {
+    next();
     return;
   }
 
@@ -26,8 +94,6 @@ function requireAdminKey(req: Request, res: Response, next: NextFunction): void 
     provided = authHeader.slice(7).trim();
   } else if (typeof req.headers["x-admin-key"] === "string") {
     provided = req.headers["x-admin-key"];
-  } else if (typeof req.query?.key === "string") {
-    provided = req.query.key;
   }
 
   if (!provided || !timingSafeCompare(provided, secret)) {
@@ -38,7 +104,50 @@ function requireAdminKey(req: Request, res: Response, next: NextFunction): void 
   next();
 }
 
-router.use("/admin", requireAdminKey);
+/** Ten sign-in attempts per IP per 15 minutes is plenty for a person typing. */
+const signInRateLimiter = rateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: "Too many sign-in attempts. Wait 15 minutes and try again.",
+});
+
+/**
+ * POST /admin/session — exchanges ADMIN_SECRET for a session cookie.
+ */
+router.post("/admin/session", signInRateLimiter, (req, res): void => {
+  const secret = process.env.ADMIN_SECRET;
+  const provided = typeof req.body?.key === "string" ? req.body.key.trim() : "";
+
+  if (!secret) {
+    res.status(401).json({ error: "Admin access is not configured." });
+    return;
+  }
+  if (!provided || !timingSafeCompare(provided, secret)) {
+    res.status(401).json({ error: "That key is not right." });
+    return;
+  }
+
+  res.setHeader("Set-Cookie", sessionCookie(issueSessionToken(secret), SESSION_TTL_MS / 1000));
+  res.status(204).end();
+});
+
+/**
+ * DELETE /admin/session — signs out. Needs no session, so a stale cookie can
+ * always be cleared.
+ */
+router.delete("/admin/session", (_req, res): void => {
+  res.setHeader("Set-Cookie", sessionCookie("", 0));
+  res.status(204).end();
+});
+
+router.use("/admin", requireAdmin);
+
+/**
+ * GET /admin/session — 204 when signed in; the page calls it on load.
+ */
+router.get("/admin/session", (_req, res): void => {
+  res.status(204).end();
+});
 
 /**
  * GET /admin/waitlist — returns all signups as JSON.
@@ -124,6 +233,35 @@ router.get("/admin/waitlist/csv", async (req, res): Promise<void> => {
     res.send(csv);
   } catch (error) {
     req.log.error({ err: error }, "Failed to export waitlist CSV");
+    res.status(500).json({ error: "Internal server error." });
+  }
+});
+
+/**
+ * DELETE /admin/waitlist/:id — removes one signup. The privacy policy
+ * promises removal on request; this is how that promise is kept.
+ */
+router.delete("/admin/waitlist/:id", async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: "Invalid signup id." });
+    return;
+  }
+
+  try {
+    const removed = await db
+      .delete(waitlistSignupsTable)
+      .where(eq(waitlistSignupsTable.id, id))
+      .returning({ id: waitlistSignupsTable.id });
+
+    if (removed.length === 0) {
+      res.status(404).json({ error: "No signup with that id." });
+      return;
+    }
+    req.log.info({ signupId: id }, "Waitlist signup removed by admin");
+    res.status(204).end();
+  } catch (error) {
+    req.log.error({ err: error }, "Failed to delete waitlist signup");
     res.status(500).json({ error: "Internal server error." });
   }
 });

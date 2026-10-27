@@ -1,0 +1,23 @@
+{
+  "state": "REVIEW_REQUIRED",
+  "taxonomy": "INSUFFICIENT_EVIDENCE",
+  "commercialConfidence": 0.6,
+  "issueId": "HP-15",
+  "pullRequestId": "pr_44",
+  "detectedDelta": [
+    "No clause or deliverable in the SOW matches the changed files, the pull request title or the linked issue."
+  ],
+  "estimatedHours": {
+    "min": 6,
+    "max": 6
+  },
+  "estimateSource": "LINEAR_ISSUE_ESTIMATE",
+  "commercialValue": {
+    "currency": "USD",
+    "min": 900,
+    "max": 900,
+    "status": "available"
+  },
+  "recommendedAction": "MANUAL_PM_REVIEW",
+  "checkConclusion": "action_required"
+}

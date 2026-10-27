@@ -1,0 +1,35 @@
+{
+  "id": "pr_41",
+  "number": 41,
+  "title": "Add loyalty points at checkout",
+  "body": "Closes HP-12. Customers earn points on every order and see them on a rewards page.",
+  "baseBranch": "main",
+  "headBranch": "feat/hp-12-loyalty-points",
+  "headSha": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+  "filesChanged": 3,
+  "additions": 360,
+  "deletions": 4,
+  "changedFiles": [
+    {
+      "path": "src/loyalty/points.ts",
+      "module": "loyalty",
+      "status": "added",
+      "additions": 120,
+      "deletions": 0
+    },
+    {
+      "path": "src/loyalty/rewards-page.tsx",
+      "module": "loyalty",
+      "status": "added",
+      "additions": 210,
+      "deletions": 0
+    },
+    {
+      "path": "src/checkout/cart.ts",
+      "module": "checkout",
+      "status": "modified",
+      "additions": 30,
+      "deletions": 4
+    }
+  ]
+}

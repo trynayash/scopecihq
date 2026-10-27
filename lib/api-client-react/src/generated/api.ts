@@ -20,7 +20,13 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  DemoEvaluation,
+  DemoEvaluationInput,
+  DemoPullRequest,
+  DemoScope,
+  DemoSowInput,
   ErrorResponse,
+  GetDemoGithubPrParams,
   HealthStatus,
   WaitlistSignup,
   WaitlistSignupInput
@@ -202,4 +208,231 @@ export const useCreateWaitlistSignup = <TError = ErrorType<ErrorResponse>,
       > => {
       return useMutation(getCreateWaitlistSignupMutationOptions(options));
     }
+
+export const getParseDemoSowUrl = () => {
+
+
+
+
+  return `/api/demo/sow`
+}
+
+/**
+ * Splits the document into clauses and lists what each one includes and excludes, for the visitor to review and correct.
+ * @summary Read the scope out of a statement of work
+ */
+export const parseDemoSow = async (demoSowInput: DemoSowInput, options?: Parameters<typeof customFetch>[1]): Promise<DemoScope> => {
+
+  return customFetch<DemoScope>(getParseDemoSowUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(demoSowInput)
+  }
+);}
+
+
+
+
+
+export const getParseDemoSowMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof parseDemoSow>>, TError,{data: BodyType<DemoSowInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof parseDemoSow>>, TError,{data: BodyType<DemoSowInput>}, TContext> => {
+
+const mutationKey = ['parseDemoSow'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof parseDemoSow>>, {data: BodyType<DemoSowInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  parseDemoSow(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ParseDemoSowMutationResult = NonNullable<Awaited<ReturnType<typeof parseDemoSow>>>
+    export type ParseDemoSowMutationBody = BodyType<DemoSowInput>
+    export type ParseDemoSowMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Read the scope out of a statement of work
+ */
+export const useParseDemoSow = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof parseDemoSow>>, TError,{data: BodyType<DemoSowInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof parseDemoSow>>,
+        TError,
+        {data: BodyType<DemoSowInput>},
+        TContext
+      > => {
+      return useMutation(getParseDemoSowMutationOptions(options));
+    }
+
+export const getEvaluateDemoUrl = () => {
+
+
+
+
+  return `/api/demo/evaluate`
+}
+
+/**
+ * @summary Check a pull request against a reviewed scope
+ */
+export const evaluateDemo = async (demoEvaluationInput: DemoEvaluationInput, options?: Parameters<typeof customFetch>[1]): Promise<DemoEvaluation> => {
+
+  return customFetch<DemoEvaluation>(getEvaluateDemoUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(demoEvaluationInput)
+  }
+);}
+
+
+
+
+
+export const getEvaluateDemoMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof evaluateDemo>>, TError,{data: BodyType<DemoEvaluationInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof evaluateDemo>>, TError,{data: BodyType<DemoEvaluationInput>}, TContext> => {
+
+const mutationKey = ['evaluateDemo'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof evaluateDemo>>, {data: BodyType<DemoEvaluationInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  evaluateDemo(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type EvaluateDemoMutationResult = NonNullable<Awaited<ReturnType<typeof evaluateDemo>>>
+    export type EvaluateDemoMutationBody = BodyType<DemoEvaluationInput>
+    export type EvaluateDemoMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Check a pull request against a reviewed scope
+ */
+export const useEvaluateDemo = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof evaluateDemo>>, TError,{data: BodyType<DemoEvaluationInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof evaluateDemo>>,
+        TError,
+        {data: BodyType<DemoEvaluationInput>},
+        TContext
+      > => {
+      return useMutation(getEvaluateDemoMutationOptions(options));
+    }
+
+export const getGetDemoGithubPrUrl = (params: GetDemoGithubPrParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/demo/github-pr?${stringifiedParams}` : `/api/demo/github-pr`
+}
+
+/**
+ * @summary Read a public GitHub pull request's title, branch and changed files
+ */
+export const getDemoGithubPr = async (params: GetDemoGithubPrParams, options?: Parameters<typeof customFetch>[1]): Promise<DemoPullRequest> => {
+
+  return customFetch<DemoPullRequest>(getGetDemoGithubPrUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetDemoGithubPrQueryKey = (params?: GetDemoGithubPrParams,) => {
+    return [
+    `/api/demo/github-pr`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetDemoGithubPrQueryOptions = <TData = Awaited<ReturnType<typeof getDemoGithubPr>>, TError = ErrorType<ErrorResponse>>(params: GetDemoGithubPrParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDemoGithubPr>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDemoGithubPrQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDemoGithubPr>>> = ({ signal }) => getDemoGithubPr(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDemoGithubPr>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetDemoGithubPrQueryResult = NonNullable<Awaited<ReturnType<typeof getDemoGithubPr>>>
+export type GetDemoGithubPrQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Read a public GitHub pull request's title, branch and changed files
+ */
+
+export function useGetDemoGithubPr<TData = Awaited<ReturnType<typeof getDemoGithubPr>>, TError = ErrorType<ErrorResponse>>(
+ params: GetDemoGithubPrParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDemoGithubPr>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetDemoGithubPrQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 

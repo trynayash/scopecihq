@@ -1,0 +1,28 @@
+{
+  "id": "pr_42",
+  "number": 42,
+  "title": "Gift card purchase and redemption",
+  "body": "Closes HP-13.",
+  "baseBranch": "main",
+  "headBranch": "feat/hp-13-gift-cards",
+  "headSha": "b2c3d4e5f60718293a4b5c6d7e8f901234567890",
+  "filesChanged": 2,
+  "additions": 230,
+  "deletions": 0,
+  "changedFiles": [
+    {
+      "path": "src/giftcards/redeem.ts",
+      "module": "giftcards",
+      "status": "added",
+      "additions": 90,
+      "deletions": 0
+    },
+    {
+      "path": "src/giftcards/purchase.tsx",
+      "module": "giftcards",
+      "status": "added",
+      "additions": 140,
+      "deletions": 0
+    }
+  ]
+}

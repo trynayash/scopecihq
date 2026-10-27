@@ -638,7 +638,19 @@ async function runPhase3TestSuite(): Promise<void> {
   });
 
   assert(evalRow !== undefined, "Commercial evaluation created with exact headSha");
-  assert(evalRow?.state === "CHANGE_REQUIRED", "Evaluation state is CHANGE_REQUIRED (Uncontracted RBAC)");
+  // The active seeded baseline (v2) holds one clause, §4.2-CO12, which
+  // authorises organization models, member invitations and RBAC under Change
+  // Order #12, so that work is not flagged. The diff also reports a
+  // user_authentication subsystem that v2 doesn't mention, so a person
+  // confirms it. (This used to read CHANGE_REQUIRED only because the webhook
+  // dropped every clause's wording before evaluating.)
+  assert(evalRow?.state === "REVIEW_REQUIRED", "Evaluation state is REVIEW_REQUIRED (one subsystem not in baseline v2)");
+  assert(
+    evalRow?.reason.includes("user_authentication") === true &&
+      !evalRow.reason.includes("organization_rbac") &&
+      !evalRow.reason.includes("team_invitations"),
+    "RBAC and invitations are recognised as authorised by §4.2-CO12",
+  );
 
   // HeadSha Invariant Check: Subsequent Linear issue sync must NOT retroactively alter evaluation for prHeadSha!
   const previousEvalUpdatedAt = evalRow?.updatedAt;

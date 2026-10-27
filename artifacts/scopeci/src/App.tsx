@@ -3,12 +3,12 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
-  AlertTriangle,
   ArrowDown,
   ArrowRight,
   Check,
@@ -16,109 +16,51 @@ import {
   FileSignature,
   GitBranch,
   GitPullRequest,
-  Circle,
-  Inbox,
   Lock,
-  ShieldCheck,
-  ServerCog,
+  Plus,
+  RefreshCw,
   X,
 } from 'lucide-react';
-import { SiGithub, SiLinear } from 'react-icons/si';
 import { useCreateWaitlistSignup } from '@workspace/api-client-react';
 import { ErrorBoundary } from '@/components/error-boundary';
-import { Toaster } from '@/components/ui/toaster';
-import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
+import TryPage from '@/pages/try';
 import { Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
+import {
+  BASE,
+  Footer,
+  ICON_MARK,
+  Navbar,
+  PRIVACY_PATH,
+  TRY_PATH,
+  VendorMark,
+  anchor,
+  attribution,
+  track,
+  usePageMeta,
+} from './site';
 
-const queryClient = new QueryClient();
+// By default React Query pauses a mutation while the browser reports being
+// offline, which leaves the signup button spinning with no explanation. Let
+// it fail instead, so the form can say the connection is the problem.
+const queryClient = new QueryClient({
+  defaultOptions: { mutations: { networkMode: 'always' } },
+});
 
-const WORDMARK = '/assets/logo-wordmark.png';
-const ICON_MARK = '/assets/logo-icon.png';
 
-const PAGE_TITLE = 'ScopeCI — Commercial CI/CD for Software Agencies';
+const PAGE_TITLE = 'ScopeCI — Catch scope creep in pull requests';
 const PAGE_DESCRIPTION =
-  'ScopeCI is being built to check pull requests against what a client signed, so agencies catch unapproved work before it ships. It is not available yet; join the waitlist.';
+  'ScopeCI checks each pull request against the statement of work your client signed, so out-of-scope work is flagged before it merges. In development; join the waitlist.';
 
 const PRIVACY_TITLE = 'Privacy Policy — ScopeCI';
 const PRIVACY_DESCRIPTION =
   'What ScopeCI collects through its early-access waitlist, why, and how to have it removed.';
 
-/* Absolute paths, so in-page anchors also work from routes other than "/". */
-const BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
-const HOME = `${BASE}/`;
-const PRIVACY_PATH = `${BASE}/privacy`;
-const ADMIN_PATH = `${BASE}/admin/waitlist`;
-const anchor = (id: string) => `${BASE}/#${id}`;
-
-/* ------------------------------------------------------------------ */
-/* Attribution & lightweight analytics                                 */
-/* ------------------------------------------------------------------ */
-
-/** Captured once on page load — stays constant for the session. */
-const UTM_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'] as const;
-
-interface Attribution {
-  utmSource: string | null;
-  utmMedium: string | null;
-  utmCampaign: string | null;
-  utmContent: string | null;
-  utmTerm: string | null;
-  referrer: string | null;
-}
-
-function captureAttribution(): Attribution {
-  const params = new URLSearchParams(window.location.search);
-  return {
-    utmSource: params.get('utm_source'),
-    utmMedium: params.get('utm_medium'),
-    utmCampaign: params.get('utm_campaign'),
-    utmContent: params.get('utm_content'),
-    utmTerm: params.get('utm_term'),
-    referrer: document.referrer || null,
-  };
-}
-
-/** Module-level singleton — read once, never mutated. */
-const attribution = captureAttribution();
-
-/**
- * Fire-and-forget analytics. Uses sendBeacon when available so events
- * survive page unloads; falls back to a detached fetch. Never blocks
- * rendering or throws.
- */
-function track(event: string): void {
-  try {
-    const payload = JSON.stringify({
-      event,
-      source: attribution.utmSource,
-      medium: attribution.utmMedium,
-      campaign: attribution.utmCampaign,
-      referrer: attribution.referrer,
-      landingPage: window.location.pathname,
-    });
-
-    if (navigator.sendBeacon) {
-      const blob = new Blob([payload], { type: 'application/json' });
-      navigator.sendBeacon(`${BASE}/api/events`, blob);
-    } else {
-      fetch(`${BASE}/api/events`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: payload,
-        keepalive: true,
-      }).catch(() => {});
-    }
-  } catch {
-    // Analytics must never break the page.
-  }
-}
+const ADMIN_API = `${BASE}/api/admin`;
 
 /** One-shot scroll depth observers. */
 function useScrollDepth() {
   useEffect(() => {
-    if (prefersReducedMotion()) return;
-
     const fired = { 50: false, 90: false };
 
     const onScroll = () => {
@@ -144,38 +86,6 @@ function useScrollDepth() {
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
-}
-
-/** Keeps the document title, description and canonical in step with the route. */
-function usePageMeta(title: string, description: string) {
-  useEffect(() => {
-    document.title = title;
-    const setMeta = (selector: string, value: string) => {
-      document.querySelector(selector)?.setAttribute('content', value);
-    };
-    setMeta('meta[name="description"]', description);
-    setMeta('meta[property="og:title"]', title);
-    setMeta('meta[property="og:description"]', description);
-    setMeta('meta[property="og:url"]', window.location.origin + window.location.pathname);
-    setMeta(
-      'meta[property="og:image"]',
-      `${window.location.origin}${BASE}/assets/logo-with-bg-and-wordmark.png`,
-    );
-    setMeta('meta[name="twitter:title"]', title);
-    setMeta('meta[name="twitter:description"]', description);
-    setMeta(
-      'meta[name="twitter:image"]',
-      `${window.location.origin}${BASE}/assets/logo-with-bg-and-wordmark.png`,
-    );
-
-    let canonical = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
-    if (!canonical) {
-      canonical = document.createElement('link');
-      canonical.rel = 'canonical';
-      document.head.appendChild(canonical);
-    }
-    canonical.href = window.location.origin + window.location.pathname;
-  }, [title, description]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -240,140 +150,31 @@ function useTimeline(delays: readonly number[], enabled: boolean) {
   return step;
 }
 
-function Reveal({
-  children,
-  className = '',
-  delay = 0,
-  as: Tag = 'div',
-}: {
-  children: ReactNode;
-  className?: string;
-  delay?: number;
-  as?: 'div' | 'section' | 'header' | 'li';
-}) {
-  const [ref, inView] = useInView<HTMLDivElement>('0px 0px -8% 0px');
-  return (
-    <Tag
-      ref={ref as never}
-      className={`reveal ${inView ? 'is-visible' : ''} ${className}`.trim()}
-      style={delay ? ({ '--reveal-delay': `${delay}ms` } as React.CSSProperties) : undefined}
-    >
-      {children}
-    </Tag>
-  );
-}
-
 /* ------------------------------------------------------------------ */
-/* Vendor marks                                                        */
+/* Hero: the pull request, and what ScopeCI adds to it                 */
 /* ------------------------------------------------------------------ */
 
-/**
- * Official GitHub / Linear marks (Simple Icons paths via react-icons),
- * drawn in `currentColor` so they sit inside the ScopeCI palette. They name the
- * tools ScopeCI is being built for. No partnership is implied. Jira is not
- * supported, so its mark is not shown.
- */
-function VendorMark({
-  name,
-  size = 14,
-}: {
-  name: 'github' | 'linear' | 'scopeci';
-  size?: number;
-}) {
-  if (name === 'scopeci') {
-    return (
-      <img
-        className="vendor-mark"
-        src={ICON_MARK}
-        alt=""
-        width={size}
-        height={size}
-        decoding="async"
-      />
-    );
-  }
-  const Mark = name === 'github' ? SiGithub : SiLinear;
-  return <Mark className="vendor-mark" size={size} aria-hidden="true" focusable="false" />;
-}
-
-function StackMarks({ size = 15 }: { size?: number }) {
-  return (
-    <span className="stack-marks" aria-hidden="true">
-      <VendorMark name="github" size={size} />
-      <VendorMark name="linear" size={size} />
-    </span>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Navigation                                                          */
-/* ------------------------------------------------------------------ */
-
-function Navbar() {
-  const [scrolled, setScrolled] = useState(false);
-
-  useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 8);
-    onScroll();
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
-  }, []);
-
-  return (
-    <header className={`masthead ${scrolled ? 'is-scrolled' : ''}`}>
-      <nav className="masthead-inner container" aria-label="Primary">
-        <a className="brand" href={anchor('top')} data-testid="link-brand">
-          <picture className="brand-logo">
-            <source media="(max-width: 719px)" srcSet={ICON_MARK} />
-            <img
-              src={WORDMARK}
-              alt="ScopeCI"
-              width="651"
-              height="217"
-              decoding="async"
-            />
-          </picture>
-        </a>
-
-        <div className="masthead-actions">
-          <a className="masthead-link" href={anchor('how-it-works')} data-testid="link-how-it-works">
-            How it works
-          </a>
-          <a className="masthead-link" href={anchor('waitlist')} data-testid="link-waitlist-nav">
-            Waitlist
-          </a>
-          <a className="button button-primary button-sm" href={anchor('waitlist')} data-testid="button-join-waitlist-nav">
-            Join waitlist
-            <ArrowRight size={14} aria-hidden="true" />
-          </a>
-        </div>
-      </nav>
-    </header>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Hero product surface                                                */
-/* ------------------------------------------------------------------ */
-
-/* checking -> sow -> linear -> github -> verdict -> impact -> action.
-   The whole sequence lands in ~1.4s, then the surface stays still. */
-const REVIEW_STEPS = [140, 400, 600, 800, 1000, 1180, 1360] as const;
+/* queued -> checking -> sow -> linear -> files -> verdict.
+   The whole sequence lands in about a second, then the surface stays still. */
+const REVIEW_STEPS = [160, 420, 620, 820, 1040] as const;
 
 const EVIDENCE_ROWS = [
-  { source: 'SOW', mark: 'sow', value: '§4.2 Authentication', result: 'no match', tone: 'bad' },
-  { source: 'LINEAR', mark: 'linear', value: 'ENG-184', result: 'linked', tone: 'ok' },
-  { source: 'GITHUB', mark: 'github', value: 'PR #1842', result: 'read', tone: 'ok' },
+  { source: 'SOW', value: '§4.2 User authentication', result: 'excludes this', tone: 'bad' },
+  { source: 'Linear', value: 'ENG-184', result: 'linked', tone: 'ok' },
+  { source: 'Files', value: 'roles.ts, rbac.ts, invitations.ts', result: 'matched', tone: 'bad' },
 ] as const;
 
-function CommercialReviewSurface() {
+/**
+ * An illustration, not a screenshot: the states and wording match what the
+ * evaluator returns for this scenario in review mode (see
+ * lib/commercial-engine/fixtures/golden/scope-expansion).
+ */
+function PullRequestCheck() {
   const [ref, inView] = useInView<HTMLDivElement>('0px');
   const step = useTimeline(REVIEW_STEPS, inView);
-  const [requested, setRequested] = useState(false);
 
   const checking = step >= 1 && step < 5;
   const resolved = step >= 5;
-  const actionable = step >= 7;
 
   return (
     <figure className="surface" ref={ref} data-testid="product-preview">
@@ -387,12 +188,11 @@ function CommercialReviewSurface() {
         </div>
 
         <div className="window-body">
-          {/* Left: the pull request as GitHub shows it. */}
           <div className="window-main">
             <div className="pr-head">
-              <span className={`pr-state mono ${resolved ? 'is-held' : ''}`}>
+              <span className="pr-state mono">
                 <GitPullRequest size={12} aria-hidden="true" />
-                {resolved ? 'On hold' : 'Open'}
+                Open
               </span>
               <p className="pr-title">Add organization-level permissions</p>
               <p className="pr-meta mono">
@@ -407,7 +207,7 @@ function CommercialReviewSurface() {
               </p>
             </div>
 
-            <ul className="checks mono" aria-label="Merge checks">
+            <ul className="checks mono" aria-label="Checks on this pull request">
               <li>
                 <span className="check-icon ok" aria-hidden="true"><Check size={10} /></span>
                 <span className="check-name">build</span>
@@ -420,512 +220,267 @@ function CommercialReviewSurface() {
               </li>
               <li className={resolved ? 'is-failed' : 'is-running'}>
                 <span className="check-icon" aria-hidden="true">
-                  {resolved ? <X size={10} /> : <span className="check-pending" aria-hidden="true">…</span>}
+                  {resolved ? <X size={10} /> : <span className="check-pending">…</span>}
                 </span>
                 <span className="check-name">scopeci / commercial</span>
                 <span className="check-result">
-                  {resolved ? 'not authorized' : checking ? 'checking scope' : 'queued'}
+                  {resolved ? 'action required' : checking ? 'checking' : 'queued'}
                 </span>
               </li>
             </ul>
-
-              <ul className="evidence-rows mono" aria-label="Evidence resolved by ScopeCI">
-                {EVIDENCE_ROWS.map((row, index) => (
-                  <li key={row.source} className={step >= index + 2 ? 'is-resolved' : ''}>
-                    <span className="evidence-source">
-                      {row.mark === 'sow' ? (
-                        <FileSignature size={12} aria-hidden="true" />
-                      ) : (
-                        <VendorMark name={row.mark} size={12} />
-                      )}
-                      {row.source}
-                    </span>
-                    <span className="evidence-value">{row.value}</span>
-                    <span className={`evidence-result ${row.tone}`}>
-                      {step >= index + 2 ? row.result : 'resolving'}
-                    </span>
-                  </li>
-                ))}
-              </ul>
           </div>
 
-          {/* Right: what ScopeCI adds to it. */}
           <div className="review">
             <div className="review-head">
               <span className="review-brand mono">
                 <img src={ICON_MARK} alt="" width="288" height="270" decoding="async" />
                 ScopeCI
               </span>
-              <span className="review-label mono">Commercial review</span>
+              <span className="review-label mono">Scope check</span>
             </div>
 
-            <p
-              className={`verdict mono ${resolved ? 'is-blocked' : ''}`}
-              data-testid="status-commercial-review"
-            >
-              {resolved ? 'Not authorized' : 'Reviewing'}
+            <p className={`verdict mono ${resolved ? 'is-blocked' : ''}`} data-testid="status-commercial-review">
+              {resolved ? 'Change required' : 'Checking against the SOW'}
             </p>
             <p className="verdict-note">
               {resolved
-                ? 'This work extends beyond the approved project scope.'
-                : 'Comparing this pull request against the approved project scope.'}
+                ? '§4.2 of the statement of work excludes organization roles and team invitations. This pull request adds both.'
+                : 'Reading the statement of work, the linked issue and the changed files.'}
             </p>
 
-
-            <div className={`impact ${step >= 6 ? 'is-shown' : ''}`}>
-              <div>
-                <p className="impact-label mono">Estimated impact</p>
-                <p className="impact-value mono">{step >= 6 ? '18–24 hrs' : 'calculating'}</p>
-              </div>
-              <p className="impact-amount mono">{step >= 6 ? '$2,700–$3,600' : '—'}</p>
-            </div>
+            <ul className="evidence-rows mono" aria-label="What the result is based on">
+              {EVIDENCE_ROWS.map((row, index) => (
+                <li key={row.source} className={step >= index + 2 ? 'is-resolved' : ''}>
+                  <span className="evidence-source">{row.source}</span>
+                  <span className="evidence-value">{row.value}</span>
+                  <span className={`evidence-result ${row.tone}`}>
+                    {step >= index + 2 ? row.result : '…'}
+                  </span>
+                </li>
+              ))}
+            </ul>
 
             <div className="review-row mono">
-              <span>Change order</span>
-              <strong>{actionable ? 'Not approved' : '—'}</strong>
+              <span>Mode</span>
+              <strong>Review · needs a decision before merge</strong>
             </div>
-
-            <button
-              type="button"
-              className="button button-quiet review-action"
-              disabled={!actionable || requested}
-              onClick={() => setRequested(true)}
-              data-testid="button-request-approval"
-            >
-              {requested ? 'Approval requested' : 'Request approval'}
-            </button>
           </div>
         </div>
       </div>
 
       <figcaption className="sr-only">
-        A ScopeCI commercial review of pull request #1842, Add organization-level
-        permissions. Build and unit tests pass, but the commercial check resolves to
-        not authorized: the work has no match in SOW §4.2, is linked to Linear issue
-        ENG-184 and to PR #1842, and carries an estimated impact of 18 to 24 engineer
-        hours, or $2,700 to $3,600. No change order is approved, so the merge is blocked.
+        Example: pull request #1842, Add organization-level permissions. Build and
+        unit tests pass. The ScopeCI check returns change required: section 4.2 of
+        the statement of work excludes organization roles and team invitations, and
+        the changed files add both. The pull request is linked to Linear issue
+        ENG-184. In review mode, someone has to decide before it merges.
       </figcaption>
     </figure>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Sections                                                            */
-/* ------------------------------------------------------------------ */
-
-function HeroGradientBars() {
-  return (
-    <div className="hero-gradient-bars" aria-hidden="true">
-      {Array.from({ length: 23 }, (_, index) => (
-        <span key={index} />
-      ))}
-    </div>
   );
 }
 
 function Hero() {
   return (
     <section className="hero" id="top" aria-labelledby="hero-title">
-      <HeroGradientBars />
       <div className="container hero-inner">
-        <Reveal className="hero-lead">
-          <div className="hero-trust">
+        <div className="hero-lead">
+          <p className="hero-status">
             <span className="stack-marks" aria-hidden="true">
               <VendorMark name="github" size={14} />
               <VendorMark name="linear" size={14} />
             </span>
-            <span>In development, for agencies on GitHub and Linear.</span>
-          </div>
+            In development, for agencies on GitHub and Linear
+          </p>
 
           <h1 className="hero-title" id="hero-title">
-            Ship only work your client <em>approved.</em>
+            Catch scope creep in the pull request, not on the invoice.
           </h1>
 
           <p className="hero-lede">
-            ScopeCI is being built to connect your contract, your Linear issues and
-            your GitHub pull requests, so unapproved client work gets caught before it
-            reaches production. It is not available yet.
+            ScopeCI checks each pull request against the statement of work your client
+            signed. When a branch builds something the contract leaves out, the check
+            names the clause, the issue and the files, while it's still a change order
+            and not free work.
+          </p>
+          <p className="hero-note">
+            It doesn't run on real repositories yet, but the check is real: try it on your own SOW.
           </p>
 
           <div className="hero-actions">
             <a
               className="button button-primary"
-              href={anchor('waitlist')}
-              data-testid="button-join-waitlist-hero"
+              href={TRY_PATH}
+              data-testid="button-try-hero"
               onClick={() => track('hero_cta_click')}
             >
-              Join the waitlist
+              Try it on your SOW
               <ArrowRight size={15} aria-hidden="true" />
             </a>
-            <a
-              className="button button-ghost"
-              href={anchor('how-it-works')}
-              data-testid="link-see-how-it-works"
-            >
-              See how it works
+            <a className="button button-ghost" href={anchor('waitlist')} data-testid="button-join-waitlist-hero">
+              Join the waitlist
               <ArrowDown size={15} aria-hidden="true" />
             </a>
           </div>
-        </Reveal>
-      </div>
-    </section>
-  );
-}
+        </div>
 
-const GAP_CHAIN = [
-  { name: 'Signed SOW', detail: 'what was sold', domain: 'Commercial', mark: 'sow' },
-  { name: 'Client request', detail: 'new work enters', domain: 'Commercial', mark: 'request' },
-  { name: 'Linear', detail: 'work is planned', domain: 'Engineering', mark: 'tracker' },
-  { name: 'GitHub', detail: 'what was built', domain: 'Engineering', mark: 'github' },
-  { name: 'ScopeCI', detail: 'Commercial authorization', domain: 'Control', mark: 'scopeci' },
-  { name: 'Production', detail: 'approved work ships', domain: 'Release', mark: 'production' },
-] as const;
-
-/** Renders the real product mark for a stage, or a neutral glyph where the
- *  stage is not a specific vendor. */
-function StageMark({ mark }: { mark: string }) {
-  if (mark === 'github' || mark === 'scopeci') {
-    return <VendorMark name={mark} size={15} />;
-  }
-  if (mark === 'tracker') {
-    return <VendorMark name="linear" size={15} />;
-  }
-  if (mark === 'sow') return <FileSignature size={15} aria-hidden="true" />;
-  if (mark === 'request') return <Inbox size={15} aria-hidden="true" />;
-  return <ServerCog size={15} aria-hidden="true" />;
-}
-
-function TheGap() {
-  return (
-    <section className="section section-gap" id="the-gap" aria-labelledby="gap-title">
-      <div className="container split">
-        <Reveal className="split-lede">
-          <p className="eyebrow">The gap</p>
-          <h2 className="section-title" id="gap-title">
-            The contract knows what was sold.
-            <br />
-            GitHub knows what was built.
-          </h2>
-          <p className="section-lede">The problem lives between them.</p>
-        </Reveal>
-
-        <Reveal className="split-body" delay={80}>
-          <ol className="chain" aria-label="Where work travels, from signed scope to production">
-            {GAP_CHAIN.map((node) => {
-              const isControl = node.name === 'ScopeCI';
-              return (
-                <li
-                  key={node.name}
-                  className={`chain-row ${isControl ? 'is-control' : ''} ${
-                    node.name === 'Production' ? 'is-terminal' : ''
-                  }`}
-                >
-                  <span className="chain-rail" aria-hidden="true">
-                    <span className="chain-node" />
-                  </span>
-                  <span className="chain-mark" aria-hidden="true">
-                    <StageMark mark={node.mark} />
-                  </span>
-                  <span className="chain-name">{node.name}</span>
-                  <span className="chain-detail">{node.detail}</span>
-                  <span className="chain-domain">{node.domain}</span>
-                </li>
-              );
-            })}
-          </ol>
-        </Reveal>
-      </div>
-    </section>
-  );
-}
-
-const CAPABILITIES = [
-  {
-    num: '01',
-    title: 'Understand the contract',
-    body: 'Turn signed SOWs and project agreements into a structured scope baseline.',
-    detail: 'Clauses, deliverables, and what is included or excluded.',
-  },
-  {
-    num: '02',
-    title: 'Trace the work',
-    body: 'Connect contractual scope to actual project work.',
-    detail: 'Follow a request from the backlog all the way to the pull request.',
-  },
-  {
-    num: '03',
-    title: 'Control the merge',
-    body: 'Require commercial approval before unauthorized work ships.',
-    detail: "Observe, review or enforce, set by the agency's policy.",
-  },
-] as const;
-
-const CAPABILITY_INTERVAL = 4800;
-const CAPABILITY_ICONS = [FileSignature, GitBranch, ShieldCheck] as const;
-
-function WhatScopeCIDoes() {
-  const [sectionRef, inView] = useInView<HTMLElement>('-15% 0px -15% 0px');
-  const [activeCapability, setActiveCapability] = useState(0);
-  const [isCapabilityPaused, setIsCapabilityPaused] = useState(false);
-
-  useEffect(() => {
-    if (!inView || isCapabilityPaused || prefersReducedMotion()) return;
-    const timer = window.setInterval(() => {
-      setActiveCapability((current) => (current + 1) % CAPABILITIES.length);
-    }, CAPABILITY_INTERVAL);
-    return () => window.clearInterval(timer);
-  }, [inView, isCapabilityPaused]);
-
-  return (
-    <section
-      className="section section-does"
-      id="how-it-works"
-      ref={sectionRef}
-      aria-labelledby="does-title"
-    >
-      <div className="container split">
-        <Reveal className="split-lede">
-          <p className="eyebrow">What ScopeCI is being built to do</p>
-          <h2 className="section-title" id="does-title">
-            A commercial control layer for engineering.
-          </h2>
-        </Reveal>
-
-        <div
-          className={`split-body capability-list ${inView ? 'is-visible' : ''} ${isCapabilityPaused ? 'is-paused' : ''}`}
-          onMouseEnter={() => setIsCapabilityPaused(true)}
-          onMouseLeave={() => setIsCapabilityPaused(false)}
-          onFocusCapture={() => setIsCapabilityPaused(true)}
-          onBlurCapture={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-              setIsCapabilityPaused(false);
-            }
-          }}
-        >
-          {CAPABILITIES.map((item, index) => {
-            const CapabilityIcon = CAPABILITY_ICONS[index];
-            return (
-            <div
-              className="capability-wrap"
-              key={item.num}
-              style={{ '--capability-enter-delay': `${index * 90}ms` } as React.CSSProperties}
-            >
-              <button
-                type="button"
-                className={`capability ${activeCapability === index ? 'is-active' : ''}`}
-                aria-pressed={activeCapability === index}
-                onClick={() => {
-                  setActiveCapability(index);
-                  track(`capability_${item.num}_selected`);
-                }}
-                data-testid={`article-work-${item.num}`}
-                style={{ '--capability-duration': `${CAPABILITY_INTERVAL}ms` } as React.CSSProperties}
-              >
-                <span className="capability-index mono">{item.num}</span>
-                <div className="capability-body">
-                  <div className="capability-heading">
-                    <h3>{item.title}</h3>
-                    <span className="capability-glyph" aria-hidden="true">
-                      <CapabilityIcon size={15} strokeWidth={1.7} />
-                    </span>
-                  </div>
-                  <p>{item.body}</p>
-                  <p className="capability-detail">{item.detail}</p>
-                </div>
-                <ArrowRight className="capability-arrow" size={16} aria-hidden="true" />
-              </button>
-            </div>
-            );
-          })}
+        <div className="hero-stage">
+          <PullRequestCheck />
         </div>
       </div>
     </section>
   );
 }
 
-/* The same work item, and the commercial state it carries at each stage. */
-const WORK_STATES = [
-  { stage: 'Signed SOW', ref: '§4.2 Authentication', state: 'approved', mark: 'sow' },
-  { stage: 'Linear', ref: 'ENG-184', state: 'review', mark: 'tracker' },
-  { stage: 'GitHub', ref: 'PR #1842', state: 'needs', mark: 'github' },
-  { stage: 'Commercial check', ref: 'scopeci / commercial', state: 'blocked', mark: 'scopeci' },
-  { stage: 'Approval', ref: 'Change order', state: 'needs', mark: 'approval' },
-  { stage: 'Ship', ref: 'production', state: 'blocked', mark: 'production' },
-] as const;
+/* ------------------------------------------------------------------ */
+/* How it works                                                        */
+/* ------------------------------------------------------------------ */
 
-type StateKey = 'approved' | 'review' | 'needs' | 'blocked';
-
-const STATE_META: Record<StateKey, { label: string; icon: ReactNode }> = {
-  approved: { label: 'Approved', icon: <Check size={11} aria-hidden="true" /> },
-  review: { label: 'Review', icon: <Circle size={9} aria-hidden="true" /> },
-  needs: { label: 'Needs approval', icon: <AlertTriangle size={11} aria-hidden="true" /> },
-  blocked: { label: 'Not authorized', icon: <X size={11} aria-hidden="true" /> },
-};
-
-const STATE_STEPS = [120, 260, 400, 540, 680, 820] as const;
-
-function CommercialState() {
-  const [ref, inView] = useInView<HTMLDivElement>('-10% 0px -18% 0px');
-  const step = useTimeline(STATE_STEPS, inView);
-
+function HowItWorks() {
   return (
-    <section className="section section-state" aria-labelledby="state-title">
+    <section className="section section-how" id="how-it-works" aria-labelledby="how-title">
       <div className="container">
-        <Reveal className="state-lede">
-          <p className="eyebrow">Commercial state</p>
-          <h2 className="section-title" id="state-title">
-            The commercial state follows the work.
-          </h2>
-          <p className="section-lede">Every piece of work carries one.</p>
-        </Reveal>
+        <h2 className="section-title" id="how-title">How it works</h2>
+        <p className="section-lede">
+          Three inputs you already have, one result where your team already looks.
+        </p>
 
-        <Reveal className="state-body" delay={80}>
-          <div className="state-panel" ref={ref}>
-            <div className="state-panel-head mono">
-              <span className="state-panel-label">Work item</span>
-              <span className="state-panel-ref">
-                ENG-184 · Add organization-level permissions
-              </span>
+        <ol className="steps">
+          <li className="step">
+            <span className="step-num mono">1</span>
+            <h3>Add the statement of work</h3>
+            <p>
+              ScopeCI splits it into clauses and records what each one includes and
+              excludes. Markdown for now.
+            </p>
+            <div className="step-artifact mono" aria-label="Excerpt from a statement of work">
+              <p className="md-heading">### §4.2 User authentication</p>
+              <p>Email and password sign-in, sessions, password reset.</p>
+              <p className="md-strong">**Explicit exclusions**</p>
+              <p className="md-bullet">- Organization roles</p>
+              <p className="md-bullet">- Team invitations</p>
             </div>
+          </li>
 
-            <ol className="state-rows mono" aria-label="Commercial state at each stage">
-              {WORK_STATES.map((row, index) => {
-                const meta = STATE_META[row.state as StateKey];
-                const shown = step > index;
-                return (
-                  <li
-                    key={row.stage}
-                    className={`state-row ${shown ? 'is-shown' : ''}`}
-                    data-testid={`state-row-${index + 1}`}
-                  >
-                    <span className="state-rail" aria-hidden="true">
-                      <span className="state-node" />
-                    </span>
-                    <span className="state-mark" aria-hidden="true">
-                      {row.mark === 'approval' ? (
-                        <FileSignature size={14} aria-hidden="true" />
-                      ) : (
-                        <StageMark mark={row.mark} />
-                      )}
-                    </span>
-                    <span className="state-stage">{row.stage}</span>
-                    <span className="state-ref">{row.ref}</span>
-                    <span className={`state-badge is-${row.state}`}>
-                      {shown ? (
-                        <>
-                          {meta.icon}
-                          {meta.label}
-                        </>
-                      ) : (
-                        <span className="state-pending">resolving</span>
-                      )}
-                    </span>
-                  </li>
-                );
-              })}
-            </ol>
-
-            <div className="state-legend mono" aria-hidden="true">
-              {(Object.keys(STATE_META) as StateKey[]).map((key) => (
-                <span key={key} className={`state-badge is-${key}`}>
-                  {STATE_META[key].icon}
-                  {STATE_META[key].label}
-                </span>
-              ))}
+          <li className="step">
+            <span className="step-num mono">2</span>
+            <h3>Open pull requests as usual</h3>
+            <p>
+              On every push it reads which files changed and the Linear issue linked to
+              the branch. It never checks out or runs your code.
+            </p>
+            <div className="step-artifact mono" aria-label="Files changed in the pull request">
+              <p className="artifact-head">
+                <VendorMark name="linear" size={11} />
+                ENG-184 · feature/org-permissions
+              </p>
+              <ul className="file-list">
+                <li><span className="file-status is-added">A</span><span>src/auth/roles.ts</span><span className="pos">+24</span></li>
+                <li><span className="file-status is-added">A</span><span>src/middleware/rbac.ts</span><span className="pos">+18</span></li>
+                <li><span className="file-status">M</span><span>src/routes/invitations.ts</span><span className="pos">+61</span></li>
+              </ul>
+              <p className="artifact-foot">and 11 more files</p>
             </div>
-          </div>
-        </Reveal>
+          </li>
+
+          <li className="step">
+            <span className="step-num mono">3</span>
+            <h3>Read the result on the PR</h3>
+            <p>
+              One check and one comment: in scope, change required or needs review,
+              with the clause that decided it.
+            </p>
+            <div className="step-artifact mono" aria-label="The ScopeCI check on the pull request">
+              <p className="artifact-check">
+                <span className="check-icon is-alert" aria-hidden="true"><X size={10} /></span>
+                <span>scopeci / commercial</span>
+                <strong>Change required</strong>
+              </p>
+              <p>§4.2 excludes organization roles, team invitations.</p>
+              <p className="artifact-foot">Next: send a change order, or approve it as in scope.</p>
+            </div>
+          </li>
+        </ol>
       </div>
     </section>
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* What the result is based on                                         */
+/* ------------------------------------------------------------------ */
+
 function Evidence() {
   return (
     <section className="section section-evidence" id="evidence" aria-labelledby="evidence-title">
       <div className="container">
-        <Reveal className="evidence-lede">
-          <p className="eyebrow">Evidence</p>
-          <h2 className="section-title" id="evidence-title">Evidence, not guesses.</h2>
+        <div className="evidence-lede">
+          <h2 className="section-title" id="evidence-title">What the result is based on</h2>
           <p className="section-lede">
-            Every decision connects back to the contract and the work being built.
+            The contract on one side, the work on the other, and the clause that joins
+            them. A project manager can check it in a minute, and so can your client.
           </p>
-        </Reveal>
+        </div>
 
-        <Reveal className="evidence-body" delay={80}>
+        <div className="evidence-body">
           <div className="ledger" data-testid="evidence-panel">
             <div className="ledger-grid">
               <div className="ledger-pane">
-                <p className="pane-label mono">Project scope</p>
+                <p className="pane-label mono">Statement of work</p>
                 <p className="pane-subject mono">
                   <FileSignature size={14} aria-hidden="true" />
-                  Northstar / API
+                  §4.2 User authentication
                 </p>
 
                 <p className="pane-group mono">Included</p>
                 <ul className="scope-items mono">
-                  <li className="is-included">
-                    <Check size={12} aria-hidden="true" /> User authentication
-                  </li>
-                  <li className="is-included">
-                    <Check size={12} aria-hidden="true" /> Profile management
-                  </li>
-                  <li className="is-included">
-                    <Check size={12} aria-hidden="true" /> Account settings
-                  </li>
+                  <li className="is-included"><Check size={12} aria-hidden="true" /> Email and password sign-in</li>
+                  <li className="is-included"><Check size={12} aria-hidden="true" /> Sessions and sign-out</li>
+                  <li className="is-included"><Check size={12} aria-hidden="true" /> Password reset</li>
                 </ul>
 
                 <p className="pane-group mono">Excluded</p>
                 <ul className="scope-items mono">
-                  <li className="is-excluded">
-                    <X size={12} aria-hidden="true" /> Organization roles
-                  </li>
-                  <li className="is-excluded">
-                    <X size={12} aria-hidden="true" /> Team invitations
-                  </li>
+                  <li className="is-excluded"><X size={12} aria-hidden="true" /> Organization roles</li>
+                  <li className="is-excluded"><X size={12} aria-hidden="true" /> Team invitations</li>
                 </ul>
               </div>
 
               {/* The seam carries the finding that connects the two sides. */}
               <div className="ledger-seam">
                 <span className="seam-line" aria-hidden="true" />
-                <span className="seam-label">Scope expansion</span>
+                <span className="seam-label">Excluded work</span>
                 <span className="seam-line" aria-hidden="true" />
               </div>
 
               <div className="ledger-pane">
-                <p className="pane-label mono">Engineering</p>
+                <p className="pane-label mono">Pull request</p>
                 <p className="pane-subject mono">
-                  <VendorMark name="linear" size={14} />
-                  ENG-184
+                  <VendorMark name="github" size={14} />
+                  #1842
                 </p>
                 <p className="pane-headline">Add organization-level permissions</p>
 
                 <dl className="pane-facts mono">
                   <div>
+                    <dt>Linked issue</dt>
+                    <dd><VendorMark name="linear" size={12} />ENG-184</dd>
+                  </div>
+                  <div>
                     <dt>Changed files</dt>
                     <dd>14</dd>
                   </div>
                   <div>
-                    <dt>Estimated effort</dt>
-                    <dd>18–24 hrs</dd>
-                  </div>
-                  <div>
-                    <dt>Pull request</dt>
-                    <dd>
-                      <VendorMark name="github" size={12} />
-                      #1842
-                    </dd>
+                    <dt>Matches</dt>
+                    <dd>Organization roles, team invitations</dd>
                   </div>
                 </dl>
 
                 <p className="pane-flag mono" data-testid="status-scope-expansion">
-                  Matches an excluded deliverable.
+                  Both match an exclusion in §4.2.
                 </p>
               </div>
             </div>
 
-            {/* Trace lives inside the panel, so both sides read as one record. */}
             <div className="ledger-trace">
               <span className="trace-label mono">Trace</span>
               <ol className="trace mono" aria-label="Trace from contract clause to pull request">
@@ -935,146 +490,71 @@ function Evidence() {
               </ol>
             </div>
           </div>
-        </Reveal>
+        </div>
       </div>
     </section>
   );
 }
 
-function CommercialCheck() {
-  const [requested, setRequested] = useState(false);
+/* ------------------------------------------------------------------ */
+/* Questions                                                           */
+/* ------------------------------------------------------------------ */
 
+const QUESTIONS: ReadonlyArray<{ q: string; a: string }> = [
+  {
+    q: 'Does an AI model read our contracts?',
+    a: "No. The check is plain rules that compare clause text with the changed files and the linked issue, so no language model sees your contract or your code. The trade-off is that it can only be as precise as the SOW, and the rules are still being taught to read SOWs beyond our test projects.",
+  },
+  {
+    q: "Will it block my team's merges?",
+    a: 'Only if you ask it to. Each repository starts in observe mode, where the check reports and never changes merge status. Review mode asks for a decision on flagged pull requests. Enforce mode fails the check, so branch protection can hold the merge until a change order is approved.',
+  },
+  {
+    q: 'What access does it need?',
+    a: 'A GitHub App that reads pull requests and repository contents and writes checks and pull request comments, plus a Linear connection to read the issue linked to each branch. It asks for no admin, secrets or workflow permissions.',
+  },
+  {
+    q: 'We use Jira, GitLab or Bitbucket.',
+    a: "Then it won't work for you yet. GitHub and Linear are the only integrations being built.",
+  },
+  {
+    q: 'What will it cost?',
+    a: "There's no price yet. We'd rather set one after a few agencies have used it on real client projects.",
+  },
+  {
+    q: 'When can we use it?',
+    a: "You can try the check on your own SOW today, on this site. Running it on your real repositories is next: we'll email the waitlist when the first pilot agencies can connect GitHub.",
+  },
+];
+
+function Questions() {
   return (
-    <section className="section section-check" aria-labelledby="check-title">
-      <div className="container split split-reverse">
-        <Reveal className="split-lede">
-          <p className="eyebrow">Merge check</p>
-          <h2 className="section-title" id="check-title">
-            A merge should know what the contract says.
-          </h2>
+    <section className="section section-faq" id="questions" aria-labelledby="questions-title">
+      <div className="container split">
+        <div className="split-lede">
+          <h2 className="section-title" id="questions-title">Questions</h2>
           <p className="section-lede">
-            The commercial state sits with the pull request, where the decision is
-            actually made — not in a spreadsheet discovered at invoicing.
+            The things worth knowing before you put your email down.
           </p>
-        </Reveal>
+        </div>
 
-        <Reveal className="split-body" delay={80}>
-          <div className="check-card" data-testid="commercial-check-panel">
-            <div className="check-card-head">
-              <span className="review-brand mono">
-                <img src={ICON_MARK} alt="" width="288" height="270" decoding="async" />
-                ScopeCI commercial check
-              </span>
-              <span className="check-card-ref mono">
-                <VendorMark name="github" size={12} />
-                northstar / api
-              </span>
-            </div>
-
-            <div className="check-card-body">
-              <p className="check-card-ref-line mono">Pull request #1842</p>
-              <p className="check-card-title">Add organization-level permissions</p>
-
-              <p className="check-verdict mono">
-                <X size={13} aria-hidden="true" />
-                Not authorized
-              </p>
-
-              <dl className="check-table mono">
-                <div>
-                  <dt>SOW match</dt>
-                  <dd className="is-bad">No</dd>
-                </div>
-                <div>
-                  <dt>Change order</dt>
-                  <dd>Not approved</dd>
-                </div>
-                <div>
-                  <dt>Policy</dt>
-                  <dd>Block on unapproved scope</dd>
-                </div>
-              </dl>
-
-              <div className="check-impact">
-                <div>
-                  <p className="impact-label mono">Estimated impact</p>
-                  <p className="impact-value mono">18–24 engineer hours</p>
-                </div>
-                <p className="impact-amount mono">$2.7k–$3.6k</p>
-              </div>
-
-              <button
-                type="button"
-                className="button button-quiet check-action"
-                onClick={() => setRequested(true)}
-                disabled={requested}
-                data-testid="button-request-commercial-approval"
-              >
-                {requested ? 'Approval requested' : 'Request approval'}
-              </button>
-
-              <p className="check-foot mono">
-                Checked 3s ago · scopeci / commercial
-              </p>
-            </div>
-          </div>
-        </Reveal>
-      </div>
-    </section>
-  );
-}
-
-const DIFFERENTIATORS = [
-  {
-    title: 'Works with your stack',
-    body: 'Keep GitHub, Linear and the workflows your team already uses. Jira is not supported.',
-    glyph: 'stack',
-  },
-  {
-    title: 'Commercially aware',
-    body: 'Know whether engineering work is contractually approved before time disappears into it.',
-    glyph: 'contract',
-  },
-  {
-    title: 'Engineering-native',
-    body: 'ScopeCI lives close to the work — from issue to pull request to merge.',
-    glyph: 'merge',
-  },
-] as const;
-
-function DifferentiatorGlyph({ type }: { type: (typeof DIFFERENTIATORS)[number]['glyph'] }) {
-  if (type === 'stack') {
-    return (
-      <span className="diff-glyph diff-glyph-stack" aria-hidden="true">
-        <StackMarks size={15} />
-      </span>
-    );
-  }
-
-  const Icon = type === 'contract' ? FileSignature : GitPullRequest;
-  return (
-    <span className={`diff-glyph diff-glyph-${type}`} aria-hidden="true">
-      <Icon size={15} strokeWidth={1.7} />
-    </span>
-  );
-}
-
-function Differentiator() {
-  return (
-    <section className="section section-diff" aria-labelledby="diff-title">
-      <div className="container">
-        <Reveal className="diff-head">
-          <h2 className="diff-title" id="diff-title">Not another project management tool.</h2>
-        </Reveal>
-        <Reveal className="diff-grid" delay={70}>
-          {DIFFERENTIATORS.map((item) => (
-            <div className="diff-item" key={item.title}>
-              <DifferentiatorGlyph type={item.glyph} />
-              <h3>{item.title}</h3>
-              <p>{item.body}</p>
-            </div>
+        <div className="split-body faq">
+          {QUESTIONS.map((item) => (
+            <details
+              className="faq-item"
+              key={item.q}
+              onToggle={(event) => {
+                if ((event.currentTarget as HTMLDetailsElement).open) track('faq_opened');
+              }}
+            >
+              <summary>
+                {item.q}
+                <Plus size={16} aria-hidden="true" />
+              </summary>
+              <p>{item.a}</p>
+            </details>
           ))}
-        </Reveal>
+        </div>
       </div>
     </section>
   );
@@ -1088,12 +568,22 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 type WaitlistState = 'idle' | 'submitting' | 'success' | 'duplicate';
 
+/** Turns a failed signup into one sentence the visitor can act on. */
+function signupErrorMessage(status: number | undefined): string {
+  if (status === 429) return 'Too many attempts from your network. Wait a minute, then try again.';
+  if (status === undefined) return "We couldn't reach ScopeCI. Check your connection and try again.";
+  return 'Something went wrong on our side. Try again in a minute.';
+}
+
 function Waitlist() {
   const [email, setEmail] = useState('');
   const [agency, setAgency] = useState('');
+  // Hidden from people (see .hp-field); a value means a bot filled every input.
+  const [trap, setTrap] = useState('');
   const [state, setState] = useState<WaitlistState>('idle');
   const [emailError, setEmailError] = useState('');
   const [formError, setFormError] = useState('');
+  const [savedEmail, setSavedEmail] = useState('');
 
   const createSignup = useCreateWaitlistSignup();
   const submitting = state === 'submitting';
@@ -1113,7 +603,7 @@ function Waitlist() {
         return;
       }
       if (trimmedEmail.length > 320 || !EMAIL_PATTERN.test(trimmedEmail)) {
-        setEmailError('Enter a valid work email address.');
+        setEmailError("That doesn't look like an email address.");
         return;
       }
       setEmailError('');
@@ -1127,10 +617,12 @@ function Waitlist() {
             email: trimmedEmail.toLowerCase(),
             agency: trimmedAgency ? trimmedAgency.slice(0, 160) : null,
             ...attribution,
-          } as never,
+            website_url_hp: trap || null,
+          },
         },
         {
           onSuccess: () => {
+            setSavedEmail(trimmedEmail.toLowerCase());
             setState('success');
             track('waitlist_success');
           },
@@ -1138,26 +630,25 @@ function Waitlist() {
             setState('idle');
             const status = error?.status;
             if (status === 409) {
+              setSavedEmail(trimmedEmail.toLowerCase());
               setState('duplicate');
               track('waitlist_duplicate');
               return;
             }
             if (status === 400) {
               setEmailError(
-                error?.data?.error ?? 'Enter a valid work email address.',
+                error?.data?.error ?? "That doesn't look like an email address.",
               );
               track('waitlist_error');
               return;
             }
-            setFormError(
-              "We couldn't save your request. Please try again in a moment.",
-            );
+            setFormError(signupErrorMessage(status));
             track('waitlist_error');
           },
         },
       );
     },
-    [agency, createSignup, email, submitting],
+    [agency, createSignup, email, submitting, trap],
   );
 
   const settled = state === 'success' || state === 'duplicate';
@@ -1165,45 +656,32 @@ function Waitlist() {
   return (
     <section className="waitlist" id="waitlist" aria-labelledby="waitlist-title">
       <div className="container split">
-        <Reveal className="split-lede">
-          <p className="eyebrow">Early access</p>
-          <h2 className="section-title" id="waitlist-title">
-            Put a commercial check in front of your next merge.
-          </h2>
+        <div className="split-lede">
+          <h2 className="section-title" id="waitlist-title">Join the waitlist</h2>
           <p className="section-lede">
-            ScopeCI is being built for software development agencies working on
-            fixed-price and milestone-based client projects.
+            For agencies doing fixed-price or milestone work on GitHub and Linear.
+            We'll email you when you can try it, and occasionally with progress.
           </p>
-        </Reveal>
+        </div>
 
-        <Reveal className="split-body" delay={80}>
+        <div className="split-body">
           <div className="waitlist-panel">
-            <div className="waitlist-panel-head mono">
-              <span className="review-brand">
-                <img src={ICON_MARK} alt="" width="288" height="270" decoding="async" />
-                ScopeCI
-              </span>
-              <span className="waitlist-panel-label">Early access request</span>
-            </div>
             {settled ? (
               <div className="settled" role="status" data-testid="waitlist-success">
                 <span className="settled-mark" aria-hidden="true">
                   <Check size={18} />
                 </span>
                 <h3>
-                  {state === 'duplicate'
-                    ? "You're already on the list."
-                    : "You're on the list."}
+                  {state === 'duplicate' ? "You're already on the list." : "You're on the list."}
                 </h3>
-                <p>We'll reach out when early access opens.</p>
-                <span className="settled-sig mono">ScopeCI</span>
+                <p>
+                  We'll write to <strong>{savedEmail}</strong> when early access opens.
+                </p>
               </div>
             ) : (
               <form className="waitlist-form" onSubmit={submit} noValidate>
                 <div className="field">
-                  <label className="mono" htmlFor="work-email">
-                    Work email
-                  </label>
+                  <label htmlFor="work-email">Work email</label>
                   <input
                     id="work-email"
                     name="email"
@@ -1229,15 +707,15 @@ function Waitlist() {
                     data-testid="input-work-email"
                   />
                   {emailError && (
-                    <p className="field-error mono" id="work-email-error">
+                    <p className="field-error" id="work-email-error">
                       {emailError}
                     </p>
                   )}
                 </div>
 
                 <div className="field">
-                  <label className="mono" htmlFor="agency-name">
-                    Agency / company <span className="field-optional">optional</span>
+                  <label htmlFor="agency-name">
+                    Agency <span className="field-optional">optional</span>
                   </label>
                   <input
                     id="agency-name"
@@ -1253,9 +731,22 @@ function Waitlist() {
                   />
                 </div>
 
+                <div className="hp-field" aria-hidden="true">
+                  <label htmlFor="website">Website</label>
+                  <input
+                    id="website"
+                    name="website"
+                    type="text"
+                    tabIndex={-1}
+                    autoComplete="off"
+                    value={trap}
+                    onChange={(event) => setTrap(event.target.value)}
+                  />
+                </div>
+
                 <p aria-live="polite" className="form-status">
                   {formError && (
-                    <span className="form-error mono" data-testid="status-waitlist-error">
+                    <span className="form-error" data-testid="status-waitlist-error">
                       {formError}
                     </span>
                   )}
@@ -1270,75 +761,26 @@ function Waitlist() {
                   {submitting ? (
                     <>
                       <span className="spinner spinner-dark" aria-hidden="true" />
-                      Requesting access
+                      Saving
                     </>
                   ) : (
                     <>
-                      Request early access
+                      Join the waitlist
                       <ArrowRight size={15} aria-hidden="true" />
                     </>
                   )}
                 </button>
 
-                <p className="form-note mono">
-                  No spam. Early product access and occasional updates.
+                <p className="form-note">
+                  No spam, and we never share your address.{' '}
+                  <a href={PRIVACY_PATH}>Privacy policy</a>
                 </p>
               </form>
             )}
           </div>
-        </Reveal>
-      </div>
-    </section>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Closing + footer                                                    */
-/* ------------------------------------------------------------------ */
-
-function Closing() {
-  return (
-    <section className="closing" aria-labelledby="closing-title">
-      <div className="container">
-        <Reveal>
-          <h2 id="closing-title">Connect the contract to the code.</h2>
-          <p className="mono">Commercial CI/CD for software agencies.</p>
-        </Reveal>
-      </div>
-    </section>
-  );
-}
-
-function Footer() {
-  return (
-    <footer className="footer">
-      <div className="container">
-        <div className="footer-top">
-          <div className="footer-brand">
-            <img
-              src={WORDMARK}
-              alt="ScopeCI"
-              width="651"
-              height="217"
-              loading="lazy"
-              decoding="async"
-            />
-            <p>Commercial CI/CD for software agencies.</p>
-          </div>
-          <nav className="footer-links mono" aria-label="Footer">
-            <a href={anchor('waitlist')} data-testid="link-waitlist-footer">Waitlist</a>
-            <a href={PRIVACY_PATH} data-testid="link-privacy-footer">Privacy</a>
-            {/* No mailbox is configured yet, so "Contact" goes to the one channel
-                that actually reaches us: the early-access form. */}
-            <a href={anchor('waitlist')} data-testid="link-contact-footer">Contact</a>
-          </nav>
-        </div>
-        <div className="footer-bottom mono">
-          <span>© 2026 ScopeCI</span>
-          <span>Commercial authorization for engineering work.</span>
         </div>
       </div>
-    </footer>
+    </section>
   );
 }
 
@@ -1353,7 +795,7 @@ function Home() {
   // Track the page view once.
   useEffect(() => { track('page_view'); }, []);
 
-  // Arriving from another route (e.g. the footer's Waitlist/Contact links), the
+  // Arriving from another route (e.g. the footer's Waitlist link), the
   // browser resolves the hash before React has rendered these sections, so it
   // silently gives up. Re-run the jump once they exist.
   useEffect(() => {
@@ -1378,14 +820,10 @@ function Home() {
       <Navbar />
       <main id="main">
         <Hero />
-        <TheGap />
-        <WhatScopeCIDoes />
-        <CommercialState />
+        <HowItWorks />
         <Evidence />
-        <CommercialCheck />
-        <Differentiator />
+        <Questions />
         <Waitlist />
-        <Closing />
       </main>
       <Footer />
     </div>
@@ -1544,92 +982,169 @@ interface AdminStats {
   recent: number;
 }
 
+type AdminView = 'checking' | 'signed-out' | 'ready';
+
+/** Same-origin requests carry the httpOnly session cookie set at sign-in. */
+async function adminFetch(path: string, init?: RequestInit) {
+  return fetch(`${ADMIN_API}${path}`, { credentials: 'same-origin', ...init });
+}
+
+function formatDate(iso: string) {
+  const d = new Date(iso);
+  return (
+    d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) +
+    ' ' +
+    d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+  );
+}
+
 function AdminWaitlist() {
   usePageMeta('Admin — Waitlist', 'Internal admin page.');
 
-  const [key, setKey] = useState(() => sessionStorage.getItem('admin_key') || '');
-  const [authed, setAuthed] = useState(false);
+  const [view, setView] = useState<AdminView>('checking');
+  const [key, setKey] = useState('');
   const [signups, setSignups] = useState<AdminSignup[]>([]);
   const [stats, setStats] = useState<AdminStats | null>(null);
+  const [query, setQuery] = useState('');
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  const fetchData = useCallback(async (secret: string) => {
-    setLoading(true);
+  /** Loads both lists; drops back to the sign-in form when the session is gone. */
+  const load = useCallback(async () => {
+    const [signupsRes, statsRes] = await Promise.all([
+      adminFetch('/waitlist'),
+      adminFetch('/waitlist/stats'),
+    ]);
+    if (signupsRes.status === 401 || statsRes.status === 401) {
+      setView('signed-out');
+      return;
+    }
+    if (!signupsRes.ok || !statsRes.ok) throw new Error('load failed');
+    setSignups(await signupsRes.json());
+    setStats(await statsRes.json());
+    setView('ready');
+  }, []);
+
+  useEffect(() => {
+    load().catch(() => {
+      setView('signed-out');
+      setError("Couldn't reach the API.");
+    });
+  }, [load]);
+
+  const signIn = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!key.trim() || busy) return;
+    setBusy(true);
     setError('');
     try {
-      const headers = {
-        Authorization: `Bearer ${secret}`,
-        'x-admin-key': secret,
-      };
-      const [signupsRes, statsRes] = await Promise.all([
-        fetch(`${BASE}/api/admin/waitlist`, { headers }),
-        fetch(`${BASE}/api/admin/waitlist/stats`, { headers }),
-      ]);
-      if (signupsRes.status === 401 || statsRes.status === 401) {
-        setError('Invalid admin key.');
-        setAuthed(false);
-        sessionStorage.removeItem('admin_key');
+      const res = await adminFetch('/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: key.trim() }),
+      });
+      if (res.status === 204) {
+        setKey('');
+        await load();
+      } else if (res.status === 429) {
+        setError('Too many attempts. Wait 15 minutes and try again.');
+      } else if (res.status === 401) {
+        setError('That key is not right.');
+      } else {
+        setError("Couldn't sign in. Try again.");
+      }
+    } catch {
+      setError("Couldn't reach the API.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const signOut = async () => {
+    await adminFetch('/session', { method: 'DELETE' }).catch(() => {});
+    setSignups([]);
+    setStats(null);
+    setView('signed-out');
+  };
+
+  const refresh = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await load();
+    } catch {
+      setError("Couldn't refresh. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (signup: AdminSignup) => {
+    if (!window.confirm(`Remove ${signup.email} from the waitlist? This can't be undone.`)) return;
+    setError('');
+    try {
+      const res = await adminFetch(`/waitlist/${signup.id}`, { method: 'DELETE' });
+      if (res.status === 401) {
+        setView('signed-out');
         return;
       }
-      setSignups(await signupsRes.json());
-      setStats(await statsRes.json());
-      setAuthed(true);
-      sessionStorage.setItem('admin_key', secret);
+      if (res.status !== 204 && res.status !== 404) throw new Error('delete failed');
+      await load();
     } catch {
-      setError('Failed to fetch data.');
-    } finally {
-      setLoading(false);
+      setError(`Couldn't remove ${signup.email}. Try again.`);
     }
-  }, []);
-
-  // Auto-login if key is in sessionStorage.
-  useEffect(() => {
-    if (key && !authed) fetchData(key);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handleSubmitKey = (e: FormEvent) => {
-    e.preventDefault();
-    if (key.trim()) fetchData(key.trim());
   };
 
-  const handleExportCsv = () => {
-    window.open(`${BASE}/api/admin/waitlist/csv?key=${encodeURIComponent(key)}`, '_blank');
-  };
+  const visible = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return signups;
+    return signups.filter((s) =>
+      [s.email, s.agency, s.utmSource, s.utmCampaign, s.referrer].some((value) =>
+        value?.toLowerCase().includes(needle),
+      ),
+    );
+  }, [query, signups]);
 
-  if (!authed) {
+  if (view === 'checking') {
     return (
       <div className="site">
         <main className="admin">
-          <div className="container admin-gate">
-            <Lock size={24} />
-            <h1 className="mono">Admin access</h1>
-            <form onSubmit={handleSubmitKey}>
-              <input
-                type="password"
-                value={key}
-                onChange={(e) => setKey(e.target.value)}
-                placeholder="Admin key"
-                className="admin-key-input mono"
-                autoFocus
-              />
-              <button type="submit" className="button button-primary" disabled={loading}>
-                {loading ? 'Verifying…' : 'Enter'}
-              </button>
-            </form>
-            {error && <p className="admin-error mono">{error}</p>}
-          </div>
+          <p className="admin-empty mono container">Checking your session…</p>
         </main>
       </div>
     );
   }
 
-  const fmtDate = (iso: string) => {
-    const d = new Date(iso);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-      + ' ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-  };
+  if (view === 'signed-out') {
+    return (
+      <div className="site">
+        <main className="admin">
+          <div className="container admin-gate">
+            <Lock size={24} aria-hidden="true" />
+            <h1 className="mono">Admin sign-in</h1>
+            <form onSubmit={signIn}>
+              <label className="sr-only" htmlFor="admin-key">Admin key</label>
+              <input
+                id="admin-key"
+                type="password"
+                value={key}
+                onChange={(e) => setKey(e.target.value)}
+                placeholder="Admin key"
+                className="admin-key-input mono"
+                autoComplete="current-password"
+                autoFocus
+              />
+              <button type="submit" className="button button-primary" disabled={busy}>
+                {busy ? 'Signing in…' : 'Sign in'}
+              </button>
+            </form>
+            {error && <p className="admin-error mono" role="alert">{error}</p>}
+            <p className="admin-hint mono">Stays signed in for 12 hours on this browser.</p>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="site">
@@ -1640,10 +1155,19 @@ function AdminWaitlist() {
               <h1 className="mono">Waitlist</h1>
               <p className="admin-sub mono">ScopeCI early access signups</p>
             </div>
-            <button type="button" className="button button-quiet" onClick={handleExportCsv}>
-              <Download size={14} aria-hidden="true" />
-              Export CSV
-            </button>
+            <div className="admin-actions">
+              <button type="button" className="button button-quiet" onClick={refresh} disabled={busy}>
+                <RefreshCw size={14} aria-hidden="true" />
+                Refresh
+              </button>
+              <a className="button button-quiet" href={`${ADMIN_API}/waitlist/csv`} download>
+                <Download size={14} aria-hidden="true" />
+                Export CSV
+              </a>
+              <button type="button" className="button button-quiet" onClick={signOut}>
+                Sign out
+              </button>
+            </div>
           </div>
 
           {stats && (
@@ -1654,44 +1178,75 @@ function AdminWaitlist() {
               </div>
               <div className="admin-stat">
                 <span className="admin-stat-value mono">{stats.qualified}</span>
-                <span className="admin-stat-label mono">Qualified agencies</span>
+                <span className="admin-stat-label mono">Gave an agency name</span>
               </div>
               <div className="admin-stat">
                 <span className="admin-stat-value mono">{stats.recent}</span>
-                <span className="admin-stat-label mono">Recent (7d)</span>
+                <span className="admin-stat-label mono">Last 7 days</span>
               </div>
             </div>
           )}
 
+          {error && <p className="admin-error mono" role="alert">{error}</p>}
+
           {signups.length === 0 ? (
             <p className="admin-empty mono">No signups yet.</p>
           ) : (
-            <div className="admin-table-wrap">
-              <table className="admin-table mono">
-                <thead>
-                  <tr>
-                    <th>Email</th>
-                    <th>Agency</th>
-                    <th>Date</th>
-                    <th>Source</th>
-                    <th>Campaign</th>
-                    <th>Referrer</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {signups.map((s) => (
-                    <tr key={s.id}>
-                      <td>{s.email}</td>
-                      <td>{s.agency || '—'}</td>
-                      <td className="admin-nowrap">{fmtDate(s.createdAt)}</td>
-                      <td>{s.utmSource || '—'}</td>
-                      <td>{s.utmCampaign || '—'}</td>
-                      <td className="admin-ref">{s.referrer || '—'}</td>
+            <>
+              <div className="admin-toolbar">
+                <label className="sr-only" htmlFor="admin-search">Filter signups</label>
+                <input
+                  id="admin-search"
+                  type="search"
+                  className="admin-key-input mono"
+                  placeholder="Filter by email, agency, source or referrer"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+                <span className="admin-count mono">
+                  {visible.length === signups.length
+                    ? `${signups.length} signups`
+                    : `${visible.length} of ${signups.length}`}
+                </span>
+              </div>
+              <div className="admin-table-wrap">
+                <table className="admin-table mono">
+                  <thead>
+                    <tr>
+                      <th>Email</th>
+                      <th>Agency</th>
+                      <th>Date</th>
+                      <th>Source</th>
+                      <th>Campaign</th>
+                      <th>Referrer</th>
+                      <th><span className="sr-only">Actions</span></th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {visible.map((s) => (
+                      <tr key={s.id}>
+                        <td>{s.email}</td>
+                        <td>{s.agency || '—'}</td>
+                        <td className="admin-nowrap">{formatDate(s.createdAt)}</td>
+                        <td>{s.utmSource || '—'}</td>
+                        <td>{s.utmCampaign || '—'}</td>
+                        <td className="admin-ref" title={s.referrer ?? undefined}>{s.referrer || '—'}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="admin-delete"
+                            onClick={() => remove(s)}
+                            aria-label={`Remove ${s.email}`}
+                          >
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </div>
       </main>
@@ -1705,6 +1260,7 @@ function Router() {
       <Switch>
         <Route path="/" component={Home} />
         <Route path="/privacy" component={Privacy} />
+        <Route path="/try" component={TryPage} />
         <Route path="/admin/waitlist" component={AdminWaitlist} />
         <Route component={NotFound} />
       </Switch>
@@ -1715,12 +1271,9 @@ function Router() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-          <Router />
-        </WouterRouter>
-        <Toaster />
-      </TooltipProvider>
+      <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+        <Router />
+      </WouterRouter>
     </QueryClientProvider>
   );
 }

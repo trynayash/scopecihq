@@ -15,6 +15,30 @@ export const eventsRateLimiter = rateLimiter({
 });
 
 /**
+ * The events the site actually sends. Anything else is rejected, so the
+ * table can't be filled with arbitrary strings by someone scripting the
+ * endpoint. Add a name here when the site starts sending a new one.
+ */
+export const KNOWN_EVENTS = new Set([
+  "page_view",
+  "scroll_50",
+  "scroll_90",
+  "hero_cta_click",
+  "faq_opened",
+  "waitlist_started",
+  "waitlist_submitted",
+  "waitlist_success",
+  "waitlist_duplicate",
+  "waitlist_error",
+  "try_opened",
+  "try_sow_read",
+  "try_github_pr_loaded",
+  "try_evaluated",
+  "try_change_order_copied",
+  "try_waitlist_click",
+]);
+
+/**
  * Lightweight analytics endpoint. Accepts a site event and inserts it
  * asynchronously — the response is sent immediately so the client is
  * never blocked on the database write.
@@ -24,6 +48,10 @@ router.post("/events", eventsRateLimiter, (req, res): void => {
 
   if (!event || typeof event !== "string") {
     res.status(400).json({ error: "Missing event name." });
+    return;
+  }
+  if (!KNOWN_EVENTS.has(event)) {
+    res.status(400).json({ error: "Unknown event name." });
     return;
   }
 
