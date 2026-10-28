@@ -245,12 +245,12 @@ function SignIn({ available }: { available: boolean }) {
       <section className="app-signin panel" aria-labelledby="signin-title">
         <img className="app-signin-mark" src={ICON_MARK} alt="" width="288" height="270" decoding="async" />
         <h1 id="signin-title" className="display">Sign in to ScopeCI</h1>
-        <p className="try-lede">
+        <p className="page-lede">
           Use your GitHub account. ScopeCI uses it to see who you are and which repositories you've given the ScopeCI
           app access to.
         </p>
         {problem && (
-          <p className="try-notice" role="alert">
+          <p className="notice is-warning" role="alert">
             {problem}
           </p>
         )}
@@ -260,16 +260,16 @@ function SignIn({ available }: { available: boolean }) {
             Sign in with GitHub
           </a>
         ) : (
-          !problem && <p className="try-notice">Sign-in isn't switched on for this server yet.</p>
+          !problem && <p className="notice">Sign-in isn't switched on for this server yet.</p>
         )}
         <ol className="app-signin-steps">
           <li>Signing in for the first time creates your workspace.</li>
           <li>Add a project, its statement of work and its repository.</li>
           <li>Every pull request on it gets a scope check.</li>
         </ol>
-        <p className="try-help">
+        <p className="help">
           Rather look first?{' '}
-          <a className="try-link" href={TRY_PATH}>
+          <a className="text-link" href={TRY_PATH}>
             Try it on your SOW
           </a>
         </p>
@@ -366,7 +366,7 @@ function ProjectsHome() {
       <header className="app-page-head">
         <div>
           <h1 className="display">Projects</h1>
-          <p className="try-lede">One project per client engagement: its scope, its repository and every pull request checked.</p>
+          <p className="page-lede">One project per client engagement: its scope, its repository and every pull request checked.</p>
         </div>
         <Link href="/projects/new" className="button button-primary" data-testid="button-new-project">
           <Icon icon={PlusIcon} size={16} />
@@ -381,14 +381,14 @@ function ProjectsHome() {
         </p>
       )}
       {projects.data && projects.data.projects.length === 0 && (
-        <section className="try-step app-onboarding">
+        <section className="panel app-onboarding">
           <h2 className="display">Set up your first project</h2>
           <ol className="app-steps">
             <li>Create a project for one client engagement.</li>
             <li>Paste its statement of work and confirm what's included and excluded.</li>
             <li>Connect the GitHub repository the work happens in.</li>
           </ol>
-          <p className="try-help">From then on, every pull request gets a check and a comment, and work the SOW excludes comes with a change order draft.</p>
+          <p className="help">From then on, every pull request gets a check and a comment, and work the SOW excludes comes with a change order draft.</p>
         </section>
       )}
       {projects.data && projects.data.projects.length > 0 && (
@@ -454,7 +454,7 @@ function NewProject() {
       <header className="app-page-head">
         <h1 className="display">New project</h1>
       </header>
-      <form className="try-step app-form" onSubmit={submit}>
+      <form className="panel app-form" onSubmit={submit}>
         <div className="field">
           <label htmlFor="project-name">Project name</label>
           <input id="project-name" value={name} maxLength={160} onChange={(e) => setName(e.target.value)} autoFocus />
@@ -536,7 +536,7 @@ function ProjectPage() {
 
 function SectionHead({ step, title, done, id }: { step?: number; title: string; done?: boolean; id: string }) {
   return (
-    <div className="try-step-head">
+    <div className="panel-head">
       {step !== undefined && (
         <span className={`step-num mono ${done ? 'is-done' : ''}`}>
           {done ? (
@@ -626,10 +626,10 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
   };
 
   return (
-    <section className="try-step" aria-labelledby="scope-title">
+    <section className="panel" aria-labelledby="scope-title">
       <SectionHead step={1} title="Scope" done={Boolean(scope)} id="scope-title" />
       {scope && !dirty && !pasting && (
-        <p className="try-help">
+        <p className="help">
           Scope {scope.version}, saved {relativeTime(scope.savedAt)}. Edit the lists and save to make a new version;
           earlier results keep the version they were checked against.
         </p>
@@ -642,22 +642,22 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
           </label>
           <textarea
             id="project-sow"
-            className="try-textarea mono"
+            className="textarea mono"
             rows={12}
             maxLength={40_000}
             value={sow}
             placeholder="Paste the statement of work: Markdown or text copied from a PDF."
             onChange={(e) => setSow(e.target.value)}
           />
-          <p className="try-help">
+          <p className="help">
             ScopeCI reads what each section includes and excludes. You check that list before anything is saved.{' '}
             {!scope && (
-              <button type="button" className="try-link" onClick={startEmpty}>
+              <button type="button" className="text-link" onClick={startEmpty}>
                 No document? Start with an empty list
               </button>
             )}
             {scope && (
-              <button type="button" className="try-link" onClick={() => setPasting(false)}>
+              <button type="button" className="text-link" onClick={() => setPasting(false)}>
                 Cancel
               </button>
             )}
@@ -676,7 +676,7 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
         draft && (
           <>
             {itemCount(draft) === 0 && (
-              <p className="try-notice">
+              <p className="notice">
                 Nothing is marked as included or excluded yet. Add the work this engagement covers and what it
                 leaves out.
               </p>
@@ -688,7 +688,7 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
               </p>
             )}
             {message && !dirty && (
-              <p className="try-help" role="status">
+              <p className="help" role="status">
                 {message}
               </p>
             )}
@@ -703,7 +703,7 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
                   Discard changes
                 </button>
               )}
-              <button type="button" className="try-link" onClick={() => setPasting(true)}>
+              <button type="button" className="text-link" onClick={() => setPasting(true)}>
                 {scope ? 'Read a new SOW instead' : 'Paste a different document'}
               </button>
             </div>
@@ -760,7 +760,7 @@ function RepositorySection({ project }: { project: Project }) {
   const install = () => remember(`/projects/${project.id}`);
 
   return (
-    <section className="try-step" aria-labelledby="repo-title">
+    <section className="panel" aria-labelledby="repo-title">
       <SectionHead step={2} title="Repository" done={Boolean(project.repository)} id="repo-title" />
 
       {project.repository ? (
@@ -771,7 +771,7 @@ function RepositorySection({ project }: { project: Project }) {
               {project.repository.fullName}
             </a>
           </p>
-          <p className="try-help">
+          <p className="help">
             {project.scopeVersion
               ? `Every pull request opened or updated here is checked against scope ${project.scopeVersion}.`
               : 'Pull requests here are checked once the scope above is saved.'}
@@ -784,7 +784,7 @@ function RepositorySection({ project }: { project: Project }) {
         </>
       ) : !choosing ? (
         <>
-          <p className="try-help">Connect the GitHub repository this engagement's code lives in.</p>
+          <p className="help">Connect the GitHub repository this engagement's code lives in.</p>
           <div className="app-actions">
             <button type="button" className="button button-primary" onClick={() => setChoosing(true)} data-testid="button-choose-repo">
               Choose a repository
@@ -794,9 +794,9 @@ function RepositorySection({ project }: { project: Project }) {
       ) : repos.isPending ? (
         <p className="app-loading">Asking GitHub which repositories you can connect…</p>
       ) : reauth ? (
-        <p className="try-notice" role="alert">
+        <p className="notice is-warning" role="alert">
           GitHub access expired.{' '}
-          <a className="try-link" href={signInHref(`/app/projects/${project.id}`)}>
+          <a className="text-link" href={signInHref(`/app/projects/${project.id}`)}>
             Sign in again
           </a>
         </p>
@@ -807,7 +807,7 @@ function RepositorySection({ project }: { project: Project }) {
       ) : (
         <form onSubmit={connect}>
           {repos.data.repositories.length === 0 ? (
-            <p className="try-notice">
+            <p className="notice">
               The ScopeCI GitHub App isn't installed on any account you can see yet. Install it on the account or
               organization that owns the repository, then come back here.
             </p>
@@ -856,7 +856,7 @@ function RepositorySection({ project }: { project: Project }) {
                 {repos.data.repositories.length === 0 ? 'Install the GitHub App' : 'Add a repository on GitHub'}
               </a>
             )}
-            <button type="button" className="try-link" onClick={() => setChoosing(false)}>
+            <button type="button" className="text-link" onClick={() => setChoosing(false)}>
               Cancel
             </button>
           </div>
@@ -1011,7 +1011,7 @@ function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestRe
         <WhyLine pr={pr} tone={verdictOf(pr.verdict).tone} />
 
         {decided ? (
-          <p className="try-help">
+          <p className="help">
             {tracked!.status === 'APPROVED'
               ? 'The client approved it. This work is covered on this and later pull requests.'
               : 'The client declined it. Take the work out of this pull request, or absorb it knowingly.'}
@@ -1028,7 +1028,7 @@ function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestRe
                       : 'set an hourly rate in settings to show a price'}
                   </span>
                 </label>
-                <div className="try-inline">
+                <div className="inline-field">
                   <input
                     id="co-hours"
                     type="number"
@@ -1173,7 +1173,7 @@ function PullRequestsSection({ project }: { project: Project }) {
   const open = results.data?.pullRequests.find((pr) => pr.evaluationId === openId) ?? null;
 
   return (
-    <section className="try-step" aria-labelledby="prs-title">
+    <section className="panel" aria-labelledby="prs-title">
       <SectionHead title="Checked pull requests" id="prs-title" />
       {results.isPending && <p className="app-loading">Loading…</p>}
       {results.isError && (
@@ -1182,7 +1182,7 @@ function PullRequestsSection({ project }: { project: Project }) {
         </p>
       )}
       {results.data && results.data.pullRequests.length === 0 && (
-        <p className="try-help">
+        <p className="help">
           {project.repository && project.scopeVersion
             ? `Nothing checked yet. The next pull request opened or updated on ${project.repository.fullName} shows up here.`
             : 'Results appear here once the scope is saved and a repository is connected.'}
@@ -1283,10 +1283,10 @@ function SettingsSection({ project }: { project: Project }) {
   };
 
   return (
-    <section className="try-step" aria-labelledby="settings-title">
+    <section className="panel" aria-labelledby="settings-title">
       <SectionHead title="Settings" id="settings-title" />
       <form onSubmit={submit} onChange={() => setStatus('')}>
-        <div className="try-row app-settings-row">
+        <div className="field-row app-settings-row">
           <div className="field">
             <label htmlFor="settings-name">Project name</label>
             <input id="settings-name" value={name} maxLength={160} onChange={(e) => setName(e.target.value)} />
@@ -1338,11 +1338,11 @@ function SettingsSection({ project }: { project: Project }) {
             {update.isPending ? 'Saving…' : 'Save settings'}
           </button>
           {status && (
-            <span className="try-help" role="status">
+            <span className="help" role="status">
               {status}
             </span>
           )}
-          <button type="button" className="try-link app-archive" onClick={archiveProject} disabled={archive.isPending}>
+          <button type="button" className="text-link app-archive" onClick={archiveProject} disabled={archive.isPending}>
             Archive project
           </button>
         </div>
@@ -1425,15 +1425,15 @@ function TeamPage() {
       <header className="app-page-head">
         <div>
           <h1 className="display">Team</h1>
-          <p className="try-lede">Everyone here sees and works on all of {team.name}'s projects.</p>
+          <p className="page-lede">Everyone here sees and works on all of {team.name}'s projects.</p>
         </div>
       </header>
 
       {owner && (
-        <section className="try-step" aria-labelledby="workspace-title">
+        <section className="panel" aria-labelledby="workspace-title">
           <SectionHead title="Workspace name" id="workspace-title" />
           <form onSubmit={submitName} onChange={() => setStatus('')}>
-            <div className="try-inline app-name-row">
+            <div className="inline-field app-name-row">
               <label className="sr-only" htmlFor="workspace-name">
                 Workspace name
               </label>
@@ -1443,7 +1443,7 @@ function TeamPage() {
               </button>
             </div>
             {status && (
-              <p className="try-help" role="status">
+              <p className="help" role="status">
                 {status}
               </p>
             )}
@@ -1451,7 +1451,7 @@ function TeamPage() {
         </section>
       )}
 
-      <section className="try-step" aria-labelledby="members-title">
+      <section className="panel" aria-labelledby="members-title">
         <SectionHead title="Members" id="members-title" />
         <ul className="member-list">
           {team.members.map((member) => (
@@ -1467,7 +1467,7 @@ function TeamPage() {
               {owner && !member.you && (
                 <button
                   type="button"
-                  className="try-link app-archive"
+                  className="text-link app-archive"
                   disabled={remove.isPending}
                   onClick={() => {
                     if (!window.confirm(`Remove ${member.login} from ${team.name}?`)) return;
@@ -1483,9 +1483,9 @@ function TeamPage() {
       </section>
 
       {owner && (
-        <section className="try-step" aria-labelledby="invite-title">
+        <section className="panel" aria-labelledby="invite-title">
           <SectionHead title="Invite someone" id="invite-title" />
-          <p className="try-help">
+          <p className="help">
             Make a link and send it to them. It works once, for seven days, and they sign in with their own GitHub
             account.
           </p>
@@ -1494,14 +1494,14 @@ function TeamPage() {
               <label className="sr-only" htmlFor="invite-url">
                 Invite link
               </label>
-              <div className="try-inline">
+              <div className="inline-field">
                 <input id="invite-url" className="mono" readOnly value={link} onFocus={(e) => e.target.select()} />
                 <button type="button" className="button button-quiet" onClick={copy}>
                   <Icon icon={CopyIcon} size={14} />
                   {copied ? 'Copied' : 'Copy'}
                 </button>
               </div>
-              <p className="try-help">This link is only shown now. Make another one if it gets lost.</p>
+              <p className="help">This link is only shown now. Make another one if it gets lost.</p>
             </div>
           ) : null}
           <div className="app-actions">
@@ -1523,7 +1523,7 @@ function TeamPage() {
                   </span>
                   <button
                     type="button"
-                    className="try-link app-archive"
+                    className="text-link app-archive"
                     disabled={revoke.isPending}
                     onClick={() => revoke.mutate({ inviteId: open.id }, { onSuccess: refresh, onError: fail("We couldn't cancel it.") })}
                   >
@@ -1571,9 +1571,9 @@ function InvitePage() {
     return (
       <section className="app-signin panel">
         <h1 className="display">This invite doesn't work</h1>
-        <p className="try-lede">{errorMessage(invite.error, 'The link may be wrong.')}</p>
-        <p className="try-help">
-          <Link href="/" className="try-link">
+        <p className="page-lede">{errorMessage(invite.error, 'The link may be wrong.')}</p>
+        <p className="help">
+          <Link href="/" className="text-link">
             Go to your projects
           </Link>
         </p>
@@ -1584,7 +1584,7 @@ function InvitePage() {
   return (
     <section className="app-signin panel" aria-labelledby="invite-heading">
       <h1 id="invite-heading" className="display">Join {invite.data.workspaceName}</h1>
-      <p className="try-lede">
+      <p className="page-lede">
         {invite.data.invitedBy ? `@${invite.data.invitedBy} invited you` : 'You were invited'} to work on{' '}
         {invite.data.workspaceName}'s projects in ScopeCI.
         {invite.data.alreadyMember && " You're already a member; joining switches you to it."}

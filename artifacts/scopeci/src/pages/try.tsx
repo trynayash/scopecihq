@@ -252,7 +252,7 @@ export default function TryPage() {
               No account needed
             </p>
             <h1 className="try-title display">Try ScopeCI on your own SOW</h1>
-            <p className="try-lede">
+            <p className="page-lede">
               Paste a statement of work, fix anything ScopeCI misreads, then describe a pull request.
               The check is the real one. Nothing you paste is stored.
             </p>
@@ -278,8 +278,8 @@ export default function TryPage() {
 
             <div className="try-steps">
               {/* Step 1 */}
-              <section className="try-step" aria-labelledby="step-sow">
-                <div className="try-step-head">
+              <section className="panel" aria-labelledby="step-sow">
+                <div className="panel-head">
                   <span className="step-num mono">1</span>
                   <h2 id="step-sow">Your statement of work</h2>
                 </div>
@@ -289,23 +289,23 @@ export default function TryPage() {
                   </label>
                   <textarea
                     id="sow-text"
-                    className="try-textarea try-sow mono"
+                    className="textarea try-sow mono"
                     rows={14}
                     maxLength={40_000}
                     value={sow}
                     onChange={(e) => setSow(e.target.value)}
                     aria-describedby="sow-help"
                   />
-                  <p id="sow-help" className="try-help">
+                  <p id="sow-help" className="help">
                     This is a sample. Replace it with yours: Markdown or text copied from a PDF both work. Sections that
                     list what's included and what's out of scope give the best result.{' '}
                     {sow !== '' && (
-                      <button type="button" className="try-link" onClick={() => setSow('')}>
+                      <button type="button" className="text-link" onClick={() => setSow('')}>
                         Clear
                       </button>
                     )}
                     {sow !== SAMPLE_SOW && (
-                      <button type="button" className="try-link" onClick={() => setSow(SAMPLE_SOW)}>
+                      <button type="button" className="text-link" onClick={() => setSow(SAMPLE_SOW)}>
                         Use the sample
                       </button>
                     )}
@@ -324,19 +324,19 @@ export default function TryPage() {
 
               {/* Step 2 */}
               {clauses && (
-                <section className="try-step" aria-labelledby="step-scope">
-                  <div className="try-step-head">
+                <section className="panel" aria-labelledby="step-scope">
+                  <div className="panel-head">
                     <span className="step-num mono">2</span>
                     <h2 id="step-scope" ref={scopeHeading} tabIndex={-1}>
                       What ScopeCI read
                     </h2>
                   </div>
-                  <p className="try-help">
+                  <p className="help">
                     Fix anything it got wrong. This list, not the raw document, is what pull requests are checked
                     against.
                   </p>
                   {itemCount(clauses) === 0 && (
-                    <p className="try-notice">
+                    <p className="notice">
                       We didn't find anything marked as included or excluded. Add items below, or paste a document with
                       "Included:" and "Out of scope:" lists.
                     </p>
@@ -347,8 +347,8 @@ export default function TryPage() {
 
               {/* Step 3 */}
               {clauses && (
-                <section className="try-step" aria-labelledby="step-pr">
-                  <div className="try-step-head">
+                <section className="panel" aria-labelledby="step-pr">
+                  <div className="panel-head">
                     <span className="step-num mono">3</span>
                     <h2 id="step-pr">A pull request</h2>
                   </div>
@@ -372,7 +372,7 @@ export default function TryPage() {
 
                   <form className="try-github" onSubmit={loadGitHubPr}>
                     <label htmlFor="pr-url">Or load a public GitHub pull request</label>
-                    <div className="try-inline">
+                    <div className="inline-field">
                       <input
                         id="pr-url"
                         type="url"
@@ -387,7 +387,7 @@ export default function TryPage() {
                         {prUrlState.loading ? 'Loading…' : 'Load'}
                       </button>
                     </div>
-                    <p aria-live="polite" className="try-help">
+                    <p aria-live="polite" className="help">
                       {prUrlState.error && <span className="field-error">{prUrlState.error}</span>}
                       {prUrlState.loaded}
                     </p>
@@ -410,14 +410,14 @@ export default function TryPage() {
                       </label>
                       <textarea
                         id="pr-files"
-                        className="try-textarea mono"
+                        className="textarea mono"
                         rows={5}
                         value={pr.files}
                         placeholder={'src/loyalty/points.ts\nsrc/checkout/cart.ts'}
                         onChange={(e) => setPr({ ...pr, files: e.target.value })}
                       />
                     </div>
-                    <div className="try-row">
+                    <div className="field-row">
                       <div className="field">
                         <label htmlFor="pr-branch">
                           Branch <span className="field-optional">optional</span>
@@ -464,7 +464,7 @@ export default function TryPage() {
                       </label>
                       <textarea
                         id="pr-body"
-                        className="try-textarea"
+                        className="textarea"
                         rows={3}
                         maxLength={5000}
                         value={pr.body}
@@ -486,8 +486,8 @@ export default function TryPage() {
 
               {/* Step 4 */}
               {result && verdict && (
-                <section className="try-step try-result" aria-labelledby="step-result" aria-live="polite">
-                  <div className="try-step-head">
+                <section className="panel try-result" aria-labelledby="step-result" aria-live="polite">
+                  <div className="panel-head">
                     <span className="step-num mono">4</span>
                     <h2 id="step-result" ref={resultHeading} tabIndex={-1}>
                       The result

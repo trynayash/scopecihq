@@ -151,7 +151,7 @@ export function ScopeEditor({
         ))}
       </div>
       {total > 0 && hidden > 0 && (
-        <button type="button" className="try-link" onClick={() => setShowEmpty(true)}>
+        <button type="button" className="text-link" onClick={() => setShowEmpty(true)}>
           Show {hidden} more section{hidden === 1 ? '' : 's'} with nothing listed
         </button>
       )}
@@ -197,13 +197,13 @@ export function ChangeOrderBox({
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
-      <p className="try-help">Edit it, then send it to your client instead of doing the work for free.</p>
+      <p className="help">Edit it, then send it to your client instead of doing the work for free.</p>
       <label className="sr-only" htmlFor={id}>
         Change order draft
       </label>
       <textarea
         id={id}
-        className="try-textarea"
+        className="textarea"
         rows={14}
         value={text}
         onChange={(e) => {
