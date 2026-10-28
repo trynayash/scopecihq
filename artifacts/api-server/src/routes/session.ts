@@ -66,9 +66,11 @@ router.get("/auth/github/callback", signInLimiter, async (req, res): Promise<voi
     saved = {};
   }
 
+  // Back to where they started (an invite link, say), saying what went wrong.
   const fail = (reason: string) => {
     res.setHeader("Set-Cookie", clearState);
-    res.redirect(302, `/app?signin=${reason}`);
+    const back = safeNext(saved.next).replace(/[?#].*$/, "");
+    res.redirect(302, `${back}?signin=${reason}`);
   };
 
   if (req.query.error) return fail("cancelled");

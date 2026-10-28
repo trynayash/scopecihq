@@ -409,6 +409,14 @@ async function run() {
 
       const bad = await call(server, `/api/auth/github/callback?code=nope&state=${state}`, { cookie: stateCookie });
       assert.strictEqual(bad.headers.location, "/app?signin=failed");
+
+      // Signing in from an invite link and failing comes back to the invite.
+      const fromInvite = await call(server, "/api/auth/github?next=/app/invite/abc123");
+      const inviteState = new URL(String(fromInvite.headers.location)).searchParams.get("state");
+      const back = await call(server, `/api/auth/github/callback?error=access_denied&state=${inviteState}`, {
+        cookie: cookieFrom(fromInvite, "scopeci_oauth")!,
+      });
+      assert.strictEqual(back.headers.location, "/app/invite/abc123?signin=cancelled");
     });
 
     await scenario("A good callback creates the person, their workspace and a session", async () => {

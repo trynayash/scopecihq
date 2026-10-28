@@ -568,6 +568,7 @@ ScopeCI reads **changed file names and per-file line counts, not code**, so it n
   - `AlertIcon` for warning
   - `CrossIcon` for error
   - `NeutralIcon` for neutral
+- **Scope version on a result:** each checked pull request's meta line names the scope version it was checked against ("scope v3"). When that is older than the project's current version, it reads "scope v2 (now v3)" in `--warning`, and *Re-check open pull requests* brings it up to date.
 - **Change order progress:** three ruled columns (Drafted, Sent, Client's answer). Each top rule is a `--line-2` track that fills from the left: brand when the step is done, warning when it is current, error when the client declined. When a step is reached, its rule fills and its tick scales in; the next one follows a beat later. Each column carries its date.
 
 ### Empty, loading, error and success states
@@ -576,9 +577,16 @@ ScopeCI reads **changed file names and per-file line counts, not code**, so it n
 | :-- | :-- | :-- |
 | Empty | One sentence that says what will appear and what makes it appear ("Nothing checked yet. The next pull request opened or updated on northstar/portal shows up here.") | Always name the trigger. No illustrations of empty boxes. |
 | Loading | `Loading` (`src/components/loading.tsx`): "Loading the checked pull requests…", "Asking GitHub which repositories you can connect…" | Say what is loading. **[Existing]** For the first 300ms it holds an empty line (`role="status"`), so a fast load shows nothing and nothing jumps. No shimmering skeletons with invented shapes. |
-| Error | `form-error` box (`role="alert"`) with one actionable sentence ("We couldn't reach ScopeCI. Check your connection and try again.") | Say what failed and what to do. Never show a raw status code alone. |
-| Success | Inline status text (`role="status"`): "Saved as v3. New pull requests are checked against it." The waitlist success panel uses a square tick. | Confirm what changed and what happens next. No toast pop-ups. |
+| Error | `form-error` box (`role="alert"`) with one actionable sentence ("We couldn't reach ScopeCI. Check your connection and try again.") | Say what failed and what to do. Never show a raw status code alone. An error that can pass offers the way out beside it: "Try again" and "Cancel", never a dead end. |
+| Success | Inline status line (`.app-status`, `role="status"`): "Saved as v3. Open pull requests are being checked against it now." The waitlist success panel uses a square tick. | Confirm what changed and what happens next. No toast pop-ups. **[Existing]** The status line stays in the page, empty, so a screen reader hears it when its text changes; it takes no space while empty. |
 | Notice | `.notice` (info wash and line, `--fg` text); `.notice.is-warning` when the user must fix something first ("GitHub access expired") | Use `--info` for neutral system notices, `--warning` only when the user should act, and `--success` only for completion. |
+
+### Decisions and drafts
+
+- **Recording what a client decided asks first.** *Client approved* and *Client declined* open the confirm dialog, which names the change order and says the decision can't be changed afterwards. Approving updates the GitHub checks straight away.
+- **A sent letter is read-only.** Once marked as sent, the change order letter is what the client received: it can be copied, not edited; hours can still be recorded.
+- **Edits are never overwritten.** A draft the PM edited gets *Save draft* and *Discard edits*; a newer draft from the server replaces the letter only when it hasn't been edited.
+- **Leaving unsaved scope edits** (closing or reloading the tab) asks first. Text typed into an add field but not added is pointed out ("Press Enter to add it to the list.").
 
 ### Dialogs, menus and tooltips
 
