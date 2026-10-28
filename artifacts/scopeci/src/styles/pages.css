@@ -43,7 +43,7 @@
   display: grid;
   grid-template-columns: 56px minmax(0, 1fr);
   gap: var(--space-4);
-  padding-block: var(--space-6) var(--space-6);
+  padding-block: var(--space-6);
   border-bottom: 1px solid var(--line);
   scroll-margin-top: calc(var(--header-h) + var(--space-4));
 }
@@ -108,7 +108,7 @@
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: blur(12px);
 }
-.admin-bar-inner { display: flex; align-items: center; gap: var(--space-3); min-height: 60px; }
+.admin-bar-inner { display: flex; align-items: center; gap: var(--space-3); min-height: var(--header-h); }
 .admin-bar-label {
   padding: 3px var(--space-2);
   border: 1px solid var(--line-2);
@@ -155,7 +155,7 @@ main.admin { padding-block: clamp(var(--space-6), 4vw, var(--space-7)) var(--spa
   gap: var(--space-4);
   max-width: 400px;
   margin: clamp(var(--space-6), 8vw, var(--space-9)) auto 0;
-  padding: var(--space-6) var(--space-6);
+  padding: var(--space-6);
   text-align: center;
   box-shadow: var(--shadow-2);
 }
@@ -172,7 +172,7 @@ main.admin { padding-block: clamp(var(--space-6), 4vw, var(--space-7)) var(--spa
 .admin-gate h1 { font-family: var(--font-display); font-size: var(--t-display-m); font-weight: 450; letter-spacing: -0.015em; }
 .admin-gate form { display: grid; gap: var(--space-3); width: 100%; }
 
-.admin-panel { display: grid; gap: var(--space-3); margin-top: var(--space-5); padding: var(--space-5) var(--space-5); }
+.admin-panel { display: grid; gap: var(--space-3); margin-top: var(--space-5); padding: var(--space-5); }
 .admin-panel h2 { font-size: var(--t-title); font-weight: 600; letter-spacing: -0.012em; }
 .admin-setup { display: grid; gap: var(--space-3); max-width: 480px; }
 .admin-checks { display: grid; gap: var(--space-1); font-size: var(--t-ui); }
@@ -234,6 +234,26 @@ main.admin { padding-block: clamp(var(--space-6), 4vw, var(--space-7)) var(--spa
 .table-ref { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ==================================================================
+   Error screen (the error boundary's fallback)
+   ================================================================== */
+
+.error-screen { display: grid; place-items: center; min-height: 100vh; min-height: 100dvh; padding: var(--space-8) var(--gutter); }
+.error-screen-inner { display: grid; justify-items: start; gap: var(--space-4); width: 100%; max-width: 560px; }
+.error-screen-title { font-size: var(--t-display-m); }
+.error-screen .page-lede { margin-top: 0; }
+.error-screen-detail {
+  width: 100%;
+  overflow-x: auto;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--bg-sunken);
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+  font-size: var(--t-code-s);
+}
+
+/* ==================================================================
    Responsive
    ================================================================== */
 
@@ -245,7 +265,7 @@ main.admin { padding-block: clamp(var(--space-6), 4vw, var(--space-7)) var(--spa
 }
 
 @media (max-width: 719px) {
-  .legal-section { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); padding-block: var(--space-5) var(--space-5); }
+  .legal-section { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); padding-block: var(--space-5); }
   .legal-num { padding-top: 0; }
   .legal-body h2 { font-size: var(--t-clause); }
   .missing-paper { transform: none; }

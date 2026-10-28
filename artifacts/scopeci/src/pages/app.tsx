@@ -43,6 +43,7 @@ import {
   type TrackedChangeOrder,
 } from '@workspace/api-client-react';
 import { BASE, ICON_MARK, Logo, TRY_PATH, ThemeToggle, usePageMeta } from '../site';
+import { useConfirm } from '../components/confirm-dialog';
 import { ChangeOrderBox, ScopeEditor, changeOrderText, errorMessage, itemCount, verdictOf } from '../scope-ui';
 import {
   ArrowLeftIcon,
@@ -1233,6 +1234,7 @@ function SettingsSection({ project }: { project: Project }) {
   const [, navigate] = useLocation();
   const update = useUpdateProject();
   const archive = useArchiveProject();
+  const [confirm, confirmDialog] = useConfirm();
   const [name, setName] = useState(project.name);
   const [client, setClient] = useState(project.clientName ?? '');
   const [rate, setRate] = useState(project.hourlyRate === null ? '' : String(project.hourlyRate));
@@ -1268,8 +1270,14 @@ function SettingsSection({ project }: { project: Project }) {
     );
   };
 
-  const archiveProject = () => {
-    if (!window.confirm(`Archive "${project.name}"? Its repository stops being checked.`)) return;
+  const archiveProject = async () => {
+    const confirmed = await confirm({
+      title: `Archive ${project.name}?`,
+      description: 'Its repository is disconnected, so pull requests stop being checked, and the project leaves your list.',
+      confirmLabel: 'Archive project',
+      danger: true,
+    });
+    if (!confirmed) return;
     archive.mutate(
       { projectId: project.id },
       {
@@ -1347,6 +1355,7 @@ function SettingsSection({ project }: { project: Project }) {
           </button>
         </div>
       </form>
+      {confirmDialog}
     </section>
   );
 }
@@ -1363,6 +1372,7 @@ function TeamPage() {
   const createInvite = useCreateInvite();
   const revoke = useRevokeInvite();
   const remove = useRemoveMember();
+  const [confirm, confirmDialog] = useConfirm();
   const [name, setName] = useState('');
   const [link, setLink] = useState('');
   const [copied, setCopied] = useState(false);
@@ -1469,8 +1479,14 @@ function TeamPage() {
                   type="button"
                   className="text-link app-archive"
                   disabled={remove.isPending}
-                  onClick={() => {
-                    if (!window.confirm(`Remove ${member.login} from ${team.name}?`)) return;
+                  onClick={async () => {
+                    const confirmed = await confirm({
+                      title: `Remove ${member.name ?? member.login} from ${team.name}?`,
+                      description: `@${member.login} loses access to every project in this workspace. You can invite them again later.`,
+                      confirmLabel: 'Remove',
+                      danger: true,
+                    });
+                    if (!confirmed) return;
                     remove.mutate({ userId: member.userId }, { onSuccess: refresh, onError: fail("We couldn't remove them.") });
                   }}
                 >
@@ -1541,6 +1557,7 @@ function TeamPage() {
           {error}
         </p>
       )}
+      {confirmDialog}
     </>
   );
 }

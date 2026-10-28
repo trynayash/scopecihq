@@ -29,6 +29,7 @@
     "react-dom": "catalog:",
     "react-icons": "^5.4.0",
     "tailwindcss": "catalog:",
+    "tsx": "^4.21.0",
     "vite": "catalog:",
     "wouter": "^3.3.5"
   }

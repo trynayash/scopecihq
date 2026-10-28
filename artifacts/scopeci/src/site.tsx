@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTheme } from 'next-themes';
-import { SiGithub, SiLinear } from 'react-icons/si';
+import { SiGithub } from 'react-icons/si';
 import { ArrowRightIcon, CrossIcon, Icon, MenuIcon, MoonIcon, SunIcon, SystemThemeIcon } from './icons';
 
 /**
@@ -116,13 +116,12 @@ export function usePageMeta(title: string, description: string) {
 /* ------------------------------------------------------------------ */
 
 /**
- * Official GitHub / Linear marks (Simple Icons paths via react-icons),
- * drawn in `currentColor` so they sit inside the ScopeCI palette. They name the
- * tools ScopeCI is being built for. No partnership is implied.
+ * The official GitHub mark (Simple Icons path via react-icons), drawn in
+ * `currentColor` so it sits inside the ScopeCI palette. It names the tool
+ * ScopeCI works with. No partnership is implied.
  */
-export function VendorMark({ name, size = 14 }: { name: 'github' | 'linear'; size?: number }) {
-  const Mark = name === 'github' ? SiGithub : SiLinear;
-  return <Mark className="vendor-mark" size={size} aria-hidden="true" focusable="false" />;
+export function VendorMark({ size = 14 }: { name: 'github'; size?: number }) {
+  return <SiGithub className="vendor-mark" size={size} aria-hidden="true" focusable="false" />;
 }
 
 /**
@@ -232,7 +231,7 @@ export function Navbar() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setOpen(false);
     };
-    const wide = window.matchMedia('(min-width: 1021px)');
+    const wide = window.matchMedia('(min-width: 1024px)');
     const onWide = () => wide.matches && setOpen(false);
     document.documentElement.classList.add('menu-open');
     window.addEventListener('keydown', onKey);

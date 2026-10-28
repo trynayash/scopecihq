@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { prefersReducedMotion, useInView } from '../motion';
+import { useState } from 'react';
+import { useInView } from '../motion';
 
 /**
  * An illustrative fixed-price project, not customer data: twelve weeks,
@@ -54,25 +54,9 @@ const pct = (value: number, of: number) => `${((value / of) * 100).toFixed(2)}%`
 type View = 'without' | 'with';
 
 export function CreepChart() {
+  // The chart changes only when the visitor asks it to.
   const [view, setView] = useState<View>('without');
   const [ref, inView] = useInView<HTMLDivElement>('-25% 0px -25% 0px');
-  const touched = useRef(false);
-
-  // Shows the difference once, a moment after the chart is read, unless the
-  // visitor has already chosen a side.
-  useEffect(() => {
-    if (!inView || prefersReducedMotion()) return;
-    const timer = window.setTimeout(() => {
-      if (!touched.current) setView('with');
-    }, 2600);
-    return () => window.clearTimeout(timer);
-  }, [inView]);
-
-  const choose = (next: View) => {
-    touched.current = true;
-    setView(next);
-  };
-
   const flagged = view === 'with';
 
   return (
@@ -82,10 +66,10 @@ export function CreepChart() {
           Hours on an illustrative 12-week fixed-price build
         </p>
         <div className="segmented" role="group" aria-label="Show the project">
-          <button type="button" aria-pressed={!flagged} className={!flagged ? 'is-active' : ''} onClick={() => choose('without')}>
+          <button type="button" aria-pressed={!flagged} className={!flagged ? 'is-active' : ''} onClick={() => setView('without')}>
             Without ScopeCI
           </button>
-          <button type="button" aria-pressed={flagged} className={flagged ? 'is-active' : ''} onClick={() => choose('with')}>
+          <button type="button" aria-pressed={flagged} className={flagged ? 'is-active' : ''} onClick={() => setView('with')}>
             With ScopeCI
           </button>
         </div>
@@ -129,7 +113,7 @@ export function CreepChart() {
           <span
             key={week}
             className={`creep-tick ${extra ? 'is-out' : ''}`}
-            style={{ left: pct(week, WEEKS), ['--tick-delay' as string]: `${Math.round(week * 60)}ms` }}
+            style={{ left: pct(week, WEEKS), ['--tick-delay' as string]: `${Math.round(week * 40)}ms` }}
           />
         ))}
       </div>

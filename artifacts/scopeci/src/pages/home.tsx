@@ -42,10 +42,10 @@ function useScrollDepth() {
   }, []);
 }
 
-function Kicker({ num, children }: { num: string; children: string }) {
+/** Names the sections the header links to, so a reader who jumps in knows where they landed. */
+function Kicker({ children }: { children: string }) {
   return (
     <p className="kicker">
-      <span className="kicker-num">{num}</span>
       <span className="kicker-rule" aria-hidden="true" />
       {children}
     </p>
@@ -62,24 +62,24 @@ function Hero() {
       <div className="hero-guides" aria-hidden="true" />
       <div className="container hero-inner">
         <div className="hero-copy">
-          <p className="hero-kicker" data-reveal>
+          <p className="hero-kicker">
             Early access for agencies on
             <span className="hero-kicker-marks">
               <VendorMark name="github" size={14} /> GitHub
             </span>
           </p>
 
-          <h1 className="hero-title display" id="hero-title" data-reveal data-reveal-delay="60">
+          <h1 className="hero-title display" id="hero-title">
             Catch scope creep in the pull request, not on the invoice.
           </h1>
 
-          <p className="hero-lede" data-reveal data-reveal-delay="120">
+          <p className="hero-lede">
             ScopeCI reads the statement of work your client signed and checks every pull request against it. When a
             branch builds something the contract leaves out, the check names the clause and drafts the change order,
             before the work ships for free.
           </p>
 
-          <div className="hero-actions" data-reveal data-reveal-delay="180">
+          <div className="hero-actions">
             <a
               className="button button-primary button-lg"
               href={TRY_PATH}
@@ -93,12 +93,12 @@ function Hero() {
               See how it works
             </a>
           </div>
-          <p className="hero-fine" data-reveal data-reveal-delay="220">
+          <p className="hero-fine">
             Two minutes, no account. Nothing you paste is stored.
           </p>
         </div>
 
-        <div className="hero-visual" data-reveal data-reveal-delay="120">
+        <div className="hero-visual" data-reveal>
           <HeroStage />
         </div>
       </div>
@@ -114,8 +114,8 @@ function Product() {
   return (
     <section className="section section-product" id="product" aria-labelledby="product-title">
       <div className="container">
-        <div className="section-head" data-reveal>
-          <Kicker num="01">Product</Kicker>
+        <div className="section-head">
+          <Kicker>Product</Kicker>
           <h2 className="section-title display" id="product-title">
             What your team actually opens.
           </h2>
@@ -140,8 +140,7 @@ function Problem() {
   return (
     <section className="section section-problem" id="why" aria-labelledby="why-title">
       <div className="container problem-grid">
-        <div className="section-head" data-reveal>
-          <Kicker num="02">Why it exists</Kicker>
+        <div className="section-head">
           <h2 className="section-title display" id="why-title">
             Scope creep doesn’t arrive as one big request.
           </h2>
@@ -154,7 +153,7 @@ function Problem() {
             question you can ask the client.
           </p>
         </div>
-        <div className="problem-visual" data-reveal data-reveal-delay="100">
+        <div className="problem-visual">
           <CreepChart />
         </div>
       </div>
@@ -170,15 +169,15 @@ function HowItWorks() {
   return (
     <section className="section section-how" id="how-it-works" aria-labelledby="how-title">
       <div className="container">
-        <div className="section-head" data-reveal>
-          <Kicker num="03">How it works</Kicker>
+        <div className="section-head">
+          <Kicker>How it works</Kicker>
           <h2 className="section-title display" id="how-title">
             Three inputs you already have. One answer where your team already looks.
           </h2>
         </div>
 
         <ol className="steps">
-          <li className="step" data-reveal>
+          <li className="step">
             <div className="step-top">
               <span className="step-num mono">1</span>
               <span className="step-line" aria-hidden="true" />
@@ -199,20 +198,20 @@ function HowItWorks() {
             </div>
           </li>
 
-          <li className="step" data-reveal data-reveal-delay="90">
+          <li className="step">
             <div className="step-top">
               <span className="step-num mono">2</span>
               <span className="step-line" aria-hidden="true" />
             </div>
             <h3>Open pull requests as usual</h3>
             <p>
-              On every push it reads the title, branch, description and changed files, plus the linked Linear issue.
-              It never checks out, builds or runs your code.
+              On every push it reads the title, branch, description and the names of the changed files. It never
+              checks out, builds or runs your code.
             </p>
             <div className="artifact mono" aria-label="Files changed in the pull request">
               <p className="artifact-head">
-                <VendorMark name="linear" size={11} />
-                ENG-184 · feature/org-permissions
+                <VendorMark name="github" size={11} />
+                #1842 · feature/org-permissions
               </p>
               <ul className="artifact-files">
                 <li><span className="is-added">A</span><span>src/auth/roles.ts</span><span className="pos">+124</span></li>
@@ -223,7 +222,7 @@ function HowItWorks() {
             </div>
           </li>
 
-          <li className="step" data-reveal data-reveal-delay="180">
+          <li className="step">
             <div className="step-top">
               <span className="step-num mono">3</span>
             </div>
@@ -255,8 +254,8 @@ function Policy() {
   return (
     <section className="section section-policy" id="policy" aria-labelledby="policy-title">
       <div className="container policy-grid">
-        <div className="section-head" data-reveal>
-          <Kicker num="04">Policies</Kicker>
+        <div className="section-head">
+          <Kicker>Policies</Kicker>
           <h2 className="section-title display" id="policy-title">
             Quiet until you want it strict.
           </h2>
@@ -265,7 +264,7 @@ function Policy() {
             team trusts it. Choose one to see the pull request change.
           </p>
         </div>
-        <div data-reveal data-reveal-delay="100">
+        <div>
           <PolicyDemo />
         </div>
       </div>
@@ -281,8 +280,7 @@ function Evidence() {
   return (
     <section className="section section-evidence" id="evidence" aria-labelledby="evidence-title">
       <div className="container">
-        <div className="section-head" data-reveal>
-          <Kicker num="05">Evidence</Kicker>
+        <div className="section-head">
           <h2 className="section-title display" id="evidence-title">
             Every answer shows its working.
           </h2>
@@ -292,7 +290,7 @@ function Evidence() {
           </p>
         </div>
 
-        <div className="ledger" data-testid="evidence-panel" data-reveal data-reveal-delay="80">
+        <div className="ledger" data-testid="evidence-panel">
           <div className="ledger-grid">
             <div className="ledger-pane">
               <p className="pane-label">Statement of work</p>
@@ -325,8 +323,8 @@ function Evidence() {
               </p>
               <dl className="pane-facts">
                 <div>
-                  <dt>Linked issue</dt>
-                  <dd className="mono"><VendorMark name="linear" size={12} />ENG-184</dd>
+                  <dt>Branch</dt>
+                  <dd className="mono">feature/org-permissions</dd>
                 </div>
                 <div>
                   <dt>Changed files</dt>
@@ -347,8 +345,8 @@ function Evidence() {
             <span className="trace-label">Trace</span>
             <ol className="trace mono" aria-label="Trace from contract clause to pull request">
               <li>SOW §4.2</li>
-              <li>ENG-184</li>
               <li>PR #1842</li>
+              <li>2 matches</li>
               <li className="is-end">CO drafted</li>
             </ol>
           </div>
@@ -372,8 +370,7 @@ function ChangeOrder() {
   return (
     <section className="section section-co" id="change-orders" aria-labelledby="co-title">
       <div className="container co-grid">
-        <div className="section-head" data-reveal>
-          <Kicker num="06">Change orders</Kicker>
+        <div className="section-head">
           <h2 className="section-title display" id="co-title">
             The flag comes with the paperwork.
           </h2>
@@ -383,7 +380,7 @@ function ChangeOrder() {
           </p>
           <ol className="lifecycle">
             {LIFECYCLE.map((item, index) => (
-              <li key={item.state} data-reveal data-reveal-delay={String(120 + index * 90)}>
+              <li key={item.state}>
                 <span className={`lifecycle-num mono ${index === LIFECYCLE.length - 1 ? 'is-end' : ''}`} aria-hidden="true">
                   {String(index + 1).padStart(2, '0')}
                 </span>
@@ -396,7 +393,7 @@ function ChangeOrder() {
           </ol>
         </div>
 
-        <div className="co-visual" data-reveal data-reveal-delay="100">
+        <div className="co-visual">
           <div className="co-stack" aria-hidden="true">
             <span className="co-sheet co-sheet-3" />
             <span className="co-sheet co-sheet-2" />
@@ -445,7 +442,7 @@ function ChangeOrder() {
 const PRINCIPLES: ReadonlyArray<{ term: string; detail: string }> = [
   {
     term: 'What it reads',
-    detail: 'The pull request’s title, branch, description and changed file names, and the Linear issue linked to it.',
+    detail: 'The pull request’s title, branch and description, and the names of the files it changes.',
   },
   {
     term: 'What it never does',
@@ -473,8 +470,7 @@ function Principles() {
   return (
     <section className="section section-principles" id="principles" aria-labelledby="principles-title">
       <div className="container principles-grid">
-        <div className="section-head" data-reveal>
-          <Kicker num="07">Trust</Kicker>
+        <div className="section-head">
           <h2 className="section-title display" id="principles-title">
             Built to be trusted with contracts.
           </h2>
@@ -483,7 +479,7 @@ function Principles() {
             touches.
           </p>
         </div>
-        <dl className="spec" data-reveal data-reveal-delay="80">
+        <dl className="spec">
           {PRINCIPLES.map((row) => (
             <div key={row.term} className="spec-row">
               <dt>{row.term}</dt>
@@ -503,7 +499,7 @@ function Principles() {
 const QUESTIONS: ReadonlyArray<{ q: string; a: string }> = [
   {
     q: 'Does an AI model read our contracts?',
-    a: 'No. The check is plain rules that compare clause text with the changed files and the linked issue, so no language model sees your contract or your code. The trade-off is that it can only be as precise as the SOW, and you confirm what it read before anything is checked.',
+    a: 'No. The check is plain rules that compare clause text with the pull request’s title, branch, description and changed files, so no language model sees your contract or your code. The trade-off is that it can only be as precise as the SOW, and you confirm what it read before anything is checked.',
   },
   {
     q: 'Will it block my team’s merges?',
@@ -511,15 +507,15 @@ const QUESTIONS: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: 'What access does it need?',
-    a: 'A GitHub App that reads pull requests and repository contents and writes checks and pull request comments, plus a Linear connection to read the issue linked to each branch. It asks for no admin, secrets or workflow permissions.',
+    a: 'A GitHub App that reads pull requests and repository contents and writes checks and pull request comments. It asks for no admin, secrets or workflow permissions.',
   },
   {
-    q: 'What if a pull request has no linked issue?',
-    a: 'It is judged on its own title, branch, description and files. Hours, and so prices, only appear when an estimate exists; ScopeCI never invents one.',
+    q: 'Where do the hours and prices come from?',
+    a: 'From you. Add the hours to a change order and ScopeCI prices them at the project’s hourly rate. It never invents an estimate.',
   },
   {
     q: 'We use Jira, GitLab or Bitbucket.',
-    a: 'Then it won’t work for you yet. GitHub and Linear are the only integrations being built.',
+    a: 'Then it won’t work for you yet. GitHub is the only integration today.',
   },
   {
     q: 'What does it cost?',
@@ -535,8 +531,8 @@ function Questions() {
   return (
     <section className="section section-faq" id="questions" aria-labelledby="questions-title">
       <div className="container faq-grid">
-        <div className="section-head faq-head" data-reveal>
-          <Kicker num="08">Questions</Kicker>
+        <div className="section-head faq-head">
+          <Kicker>Questions</Kicker>
           <h2 className="section-title display" id="questions-title">
             Worth knowing first.
           </h2>
@@ -545,7 +541,7 @@ function Questions() {
           </p>
         </div>
 
-        <div className="faq" data-reveal data-reveal-delay="80">
+        <div className="faq">
           {QUESTIONS.map((item) => (
             <details
               className="faq-item"
@@ -669,7 +665,7 @@ function Waitlist() {
   return (
     <section className="section section-waitlist" id="waitlist" aria-labelledby="waitlist-title">
       <div className="container">
-        <div className="cta-panel on-dark" data-reveal>
+        <div className="cta-panel on-dark">
           <div className="cta-copy">
             <img className="cta-mark" src={ICON_MARK} alt="" width="288" height="270" loading="lazy" decoding="async" />
             <h2 className="section-title display" id="waitlist-title">

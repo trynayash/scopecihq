@@ -263,7 +263,7 @@ p { text-wrap: pretty; }
 .scope-add input {
   width: 100%;
   min-height: 44px;
-  padding: var(--space-3) var(--space-3);
+  padding: var(--space-3);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-s);
   background: var(--input-bg);

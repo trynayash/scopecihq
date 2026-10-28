@@ -529,7 +529,7 @@ export default function TryPage() {
                   <div className="try-cta">
                     <p>
                       <strong>Want this on your real pull requests?</strong> We're taking a small group of fixed-price
-                      agencies on GitHub and Linear into the pilot.
+                      agencies on GitHub into the pilot.
                     </p>
                     <a className="button button-primary" href={anchor('waitlist')} onClick={() => track('try_waitlist_click')}>
                       Join the pilot waitlist
