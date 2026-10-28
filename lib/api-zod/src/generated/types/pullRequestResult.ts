@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { ChangedFile } from './changedFile';
 import type { DemoChangeOrder } from './demoChangeOrder';
 import type { ExcludedItem } from './excludedItem';
 import type { PullRequestResultPrState } from './pullRequestResultPrState';
@@ -29,5 +30,9 @@ export interface PullRequestResult {
   trackedChangeOrder: TrackedChangeOrder | null;
   /** Work this pull request builds that the scope excludes, each with the clause that excludes it. Empty unless the result names excluded work. */
   excluded: ExcludedItem[];
+  /** The changed files the check read for this commit, by name and line count only (never their contents). Files cited for excluded work come first. Empty when the commit's file list wasn't recorded. */
+  files: ChangedFile[];
+  /** How many files the commit changes. Can exceed the length of files, which is capped. */
+  fileCount: number;
   checkedAt: Date;
 }

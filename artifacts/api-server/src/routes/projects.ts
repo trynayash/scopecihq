@@ -7,6 +7,7 @@ import {
   commercialEventsTable,
   contractsTable,
   githubInstallationsTable,
+  prDiffAnalysesTable,
   projectsTable,
   pullRequestsTable,
 } from "@workspace/db/schema";
@@ -25,7 +26,7 @@ import {
   UpdateProjectBody,
   UpdateProjectResponse,
 } from "@workspace/api-zod";
-import { composeChangeOrder, type ChangeOrderItem } from "@workspace/commercial-engine";
+import { composeChangeOrder, type ChangeOrderItem, type EvidenceBundle } from "@workspace/commercial-engine";
 import { currentWebhookService } from "./github.js";
 import { rateLimiter } from "../middlewares/rate-limit.js";
 import { accountOf, requireAccount, sameOriginWrites, type Account } from "../lib/session.js";
@@ -145,6 +146,51 @@ function toTracked(row: ChangeOrderRow) {
     sentAt: row.sentAt,
     decidedAt: row.approvedAt ?? row.rejectedAt,
   };
+}
+
+/** The most files a result lists; fileCount still says how many there are. */
+const MAX_FILES = 200;
+const FILE_STATUSES = new Set(["added", "modified", "deleted", "renamed"]);
+
+/**
+ * The changed files behind one result, by name and line count only: the
+ * stored diff may carry patches, which never leave the server. A file the
+ * check cited for an excluded item carries that item and comes first.
+ */
+function changedFiles(
+  diff: unknown,
+  bundle: Partial<EvidenceBundle> | null,
+  items: ReadonlyArray<{ item?: string; capability?: string }>,
+) {
+  const rows = Array.isArray(diff) ? (diff as Array<Record<string, unknown>>) : [];
+  const files = rows.flatMap((f) =>
+    typeof f.path === "string"
+      ? [{
+          path: f.path,
+          status: (FILE_STATUSES.has(String(f.status)) ? f.status : "modified") as "added" | "modified" | "deleted" | "renamed",
+          additions: Number(f.additions) || 0,
+          deletions: Number(f.deletions) || 0,
+          excludedItem: null as string | null,
+        }]
+      : [],
+  );
+  const byPath = new Map(files.map((f) => [f.path, f]));
+  for (const { item, capability: name } of items) {
+    const capability = bundle?.detectedCapabilities?.find((c) => c.name === name);
+    if (!item || !capability) continue;
+    // Contract-phrase matches list up to four cited places ("a, b and 3 more");
+    // other capabilities point at one. Only exact file paths count.
+    const cited =
+      capability.extractionMethod === "CONTRACT_PHRASE_MATCH"
+        ? capability.evidenceText.replace(/ and \d+ more$/, "").split(", ")
+        : [capability.evidenceLocation];
+    for (const path of cited) {
+      const file = byPath.get(path);
+      if (file && !file.excludedItem) file.excludedItem = item;
+    }
+  }
+  const ordered = [...files.filter((f) => f.excludedItem), ...files.filter((f) => !f.excludedItem)];
+  return { files: ordered.slice(0, MAX_FILES), fileCount: files.length };
 }
 
 async function scopeVersions(contractIds: string[]) {
@@ -625,6 +671,20 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
       })
     : [];
   const trackedBy = new Map(tracked.map((t) => [t.pullRequestId, t]));
+  // The file list the check read for each result's commit.
+  const diffs = prs.length
+    ? await db
+        .select({
+          pullRequestId: prDiffAnalysesTable.pullRequestId,
+          headSha: prDiffAnalysesTable.headSha,
+          files: prDiffAnalysesTable.filesChangedJson,
+        })
+        .from(prDiffAnalysesTable)
+        .where(inArray(prDiffAnalysesTable.pullRequestId, prs.map((p) => p.id)))
+        .orderBy(desc(prDiffAnalysesTable.createdAt))
+    : [];
+  const diffFor = (pullRequestId: string, headSha: string | null) =>
+    diffs.find((d) => d.pullRequestId === pullRequestId && d.headSha === headSha)?.files;
 
   const pullRequests = prs.flatMap((pr) => {
     const e = latest.get(pr.id);
@@ -632,7 +692,7 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
     const draft = e.changeOrderDraftJson as {
       subject?: string;
       body?: string;
-      items?: Array<{ item?: string; clauseRef?: string; clauseTitle?: string }>;
+      items?: Array<{ item?: string; clauseRef?: string; clauseTitle?: string; capability?: string }>;
     } | null;
     // The draft keeps each excluded item with its clause; drafts saved before
     // items were stored simply have none.
@@ -655,6 +715,11 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
         changeOrder: draft?.subject && draft.body ? { subject: draft.subject, body: draft.body } : null,
         trackedChangeOrder: trackedBy.has(pr.id) ? toTracked(trackedBy.get(pr.id)!) : null,
         excluded,
+        ...changedFiles(
+          diffFor(pr.id, e.headSha),
+          e.evidenceBundleJson as Partial<EvidenceBundle> | null,
+          draft?.items ?? [],
+        ),
         checkedAt: e.createdAt,
       },
     ];

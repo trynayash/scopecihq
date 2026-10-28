@@ -7,7 +7,7 @@ Every rule is tagged:
 - **[Existing]**: already true in the code. Keep it unless a proposal below replaces it.
 - **[Proposed]**: not yet implemented. Move it to [Existing] in the change that builds it.
 
-It began as an audit of the repository on 27 October 2026; section 0 keeps those findings. Its proposals for the current interface were applied on 28 October 2026 and are now tagged [Existing]. Two rules stay [Proposed] because they wait on new work: a file list in the app (it needs an API field) and showing nothing for loads under about 300ms.
+It began as an audit of the repository on 27 October 2026; section 0 keeps those findings. Every proposal from that audit has been applied (28 October 2026) and is now tagged [Existing].
 
 ---
 
@@ -512,7 +512,8 @@ The row is built in this order, top to bottom:
 5. **Why line:** see "Scope findings" below.
 6. **Detail:** the evaluator's full reason, 14px muted. Shown when the why line names excluded items; otherwise the why line already *is* the reason.
 7. **Estimate**, only when one exists: "Estimated impact: 14 hours; $2,100 at $150 an hour".
-8. **Change order row:** a status chip ("CO-007 sent 3 h ago, waiting on the client") and the *Open change order* button, above a hairline.
+8. **Changed files:** see "Files and diffs" below.
+9. **Change order row:** a status chip ("CO-007 sent 3 h ago, waiting on the client") and the *Open change order* button, above a hairline.
 
 ### Files and diffs
 
@@ -523,7 +524,12 @@ ScopeCI reads **changed file names and per-file line counts, not code**, so it n
   - The path in mono 12–13px, truncated with an ellipsis from the end.
   - `+n` additions in brand and `−n` deletions in error colour, right-aligned and tabular.
 - **Matched files:** a file that builds excluded work gets an `--error-wash` row, an `--error` path and a footnote marker `[a]` that ties it to the clause item carrying the same letter.
-- **[Proposed]** Before a file list appears in the app itself, add `files` to the pull request results API. Never show file lists made up on the client.
+- **In the app [Existing]**
+  - Each pull request result carries `files` and `fileCount`, read from the diff analysis stored for that commit. A file has its path, status, line counts and, when the check cited it, the excluded item it was cited for. Patches never leave the server, and the list never comes from the client.
+  - The row shows a closed `<details>`: "14 changed files, 4 cited for excluded work". Opened, it lists the files on `--bg-sunken` in mono `--t-code-s`: the status letter, the path, then `+n −n`.
+  - Cited files come first, on `--error-wash`, with the path in `--error` and the excluded item under it in Geist.
+  - Paths truncate at the end on wider screens (the full path is in `title`) and wrap on phones.
+  - At most 200 files are listed; "and N more" covers the rest.
 
 ### Scope findings and review explanations
 
@@ -563,7 +569,7 @@ ScopeCI reads **changed file names and per-file line counts, not code**, so it n
 | State | Existing | Rule |
 | :-- | :-- | :-- |
 | Empty | One sentence that says what will appear and what makes it appear ("Nothing checked yet. The next pull request opened or updated on northstar/portal shows up here.") | Always name the trigger. No illustrations of empty boxes. |
-| Loading | Text: "Loading…", "Asking GitHub which repositories you can connect…" | Say what is loading. **[Proposed]** Under about 300ms, show nothing. For list areas, keep the panel's size steady with a quiet "Loading…" line. No shimmering skeletons with invented shapes. |
+| Loading | `Loading` (`src/components/loading.tsx`): "Loading the checked pull requests…", "Asking GitHub which repositories you can connect…" | Say what is loading. **[Existing]** For the first 300ms it holds an empty line (`role="status"`), so a fast load shows nothing and nothing jumps. No shimmering skeletons with invented shapes. |
 | Error | `form-error` box (`role="alert"`) with one actionable sentence ("We couldn't reach ScopeCI. Check your connection and try again.") | Say what failed and what to do. Never show a raw status code alone. |
 | Success | Inline status text (`role="status"`): "Saved as v3. New pull requests are checked against it." The waitlist success panel uses a square tick. | Confirm what changed and what happens next. No toast pop-ups. |
 | Notice | `.notice` (info wash and line, `--fg` text); `.notice.is-warning` when the user must fix something first ("GitHub access expired") | Use `--info` for neutral system notices, `--warning` only when the user should act, and `--success` only for completion. |

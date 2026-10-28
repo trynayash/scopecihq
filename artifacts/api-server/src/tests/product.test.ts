@@ -565,6 +565,19 @@ async function run() {
         [["Loyalty points programme", "§3.1"]],
         "names the excluded item with the clause that excludes it",
       );
+      assert.strictEqual(pr.fileCount, 2, "counts both pages of changed files");
+      assert.deepStrictEqual(
+        pr.files.map((f: Record<string, unknown>) => Object.keys(f).sort()),
+        [0, 1].map(() => ["additions", "deletions", "excludedItem", "path", "status"]),
+        "files carry names and line counts only, never patches",
+      );
+      const points = pr.files.find((f: { path: string }) => f.path === "src/loyalty/points.ts");
+      assert.deepStrictEqual(
+        points,
+        { path: "src/loyalty/points.ts", status: "added", additions: 40, deletions: 0, excludedItem: "Loyalty points programme" },
+        "the file the check cited is tagged with the excluded item",
+      );
+      assert.strictEqual(pr.files[0].excludedItem, "Loyalty points programme", "cited files come first");
 
       const evaluation = await db.query.commercialEvaluationsTable.findFirst({
         where: eq(commercialEvaluationsTable.id, pr.evaluationId),

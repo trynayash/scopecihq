@@ -1,6 +1,7 @@
 import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { BASE, HOME_PATH, Logo, ThemeToggle, usePageMeta } from '../site';
 import { useConfirm } from '../components/confirm-dialog';
+import { Loading } from '../components/loading';
 import { CrossIcon, DownloadIcon, Icon, LockIcon, ReloadIcon, SignOutIcon, TickIcon } from '../icons';
 
 const ADMIN_API = `${BASE}/api/admin`;
@@ -143,7 +144,7 @@ function GitHubAppPanel({ onSignedOut }: { onSignedOut: () => void }) {
       <h2 id="github-app-heading">GitHub App</h2>
       {notice && <p className="notice" role="status">{notice}</p>}
       {!status ? (
-        !error && <p className="muted-text">Checking…</p>
+        !error && <Loading className="muted-text">Checking…</Loading>
       ) : status.configured ? (
         <>
           <p className="muted-text">
@@ -352,7 +353,7 @@ export default function AdminWaitlist() {
   if (view === 'checking') {
     return (
       <AdminShell>
-        <p className="admin-empty">Checking your session…</p>
+        <Loading className="admin-empty">Checking your session…</Loading>
       </AdminShell>
     );
   }

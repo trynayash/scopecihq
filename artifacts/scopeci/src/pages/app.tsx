@@ -33,6 +33,7 @@ import {
   useUnlinkProjectRepository,
   useUpdateChangeOrder,
   useUpdateProject,
+  type ChangedFile,
   type DemoScopeClause,
   type PolicyMode,
   type Project,
@@ -44,10 +45,12 @@ import {
 } from '@workspace/api-client-react';
 import { BASE, ICON_MARK, Logo, TRY_PATH, ThemeToggle, usePageMeta } from '../site';
 import { useConfirm } from '../components/confirm-dialog';
+import { Loading } from '../components/loading';
 import { ChangeOrderBox, ScopeEditor, changeOrderText, errorMessage, itemCount, verdictOf } from '../scope-ui';
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
+  ChevronDownIcon,
   CopyIcon,
   CrossIcon,
   ExternalIcon,
@@ -285,7 +288,7 @@ export default function AppPage() {
   if (session.isPending) {
     return (
       <Frame>
-        <p className="app-loading">Loading…</p>
+        <Loading>Checking your session…</Loading>
       </Frame>
     );
   }
@@ -375,7 +378,7 @@ function ProjectsHome() {
         </Link>
       </header>
 
-      {projects.isPending && <p className="app-loading">Loading projects…</p>}
+      {projects.isPending && <Loading>Loading projects…</Loading>}
       {projects.isError && (
         <p className="form-error" role="alert">
           {errorMessage(projects.error, "We couldn't load your projects.")}
@@ -503,7 +506,7 @@ function ProjectPage() {
   const detail = useGetProject(projectId, { query: { queryKey: getGetProjectQueryKey(projectId), retry: false } });
   usePageMeta(`${detail.data?.project.name ?? 'Project'} — ScopeCI`, 'A ScopeCI project.');
 
-  if (detail.isPending) return <p className="app-loading">Loading project…</p>;
+  if (detail.isPending) return <Loading>Loading project…</Loading>;
   if (detail.isError || !detail.data) {
     return (
       <p className="app-empty">
@@ -793,7 +796,7 @@ function RepositorySection({ project }: { project: Project }) {
           </div>
         </>
       ) : repos.isPending ? (
-        <p className="app-loading">Asking GitHub which repositories you can connect…</p>
+        <Loading>Asking GitHub which repositories you can connect…</Loading>
       ) : reauth ? (
         <p className="notice is-warning" role="alert">
           GitHub access expired.{' '}
@@ -1120,6 +1123,47 @@ function ChangeOrderDrawer({
   );
 }
 
+const FILE_STATUS: Record<ChangedFile['status'], string> = { added: 'A', modified: 'M', deleted: 'D', renamed: 'R' };
+
+/**
+ * The files the check read for this commit, by name and line count. Closed
+ * by default; files cited for excluded work come first, in the tone colour.
+ */
+function ChangedFiles({ pr }: { pr: PullRequestResult }) {
+  if (pr.files.length === 0) return null;
+  const cited = pr.files.filter((f) => f.excludedItem).length;
+  const hidden = pr.fileCount - pr.files.length;
+  return (
+    <details className="pr-files" data-testid="pr-files">
+      <summary>
+        <Icon icon={ChevronDownIcon} size={14} />
+        {pr.fileCount} changed file{pr.fileCount === 1 ? '' : 's'}
+        {cited > 0 && `, ${cited} cited for excluded work`}
+      </summary>
+      <ul className="pr-file-list">
+        {pr.files.map((file) => (
+          <li key={file.path} className={file.excludedItem ? 'is-cited' : ''}>
+            <span className={`pr-file-status mono is-${file.status}`} aria-hidden="true">
+              {FILE_STATUS[file.status]}
+            </span>
+            <span className="pr-file-name">
+              <span className="pr-file-path mono" title={file.path}>
+                <span className="sr-only">{file.status}: </span>
+                {file.path}
+              </span>
+              {file.excludedItem && <span className="pr-file-item">{file.excludedItem}</span>}
+            </span>
+            <span className="pr-file-lines mono num">
+              <span className="is-added">+{file.additions}</span> <span className="is-deleted">−{file.deletions}</span>
+            </span>
+          </li>
+        ))}
+        {hidden > 0 && <li className="pr-file-more">and {hidden} more</li>}
+      </ul>
+    </details>
+  );
+}
+
 function PullRequestRow({ pr, onOpen }: { pr: PullRequestResult; onOpen: (button: HTMLButtonElement) => void }) {
   const verdict = verdictOf(pr.verdict);
   const tracked = pr.trackedChangeOrder;
@@ -1146,6 +1190,7 @@ function PullRequestRow({ pr, onOpen }: { pr: PullRequestResult; onOpen: (button
       <WhyLine pr={pr} tone={verdict.tone} />
       {reasonBelow && <p className={pr.excluded.length > 0 ? 'pr-row-detail' : 'verdict-card-reason'}>{pr.reason}</p>}
       {pr.estimate && <p className="verdict-card-estimate">Estimated impact: {pr.estimate}</p>}
+      <ChangedFiles pr={pr} />
       {(pr.changeOrder || tracked) && (
         <div className="pr-row-co">
           <span className={`chip ${tracked ? CHANGE_ORDER_TONE[tracked.status] : ''}`}>{changeOrderSummary(tracked)}</span>
@@ -1176,7 +1221,7 @@ function PullRequestsSection({ project }: { project: Project }) {
   return (
     <section className="panel" aria-labelledby="prs-title">
       <SectionHead title="Checked pull requests" id="prs-title" />
-      {results.isPending && <p className="app-loading">Loading…</p>}
+      {results.isPending && <Loading>Loading the checked pull requests…</Loading>}
       {results.isError && (
         <p className="form-error" role="alert">
           {errorMessage(results.error, "We couldn't load the results.")}
@@ -1389,7 +1434,7 @@ function TeamPage() {
   };
   const fail = (fallback: string) => (err: unknown) => setError(errorMessage(err, fallback));
 
-  if (workspace.isPending) return <p className="app-loading">Loading…</p>;
+  if (workspace.isPending) return <Loading>Loading the team…</Loading>;
   if (workspace.isError || !workspace.data) {
     return (
       <p className="form-error" role="alert">
@@ -1583,7 +1628,7 @@ function InvitePage() {
       },
     );
 
-  if (invite.isPending) return <p className="app-loading">Checking the invite…</p>;
+  if (invite.isPending) return <Loading>Checking the invite…</Loading>;
   if (invite.isError || !invite.data) {
     return (
       <section className="app-signin panel">

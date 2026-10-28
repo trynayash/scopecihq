@@ -443,6 +443,53 @@ button.text-link { margin-right: var(--space-3); font-size: var(--t-ui); }
 }
 .pr-row-co .chip { max-width: 100%; white-space: normal; }
 
+/* The files the check read: closed until asked for. Names and line counts
+   only; files cited for excluded work lead, in the error tone. */
+.pr-files { margin-top: var(--space-3); }
+.pr-files > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--fg-muted);
+  font-size: var(--t-ui);
+  cursor: pointer;
+  list-style: none;
+  transition: color var(--fast) var(--ease);
+}
+.pr-files > summary::-webkit-details-marker { display: none; }
+.pr-files > summary:hover { color: var(--fg); }
+.pr-files > summary svg { transform: rotate(-90deg); transition: transform var(--fast) var(--ease); }
+.pr-files[open] > summary svg { transform: none; }
+.pr-file-list {
+  margin-top: var(--space-2);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--bg-sunken);
+}
+.pr-file-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: var(--space-1) var(--space-3);
+  border-top: 1px solid var(--line);
+  font-size: var(--t-code-s);
+}
+.pr-file-list li:first-child { border-top: 0; }
+.pr-file-list li.is-cited { background: var(--error-wash); }
+.pr-file-status { color: var(--fg-faint); }
+.pr-file-status.is-added { color: var(--brand); }
+.pr-file-status.is-deleted { color: var(--error); }
+.pr-file-name { display: grid; min-width: 0; }
+.pr-file-path { overflow: hidden; color: var(--fg-2); text-overflow: ellipsis; white-space: nowrap; }
+.is-cited .pr-file-path { color: var(--error); }
+.pr-file-item { color: var(--error); font-size: var(--t-micro); font-weight: 500; }
+.pr-file-lines { color: var(--fg-faint); white-space: nowrap; }
+.pr-file-lines .is-added { color: var(--brand); }
+.pr-file-lines .is-deleted { color: var(--error); }
+.pr-file-list .pr-file-more { display: block; color: var(--fg-faint); font-family: var(--font-sans); font-size: var(--t-micro); }
+
 /* The why line: the clause and what it excludes, pinned above the detail
    in the result's own tone. */
 .why {
@@ -677,6 +724,8 @@ button.text-link { margin-right: var(--space-3); font-size: var(--t-ui); }
   /* Takes what the row leaves and ends a long name in an ellipsis. */
   .app-workspace-select { min-width: 0; max-width: 100%; }
   .app-workspace-name { max-width: 110px; }
+  /* A phone can't afford to cut a path short: wrap it instead. */
+  .pr-file-path { white-space: normal; overflow-wrap: anywhere; }
   .scope-columns,
   .try-samples,
   .field-row { grid-template-columns: minmax(0, 1fr); }
