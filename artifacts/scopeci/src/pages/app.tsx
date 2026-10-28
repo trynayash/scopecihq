@@ -1,6 +1,7 @@
-import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Route, Switch, useLocation, useParams } from 'wouter';
 import { useQueryClient } from '@tanstack/react-query';
+import * as Dialog from '@radix-ui/react-dialog';
 import { SiGithub } from 'react-icons/si';
 import {
   getGetProjectQueryKey,
@@ -32,6 +33,7 @@ import {
   useUnlinkProjectRepository,
   useUpdateChangeOrder,
   useUpdateProject,
+  type ChangedFile,
   type DemoScopeClause,
   type PolicyMode,
   type Project,
@@ -42,11 +44,17 @@ import {
   type TrackedChangeOrder,
 } from '@workspace/api-client-react';
 import { BASE, ICON_MARK, Logo, TRY_PATH, ThemeToggle, usePageMeta } from '../site';
+import { useConfirm } from '../components/confirm-dialog';
+import { Loading } from '../components/loading';
+import { CopyButton } from '../components/copy-button';
+import { useIndicator } from '../motion';
 import { ChangeOrderBox, ScopeEditor, changeOrderText, errorMessage, itemCount, verdictOf } from '../scope-ui';
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
-  CopyIcon,
+  ChevronDownIcon,
+  ContractIcon,
+  CrossIcon,
   ExternalIcon,
   FolderIcon,
   Icon,
@@ -152,6 +160,7 @@ function AppHeader({
   const [location] = useLocation();
   const endSession = useEndSession();
   const onProjects = location === '/' || location.startsWith('/projects');
+  const navRef = useIndicator<HTMLElement>('.is-active', onProjects ? 'projects' : location);
   const signOut = () =>
     endSession.mutate(undefined, {
       onSettled: () => {
@@ -172,7 +181,7 @@ function AppHeader({
             <span className="app-account-name">
               {organization ? <WorkspaceSwitcher current={organization} workspaces={workspaces} /> : <span>{user.login}</span>}
             </span>
-            <nav className="app-nav" aria-label="App">
+            <nav className="app-nav" aria-label="App" ref={navRef}>
               <Link href="/" className={`app-nav-link ${onProjects ? 'is-active' : ''}`} data-testid="link-projects">
                 <Icon icon={FolderIcon} size={14} />
                 <span className="app-header-label">Projects</span>
@@ -243,12 +252,12 @@ function SignIn({ available }: { available: boolean }) {
       <section className="app-signin panel" aria-labelledby="signin-title">
         <img className="app-signin-mark" src={ICON_MARK} alt="" width="288" height="270" decoding="async" />
         <h1 id="signin-title" className="display">Sign in to ScopeCI</h1>
-        <p className="try-lede">
+        <p className="page-lede">
           Use your GitHub account. ScopeCI uses it to see who you are and which repositories you've given the ScopeCI
           app access to.
         </p>
         {problem && (
-          <p className="try-notice" role="alert">
+          <p className="notice is-warning" role="alert">
             {problem}
           </p>
         )}
@@ -258,16 +267,16 @@ function SignIn({ available }: { available: boolean }) {
             Sign in with GitHub
           </a>
         ) : (
-          !problem && <p className="try-notice">Sign-in isn't switched on for this server yet.</p>
+          !problem && <p className="notice">Sign-in isn't switched on for this server yet.</p>
         )}
         <ol className="app-signin-steps">
           <li>Signing in for the first time creates your workspace.</li>
           <li>Add a project, its statement of work and its repository.</li>
           <li>Every pull request on it gets a scope check.</li>
         </ol>
-        <p className="try-help">
+        <p className="help">
           Rather look first?{' '}
-          <a className="try-link" href={TRY_PATH}>
+          <a className="text-link" href={TRY_PATH}>
             Try it on your SOW
           </a>
         </p>
@@ -282,7 +291,7 @@ export default function AppPage() {
   if (session.isPending) {
     return (
       <Frame>
-        <p className="app-loading">Loading…</p>
+        <Loading>Checking your session…</Loading>
       </Frame>
     );
   }
@@ -320,31 +329,54 @@ export default function AppPage() {
 /* Projects                                                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Two quiet lines rather than a row of badges: what the project is tied to
+ * (its scope version and repository), then what has happened on it. Only
+ * the counts that ask for something are in colour.
+ */
 function ProjectStatus({ project }: { project: Project }) {
   const { checked, changeOrders, decisions, changeOrdersSent, changeOrdersApproved, approvedValue } = project.counts;
   return (
-    <p className="project-status">
-      <span className={`chip ${project.scopeVersion ? 'is-ok' : 'is-warn'}`}>
-        {project.scopeVersion ? `Scope ${project.scopeVersion}` : 'Scope not confirmed'}
-      </span>
-      <span className="chip">
-        <SiGithub size={11} aria-hidden="true" />
-        <span className="mono">{project.repository ? project.repository.fullName : 'No repository'}</span>
-      </span>
-      {checked > 0 && <span className="chip">{checked} checked</span>}
-      {changeOrders > 0 && (
-        <span className="chip is-alert">
-          {changeOrders} need{changeOrders === 1 ? 's' : ''} a change order
+    <div className="project-status">
+      <p className="project-meta">
+        <span className={project.scopeVersion ? undefined : 'is-warn'}>
+          <Icon icon={ContractIcon} size={14} />
+          {project.scopeVersion ? `Scope ${project.scopeVersion}` : 'Scope not confirmed'}
         </span>
-      )}
-      {decisions > 0 && <span className="chip is-warn">{decisions} to decide</span>}
-      {changeOrdersSent > 0 && <span className="chip">{changeOrdersSent} sent</span>}
-      {changeOrdersApproved > 0 && (
-        <span className="chip is-ok">
-          {changeOrdersApproved} approved{approvedValue > 0 ? ` · ${money(approvedValue)}` : ''}
+        <span className={project.repository ? undefined : 'is-faint'}>
+          <SiGithub size={13} aria-hidden="true" />
+          <span className="mono">{project.repository ? project.repository.fullName : 'No repository'}</span>
         </span>
+      </p>
+      {checked > 0 && (
+        <p className="project-counts">
+          <span>
+            <strong className="num">{checked}</strong> checked
+          </span>
+          {changeOrders > 0 && (
+            <span className="is-alert">
+              <strong className="num">{changeOrders}</strong> need{changeOrders === 1 ? 's' : ''} a change order
+            </span>
+          )}
+          {decisions > 0 && (
+            <span className="is-warn">
+              <strong className="num">{decisions}</strong> to decide
+            </span>
+          )}
+          {changeOrdersSent > 0 && (
+            <span>
+              <strong className="num">{changeOrdersSent}</strong> sent
+            </span>
+          )}
+          {changeOrdersApproved > 0 && (
+            <span className="is-ok">
+              <strong className="num">{changeOrdersApproved}</strong> approved
+              {approvedValue > 0 && <span className="num"> · {money(approvedValue)}</span>}
+            </span>
+          )}
+        </p>
       )}
-    </p>
+    </div>
   );
 }
 
@@ -364,7 +396,7 @@ function ProjectsHome() {
       <header className="app-page-head">
         <div>
           <h1 className="display">Projects</h1>
-          <p className="try-lede">One project per client engagement: its scope, its repository and every pull request checked.</p>
+          <p className="page-lede">One project per client engagement: its scope, its repository and every pull request checked.</p>
         </div>
         <Link href="/projects/new" className="button button-primary" data-testid="button-new-project">
           <Icon icon={PlusIcon} size={16} />
@@ -372,21 +404,21 @@ function ProjectsHome() {
         </Link>
       </header>
 
-      {projects.isPending && <p className="app-loading">Loading projects…</p>}
+      {projects.isPending && <Loading>Loading projects…</Loading>}
       {projects.isError && (
         <p className="form-error" role="alert">
           {errorMessage(projects.error, "We couldn't load your projects.")}
         </p>
       )}
       {projects.data && projects.data.projects.length === 0 && (
-        <section className="try-step app-onboarding">
+        <section className="panel app-onboarding">
           <h2 className="display">Set up your first project</h2>
           <ol className="app-steps">
             <li>Create a project for one client engagement.</li>
             <li>Paste its statement of work and confirm what's included and excluded.</li>
             <li>Connect the GitHub repository the work happens in.</li>
           </ol>
-          <p className="try-help">From then on, every pull request gets a check and a comment, and work the SOW excludes comes with a change order draft.</p>
+          <p className="help">From then on, every pull request gets a check and a comment, and work the SOW excludes comes with a change order draft.</p>
         </section>
       )}
       {projects.data && projects.data.projects.length > 0 && (
@@ -452,7 +484,7 @@ function NewProject() {
       <header className="app-page-head">
         <h1 className="display">New project</h1>
       </header>
-      <form className="try-step app-form" onSubmit={submit}>
+      <form className="panel app-form" onSubmit={submit}>
         <div className="field">
           <label htmlFor="project-name">Project name</label>
           <input id="project-name" value={name} maxLength={160} onChange={(e) => setName(e.target.value)} autoFocus />
@@ -500,7 +532,7 @@ function ProjectPage() {
   const detail = useGetProject(projectId, { query: { queryKey: getGetProjectQueryKey(projectId), retry: false } });
   usePageMeta(`${detail.data?.project.name ?? 'Project'} — ScopeCI`, 'A ScopeCI project.');
 
-  if (detail.isPending) return <p className="app-loading">Loading project…</p>;
+  if (detail.isPending) return <Loading>Loading project…</Loading>;
   if (detail.isError || !detail.data) {
     return (
       <p className="app-empty">
@@ -534,7 +566,7 @@ function ProjectPage() {
 
 function SectionHead({ step, title, done, id }: { step?: number; title: string; done?: boolean; id: string }) {
   return (
-    <div className="try-step-head">
+    <div className="panel-head">
       {step !== undefined && (
         <span className={`step-num mono ${done ? 'is-done' : ''}`}>
           {done ? (
@@ -624,10 +656,10 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
   };
 
   return (
-    <section className="try-step" aria-labelledby="scope-title">
+    <section className="panel" aria-labelledby="scope-title">
       <SectionHead step={1} title="Scope" done={Boolean(scope)} id="scope-title" />
       {scope && !dirty && !pasting && (
-        <p className="try-help">
+        <p className="help">
           Scope {scope.version}, saved {relativeTime(scope.savedAt)}. Edit the lists and save to make a new version;
           earlier results keep the version they were checked against.
         </p>
@@ -640,22 +672,22 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
           </label>
           <textarea
             id="project-sow"
-            className="try-textarea mono"
+            className="textarea mono"
             rows={12}
             maxLength={40_000}
             value={sow}
             placeholder="Paste the statement of work: Markdown or text copied from a PDF."
             onChange={(e) => setSow(e.target.value)}
           />
-          <p className="try-help">
+          <p className="help">
             ScopeCI reads what each section includes and excludes. You check that list before anything is saved.{' '}
             {!scope && (
-              <button type="button" className="try-link" onClick={startEmpty}>
+              <button type="button" className="text-link" onClick={startEmpty}>
                 No document? Start with an empty list
               </button>
             )}
             {scope && (
-              <button type="button" className="try-link" onClick={() => setPasting(false)}>
+              <button type="button" className="text-link" onClick={() => setPasting(false)}>
                 Cancel
               </button>
             )}
@@ -674,7 +706,7 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
         draft && (
           <>
             {itemCount(draft) === 0 && (
-              <p className="try-notice">
+              <p className="notice">
                 Nothing is marked as included or excluded yet. Add the work this engagement covers and what it
                 leaves out.
               </p>
@@ -686,7 +718,7 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
               </p>
             )}
             {message && !dirty && (
-              <p className="try-help" role="status">
+              <p className="help" role="status">
                 {message}
               </p>
             )}
@@ -701,7 +733,7 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
                   Discard changes
                 </button>
               )}
-              <button type="button" className="try-link" onClick={() => setPasting(true)}>
+              <button type="button" className="text-link" onClick={() => setPasting(true)}>
                 {scope ? 'Read a new SOW instead' : 'Paste a different document'}
               </button>
             </div>
@@ -758,7 +790,7 @@ function RepositorySection({ project }: { project: Project }) {
   const install = () => remember(`/projects/${project.id}`);
 
   return (
-    <section className="try-step" aria-labelledby="repo-title">
+    <section className="panel" aria-labelledby="repo-title">
       <SectionHead step={2} title="Repository" done={Boolean(project.repository)} id="repo-title" />
 
       {project.repository ? (
@@ -769,7 +801,7 @@ function RepositorySection({ project }: { project: Project }) {
               {project.repository.fullName}
             </a>
           </p>
-          <p className="try-help">
+          <p className="help">
             {project.scopeVersion
               ? `Every pull request opened or updated here is checked against scope ${project.scopeVersion}.`
               : 'Pull requests here are checked once the scope above is saved.'}
@@ -782,7 +814,7 @@ function RepositorySection({ project }: { project: Project }) {
         </>
       ) : !choosing ? (
         <>
-          <p className="try-help">Connect the GitHub repository this engagement's code lives in.</p>
+          <p className="help">Connect the GitHub repository this engagement's code lives in.</p>
           <div className="app-actions">
             <button type="button" className="button button-primary" onClick={() => setChoosing(true)} data-testid="button-choose-repo">
               Choose a repository
@@ -790,11 +822,11 @@ function RepositorySection({ project }: { project: Project }) {
           </div>
         </>
       ) : repos.isPending ? (
-        <p className="app-loading">Asking GitHub which repositories you can connect…</p>
+        <Loading>Asking GitHub which repositories you can connect…</Loading>
       ) : reauth ? (
-        <p className="try-notice" role="alert">
+        <p className="notice is-warning" role="alert">
           GitHub access expired.{' '}
-          <a className="try-link" href={signInHref(`/app/projects/${project.id}`)}>
+          <a className="text-link" href={signInHref(`/app/projects/${project.id}`)}>
             Sign in again
           </a>
         </p>
@@ -805,7 +837,7 @@ function RepositorySection({ project }: { project: Project }) {
       ) : (
         <form onSubmit={connect}>
           {repos.data.repositories.length === 0 ? (
-            <p className="try-notice">
+            <p className="notice">
               The ScopeCI GitHub App isn't installed on any account you can see yet. Install it on the account or
               organization that owns the repository, then come back here.
             </p>
@@ -854,7 +886,7 @@ function RepositorySection({ project }: { project: Project }) {
                 {repos.data.repositories.length === 0 ? 'Install the GitHub App' : 'Add a repository on GitHub'}
               </a>
             )}
-            <button type="button" className="try-link" onClick={() => setChoosing(false)}>
+            <button type="button" className="text-link" onClick={() => setChoosing(false)}>
               Cancel
             </button>
           </div>
@@ -867,16 +899,92 @@ function RepositorySection({ project }: { project: Project }) {
 /* Pull requests ----------------------------------------------------- */
 
 function changeOrderSummary(tracked: TrackedChangeOrder | null): string {
-  if (!tracked || tracked.status === 'DRAFT') return 'Not sent yet';
+  if (!tracked || tracked.status === 'DRAFT') return 'Change order not sent yet';
   if (tracked.status === 'SENT') return `${tracked.reference} sent ${relativeTime(tracked.sentAt!)}, waiting on the client`;
   const price = tracked.amount ? `, ${money(tracked.amount)}` : '';
   return tracked.status === 'APPROVED' ? `${tracked.reference} approved${price}` : `${tracked.reference} declined`;
 }
 
+const CHANGE_ORDER_TONE: Record<TrackedChangeOrder['status'], string> = {
+  DRAFT: '',
+  SENT: 'is-warn',
+  APPROVED: 'is-ok',
+  DECLINED: 'is-alert',
+};
+
 /** "Subject: …" on the first line, then the message, as the draft box shows it. */
 function splitMessage(text: string): { subject?: string; body: string } {
   const match = text.match(/^Subject: (.*)\r?\n\r?\n([\s\S]*)$/);
   return match ? { subject: match[1].slice(0, 300), body: match[2].slice(0, 10_000) } : { body: text.slice(0, 10_000) };
+}
+
+const shortDate = (value: string | Date) =>
+  new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+
+/**
+ * What a PM needs to read first: the clause and the excluded work it names,
+ * or, when nothing was excluded but someone still has to decide, the reason.
+ * In-scope results have nothing to pin.
+ */
+function WhyLine({ pr, tone }: { pr: PullRequestResult; tone: 'alert' | 'warn' | 'ok' }) {
+  if (pr.excluded.length > 0) {
+    // One line per clause, in the order the items were found.
+    const clauses: Array<{ ref: string; title: string; items: string[] }> = [];
+    for (const { item, clauseRef, clauseTitle } of pr.excluded) {
+      const clause = clauses.find((c) => c.ref === clauseRef);
+      if (clause) clause.items.push(item);
+      else clauses.push({ ref: clauseRef, title: clauseTitle, items: [item] });
+    }
+    return (
+      <div className={`why is-${tone === 'ok' ? 'neutral' : tone}`}>
+        {clauses.map((clause) => (
+          <p key={clause.ref}>
+            <span className="why-clause">
+              <span className="mono">{clause.ref}</span> {clause.title} excludes
+            </span>{' '}
+            <strong>{clause.items.join(', ')}</strong>
+          </p>
+        ))}
+      </div>
+    );
+  }
+  if (tone === 'ok') return null;
+  return (
+    <div className={`why is-${tone}`}>
+      <p className="why-reason">{pr.reason}</p>
+    </div>
+  );
+}
+
+/** Drafted, sent, answered: where the change order stands, newest step last. */
+function ChangeOrderSteps({ pr }: { pr: PullRequestResult }) {
+  const tracked = pr.trackedChangeOrder;
+  const status = tracked?.status ?? 'DRAFT';
+  const sent = status !== 'DRAFT';
+  const steps = [
+    { label: 'Drafted', state: 'done', note: shortDate(pr.checkedAt) },
+    { label: 'Sent', state: sent ? 'done' : 'next', note: tracked?.sentAt ? shortDate(tracked.sentAt) : 'Not yet' },
+    status === 'APPROVED'
+      ? { label: 'Approved', state: 'done', note: tracked?.decidedAt ? shortDate(tracked.decidedAt) : '' }
+      : status === 'DECLINED'
+        ? { label: 'Declined', state: 'declined', note: tracked?.decidedAt ? shortDate(tracked.decidedAt) : '' }
+        : { label: 'Client’s answer', state: sent ? 'current' : 'next', note: sent ? 'Waiting' : '' },
+  ];
+  return (
+    <ol className="co-steps" aria-label="Change order progress">
+      {/* Keyed by position, so a step that changes state keeps its element
+          and its track fills rather than reappearing. */}
+      {steps.map((step, index) => (
+        <li key={index} className={`is-${step.state}`}>
+          <strong>
+            {step.state === 'done' && <Icon icon={TickIcon} size={13} strokeWidth={2} />}
+            {step.label}
+          </strong>
+          <span>{step.note}</span>
+        </li>
+      ))}
+    </ol>
+  );
 }
 
 function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestResult }) {
@@ -911,52 +1019,75 @@ function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestRe
   };
 
   return (
-    <details className="pr-row-draft" open={tracked?.status === 'SENT' || undefined}>
-      <summary>
-        Change order <span className="pr-row-co-status">· {changeOrderSummary(tracked)}</span>
-      </summary>
-      {decided ? (
-        <p className="try-help">
-          {tracked!.status === 'APPROVED'
-            ? 'The client approved it. This work is covered on this and later pull requests.'
-            : 'The client declined it. Take the work out of this pull request, or absorb it knowingly.'}
-        </p>
-      ) : (
-        <>
-          <form className="co-hours" onSubmit={price}>
-            <div className="field">
-              <label htmlFor={`co-hours-${pr.evaluationId}`}>
-                Hours{' '}
-                <span className="field-optional">
-                  {project.hourlyRate ? `priced at ${money(project.hourlyRate)} an hour` : 'set an hourly rate in settings to show a price'}
-                </span>
-              </label>
-              <div className="try-inline">
-                <input
-                  id={`co-hours-${pr.evaluationId}`}
-                  type="number"
-                  min={0}
-                  max={10000}
-                  inputMode="numeric"
-                  value={hours}
-                  onChange={(e) => setHours(e.target.value)}
-                />
-                <button type="submit" className="button button-quiet" disabled={update.isPending}>
-                  Update the draft
-                </button>
+    <>
+      <header className="drawer-head">
+        <div>
+          <Dialog.Title className="drawer-title">
+            Change order{tracked && <span className="mono"> {tracked.reference}</span>}
+          </Dialog.Title>
+          <Dialog.Description className="drawer-sub">
+            For{' '}
+            <a href={pr.url} target="_blank" rel="noreferrer">
+              #{pr.number} {pr.title}
+              <Icon icon={ExternalIcon} size={12} />
+            </a>
+          </Dialog.Description>
+        </div>
+        <Dialog.Close className="icon-button" aria-label="Close the change order">
+          <Icon icon={CrossIcon} size={18} />
+        </Dialog.Close>
+      </header>
+
+      <div className="drawer-body">
+        <ChangeOrderSteps pr={pr} />
+        <WhyLine pr={pr} tone={verdictOf(pr.verdict).tone} />
+
+        {decided ? (
+          <p className="help">
+            {tracked!.status === 'APPROVED'
+              ? 'The client approved it. This work is covered on this and later pull requests.'
+              : 'The client declined it. Take the work out of this pull request, or absorb it knowingly.'}
+          </p>
+        ) : (
+          <>
+            <form className="co-hours" onSubmit={price}>
+              <div className="field">
+                <label htmlFor="co-hours">
+                  Hours{' '}
+                  <span className="field-optional">
+                    {project.hourlyRate
+                      ? `priced at ${money(project.hourlyRate)} an hour`
+                      : 'set an hourly rate in settings to show a price'}
+                  </span>
+                </label>
+                <div className="inline-field">
+                  <input
+                    id="co-hours"
+                    type="number"
+                    min={0}
+                    max={10000}
+                    inputMode="numeric"
+                    value={hours}
+                    onChange={(e) => setHours(e.target.value)}
+                  />
+                  <button type="submit" className="button button-quiet" disabled={update.isPending}>
+                    Update the draft
+                  </button>
+                </div>
               </div>
-            </div>
-          </form>
-          <ChangeOrderBox id={`change-order-${pr.evaluationId}`} text={text} onChange={setText} showHeading={false} />
-        </>
-      )}
-      {error && (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
-      )}
+            </form>
+            <ChangeOrderBox id="change-order-text" text={text} onChange={setText} />
+          </>
+        )}
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+
       {!decided && (
-        <div className="app-actions">
+        <footer className="drawer-foot">
           {tracked?.status !== 'SENT' && (
             <button
               type="button"
@@ -970,34 +1101,139 @@ function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestRe
           <button type="button" className="button button-quiet" disabled={update.isPending} onClick={() => save({ status: 'APPROVED' })}>
             Client approved
           </button>
-          <button type="button" className="try-link" disabled={update.isPending} onClick={() => save({ status: 'DECLINED' })}>
+          <button type="button" className="button button-quiet button-danger" disabled={update.isPending} onClick={() => save({ status: 'DECLINED' })}>
             Client declined
           </button>
-        </div>
+        </footer>
       )}
+    </>
+  );
+}
+
+/**
+ * The change order opens beside the list rather than inside it, so the list
+ * stays readable and the PM keeps their place. Radix Dialog keeps focus in
+ * the panel and closes on Escape; focus goes back to the row's button, which
+ * the list remembers because the panel's own buttons may be gone by then.
+ */
+function ChangeOrderDrawer({
+  project,
+  pr,
+  onClose,
+  returnFocus,
+}: {
+  project: Project;
+  pr: PullRequestResult | null;
+  onClose: () => void;
+  returnFocus: () => void;
+}) {
+  // Keep the last pull request while the panel animates closed.
+  const last = useRef(pr);
+  if (pr) last.current = pr;
+  const shown = pr ?? last.current;
+
+  return (
+    <Dialog.Root open={pr !== null} onOpenChange={(open) => !open && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="drawer-overlay" />
+        <Dialog.Content
+          className="drawer"
+          data-testid="change-order-drawer"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            returnFocus();
+          }}
+        >
+          {shown && <ChangeOrderPanel key={shown.evaluationId} project={project} pr={shown} />}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+const FILE_STATUS: Record<ChangedFile['status'], string> = { added: 'A', modified: 'M', deleted: 'D', renamed: 'R' };
+
+/**
+ * The files the check read for this commit, by name and line count. Closed
+ * by default; files cited for excluded work come first, in the tone colour.
+ */
+function ChangedFiles({ pr }: { pr: PullRequestResult }) {
+  if (pr.files.length === 0) return null;
+  const cited = pr.files.filter((f) => f.excludedItem).length;
+  const hidden = pr.fileCount - pr.files.length;
+  return (
+    <details className="pr-files" data-testid="pr-files">
+      <summary>
+        <Icon icon={ChevronDownIcon} size={14} />
+        {pr.fileCount} changed file{pr.fileCount === 1 ? '' : 's'}
+        {cited > 0 && `, ${cited} cited for excluded work`}
+      </summary>
+      <ul className="pr-file-list">
+        {pr.files.map((file) => (
+          <li key={file.path} className={file.excludedItem ? 'is-cited' : ''}>
+            <span className={`pr-file-status mono is-${file.status}`} aria-hidden="true">
+              {FILE_STATUS[file.status]}
+            </span>
+            <span className="pr-file-name">
+              <span className="pr-file-path mono" title={file.path}>
+                <span className="sr-only">{file.status}: </span>
+                {file.path}
+              </span>
+              {file.excludedItem && <span className="pr-file-item">{file.excludedItem}</span>}
+            </span>
+            <span className="pr-file-lines mono num">
+              <span className="is-added">+{file.additions}</span> <span className="is-deleted">−{file.deletions}</span>
+            </span>
+          </li>
+        ))}
+        {hidden > 0 && <li className="pr-file-more">and {hidden} more</li>}
+      </ul>
     </details>
   );
 }
 
-function PullRequestRow({ project, pr }: { project: Project; pr: PullRequestResult }) {
+function PullRequestRow({ pr, onOpen }: { pr: PullRequestResult; onOpen: (button: HTMLButtonElement) => void }) {
   const verdict = verdictOf(pr.verdict);
+  const tracked = pr.trackedChangeOrder;
+  // With excluded items the why line already says it; the full reason
+  // follows as detail. Otherwise the why line is the reason itself.
+  const reasonBelow = pr.excluded.length > 0 || verdict.tone === 'ok';
 
   return (
     <li className={`verdict-card is-${verdict.tone} pr-row`} data-testid="pr-result">
-      <p className="verdict-card-label mono">{verdict.label}</p>
+      <div className="pr-row-head">
+        <p className="verdict-card-label">{verdict.label}</p>
+        <p className="pr-row-meta mono">
+          {pr.prState === 'OPEN' ? 'open' : pr.prState === 'MERGED' ? 'merged' : 'closed'} · checked{' '}
+          {relativeTime(pr.checkedAt)}
+        </p>
+      </div>
       <p className="pr-row-title">
         <a href={pr.url} target="_blank" rel="noreferrer">
           #{pr.number} {pr.title}
           <Icon icon={ExternalIcon} size={13} />
         </a>
       </p>
-      <p className="verdict-card-clause mono">
-        {pr.branch ? `${pr.branch} · ` : ''}
-        {pr.prState === 'OPEN' ? 'open' : pr.prState === 'MERGED' ? 'merged' : 'closed'} · checked {relativeTime(pr.checkedAt)}
-      </p>
-      <p className="verdict-card-reason">{pr.reason}</p>
+      {pr.branch && <p className="verdict-card-clause mono">{pr.branch}</p>}
+      <WhyLine pr={pr} tone={verdict.tone} />
+      {reasonBelow && <p className={pr.excluded.length > 0 ? 'pr-row-detail' : 'verdict-card-reason'}>{pr.reason}</p>}
       {pr.estimate && <p className="verdict-card-estimate">Estimated impact: {pr.estimate}</p>}
-      {(pr.changeOrder || pr.trackedChangeOrder) && <ChangeOrderPanel project={project} pr={pr} />}
+      <ChangedFiles pr={pr} />
+      {(pr.changeOrder || tracked) && (
+        <div className="pr-row-co">
+          <span className={`chip ${tracked ? CHANGE_ORDER_TONE[tracked.status] : ''}`}>{changeOrderSummary(tracked)}</span>
+          <button
+            type="button"
+            className="button button-quiet button-sm"
+            aria-haspopup="dialog"
+            onClick={(event) => onOpen(event.currentTarget)}
+            data-testid="button-open-change-order"
+          >
+            Open change order
+            <Icon icon={ArrowRightIcon} size={14} />
+          </button>
+        </div>
+      )}
     </li>
   );
 }
@@ -1006,18 +1242,21 @@ function PullRequestsSection({ project }: { project: Project }) {
   const results = useListProjectPullRequests(project.id, {
     query: { queryKey: getListProjectPullRequestsQueryKey(project.id), refetchInterval: 30_000 },
   });
+  const [openId, setOpenId] = useState<string | null>(null);
+  const opener = useRef<HTMLButtonElement | null>(null);
+  const open = results.data?.pullRequests.find((pr) => pr.evaluationId === openId) ?? null;
 
   return (
-    <section className="try-step" aria-labelledby="prs-title">
+    <section className="panel" aria-labelledby="prs-title">
       <SectionHead title="Checked pull requests" id="prs-title" />
-      {results.isPending && <p className="app-loading">Loading…</p>}
+      {results.isPending && <Loading>Loading the checked pull requests…</Loading>}
       {results.isError && (
         <p className="form-error" role="alert">
           {errorMessage(results.error, "We couldn't load the results.")}
         </p>
       )}
       {results.data && results.data.pullRequests.length === 0 && (
-        <p className="try-help">
+        <p className="help">
           {project.repository && project.scopeVersion
             ? `Nothing checked yet. The next pull request opened or updated on ${project.repository.fullName} shows up here.`
             : 'Results appear here once the scope is saved and a repository is connected.'}
@@ -1026,10 +1265,23 @@ function PullRequestsSection({ project }: { project: Project }) {
       {results.data && results.data.pullRequests.length > 0 && (
         <ul className="pr-list">
           {results.data.pullRequests.map((pr) => (
-            <PullRequestRow key={pr.evaluationId} project={project} pr={pr} />
+            <PullRequestRow
+              key={pr.evaluationId}
+              pr={pr}
+              onOpen={(button) => {
+                opener.current = button;
+                setOpenId(pr.evaluationId);
+              }}
+            />
           ))}
         </ul>
       )}
+      <ChangeOrderDrawer
+        project={project}
+        pr={open}
+        onClose={() => setOpenId(null)}
+        returnFocus={() => opener.current?.focus()}
+      />
     </section>
   );
 }
@@ -1055,6 +1307,7 @@ function SettingsSection({ project }: { project: Project }) {
   const [, navigate] = useLocation();
   const update = useUpdateProject();
   const archive = useArchiveProject();
+  const [confirm, confirmDialog] = useConfirm();
   const [name, setName] = useState(project.name);
   const [client, setClient] = useState(project.clientName ?? '');
   const [rate, setRate] = useState(project.hourlyRate === null ? '' : String(project.hourlyRate));
@@ -1090,8 +1343,14 @@ function SettingsSection({ project }: { project: Project }) {
     );
   };
 
-  const archiveProject = () => {
-    if (!window.confirm(`Archive "${project.name}"? Its repository stops being checked.`)) return;
+  const archiveProject = async () => {
+    const confirmed = await confirm({
+      title: `Archive ${project.name}?`,
+      description: 'Its repository is disconnected, so pull requests stop being checked, and the project leaves your list.',
+      confirmLabel: 'Archive project',
+      danger: true,
+    });
+    if (!confirmed) return;
     archive.mutate(
       { projectId: project.id },
       {
@@ -1105,10 +1364,10 @@ function SettingsSection({ project }: { project: Project }) {
   };
 
   return (
-    <section className="try-step" aria-labelledby="settings-title">
+    <section className="panel" aria-labelledby="settings-title">
       <SectionHead title="Settings" id="settings-title" />
       <form onSubmit={submit} onChange={() => setStatus('')}>
-        <div className="try-row app-settings-row">
+        <div className="field-row app-settings-row">
           <div className="field">
             <label htmlFor="settings-name">Project name</label>
             <input id="settings-name" value={name} maxLength={160} onChange={(e) => setName(e.target.value)} />
@@ -1160,15 +1419,16 @@ function SettingsSection({ project }: { project: Project }) {
             {update.isPending ? 'Saving…' : 'Save settings'}
           </button>
           {status && (
-            <span className="try-help" role="status">
+            <span className="help" role="status">
               {status}
             </span>
           )}
-          <button type="button" className="try-link app-archive" onClick={archiveProject} disabled={archive.isPending}>
+          <button type="button" className="text-link app-archive" onClick={archiveProject} disabled={archive.isPending}>
             Archive project
           </button>
         </div>
       </form>
+      {confirmDialog}
     </section>
   );
 }
@@ -1185,9 +1445,9 @@ function TeamPage() {
   const createInvite = useCreateInvite();
   const revoke = useRevokeInvite();
   const remove = useRemoveMember();
+  const [confirm, confirmDialog] = useConfirm();
   const [name, setName] = useState('');
   const [link, setLink] = useState('');
-  const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
 
@@ -1201,7 +1461,7 @@ function TeamPage() {
   };
   const fail = (fallback: string) => (err: unknown) => setError(errorMessage(err, fallback));
 
-  if (workspace.isPending) return <p className="app-loading">Loading…</p>;
+  if (workspace.isPending) return <Loading>Loading the team…</Loading>;
   if (workspace.isError || !workspace.data) {
     return (
       <p className="form-error" role="alert">
@@ -1223,21 +1483,11 @@ function TeamPage() {
     createInvite.mutate(undefined, {
       onSuccess: (created) => {
         setLink(created.url);
-        setCopied(false);
         setError('');
         refresh();
       },
       onError: fail("We couldn't make an invite."),
     });
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(link);
-      setCopied(true);
-    } catch {
-      setCopied(false);
-    }
-  };
 
   return (
     <>
@@ -1247,15 +1497,15 @@ function TeamPage() {
       <header className="app-page-head">
         <div>
           <h1 className="display">Team</h1>
-          <p className="try-lede">Everyone here sees and works on all of {team.name}'s projects.</p>
+          <p className="page-lede">Everyone here sees and works on all of {team.name}'s projects.</p>
         </div>
       </header>
 
       {owner && (
-        <section className="try-step" aria-labelledby="workspace-title">
+        <section className="panel" aria-labelledby="workspace-title">
           <SectionHead title="Workspace name" id="workspace-title" />
           <form onSubmit={submitName} onChange={() => setStatus('')}>
-            <div className="try-inline app-name-row">
+            <div className="inline-field app-name-row">
               <label className="sr-only" htmlFor="workspace-name">
                 Workspace name
               </label>
@@ -1265,7 +1515,7 @@ function TeamPage() {
               </button>
             </div>
             {status && (
-              <p className="try-help" role="status">
+              <p className="help" role="status">
                 {status}
               </p>
             )}
@@ -1273,7 +1523,7 @@ function TeamPage() {
         </section>
       )}
 
-      <section className="try-step" aria-labelledby="members-title">
+      <section className="panel" aria-labelledby="members-title">
         <SectionHead title="Members" id="members-title" />
         <ul className="member-list">
           {team.members.map((member) => (
@@ -1289,10 +1539,16 @@ function TeamPage() {
               {owner && !member.you && (
                 <button
                   type="button"
-                  className="try-link app-archive"
+                  className="text-link app-archive"
                   disabled={remove.isPending}
-                  onClick={() => {
-                    if (!window.confirm(`Remove ${member.login} from ${team.name}?`)) return;
+                  onClick={async () => {
+                    const confirmed = await confirm({
+                      title: `Remove ${member.name ?? member.login} from ${team.name}?`,
+                      description: `@${member.login} loses access to every project in this workspace. You can invite them again later.`,
+                      confirmLabel: 'Remove',
+                      danger: true,
+                    });
+                    if (!confirmed) return;
                     remove.mutate({ userId: member.userId }, { onSuccess: refresh, onError: fail("We couldn't remove them.") });
                   }}
                 >
@@ -1305,9 +1561,9 @@ function TeamPage() {
       </section>
 
       {owner && (
-        <section className="try-step" aria-labelledby="invite-title">
+        <section className="panel" aria-labelledby="invite-title">
           <SectionHead title="Invite someone" id="invite-title" />
-          <p className="try-help">
+          <p className="help">
             Make a link and send it to them. It works once, for seven days, and they sign in with their own GitHub
             account.
           </p>
@@ -1316,14 +1572,11 @@ function TeamPage() {
               <label className="sr-only" htmlFor="invite-url">
                 Invite link
               </label>
-              <div className="try-inline">
+              <div className="inline-field">
                 <input id="invite-url" className="mono" readOnly value={link} onFocus={(e) => e.target.select()} />
-                <button type="button" className="button button-quiet" onClick={copy}>
-                  <Icon icon={CopyIcon} size={14} />
-                  {copied ? 'Copied' : 'Copy'}
-                </button>
+                <CopyButton text={link} />
               </div>
-              <p className="try-help">This link is only shown now. Make another one if it gets lost.</p>
+              <p className="help">This link is only shown now. Make another one if it gets lost.</p>
             </div>
           ) : null}
           <div className="app-actions">
@@ -1345,7 +1598,7 @@ function TeamPage() {
                   </span>
                   <button
                     type="button"
-                    className="try-link app-archive"
+                    className="text-link app-archive"
                     disabled={revoke.isPending}
                     onClick={() => revoke.mutate({ inviteId: open.id }, { onSuccess: refresh, onError: fail("We couldn't cancel it.") })}
                   >
@@ -1363,6 +1616,7 @@ function TeamPage() {
           {error}
         </p>
       )}
+      {confirmDialog}
     </>
   );
 }
@@ -1388,14 +1642,14 @@ function InvitePage() {
       },
     );
 
-  if (invite.isPending) return <p className="app-loading">Checking the invite…</p>;
+  if (invite.isPending) return <Loading>Checking the invite…</Loading>;
   if (invite.isError || !invite.data) {
     return (
       <section className="app-signin panel">
         <h1 className="display">This invite doesn't work</h1>
-        <p className="try-lede">{errorMessage(invite.error, 'The link may be wrong.')}</p>
-        <p className="try-help">
-          <Link href="/" className="try-link">
+        <p className="page-lede">{errorMessage(invite.error, 'The link may be wrong.')}</p>
+        <p className="help">
+          <Link href="/" className="text-link">
             Go to your projects
           </Link>
         </p>
@@ -1406,7 +1660,7 @@ function InvitePage() {
   return (
     <section className="app-signin panel" aria-labelledby="invite-heading">
       <h1 id="invite-heading" className="display">Join {invite.data.workspaceName}</h1>
-      <p className="try-lede">
+      <p className="page-lede">
         {invite.data.invitedBy ? `@${invite.data.invitedBy} invited you` : 'You were invited'} to work on{' '}
         {invite.data.workspaceName}'s projects in ScopeCI.
         {invite.data.alreadyMember && " You're already a member; joining switches you to it."}

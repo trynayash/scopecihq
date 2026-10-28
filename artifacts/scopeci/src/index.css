@@ -1,5 +1,4 @@
 @import 'tailwindcss';
-@import 'tw-animate-css';
 
 /* The site's own styles, in cascade order: roles, then elements, then the
    shared chrome, then each kind of page. */

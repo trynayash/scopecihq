@@ -6,6 +6,8 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './changedFile';
+export * from './changedFileStatus';
 export * from './changeOrderUpdateInput';
 export * from './changeOrderUpdateInputStatus';
 export * from './demoChangedFile';
@@ -23,6 +25,7 @@ export * from './demoScopeClause';
 export * from './demoScopeInput';
 export * from './demoSowInput';
 export * from './errorResponse';
+export * from './excludedItem';
 export * from './getDemoGithubPrParams';
 export * from './gitHubRepository';
 export * from './gitHubRepositoryList';

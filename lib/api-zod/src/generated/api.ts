@@ -835,6 +835,19 @@ export const ListProjectPullRequestsResponse = zod.object({
   "sentAt": zod.coerce.date().nullable(),
   "decidedAt": zod.coerce.date().nullable()
 }),zod.null()]),
+  "excluded": zod.array(zod.object({
+  "item": zod.string(),
+  "clauseRef": zod.string(),
+  "clauseTitle": zod.string()
+})).describe('Work this pull request builds that the scope excludes, each with the clause that excludes it. Empty unless the result names excluded work.'),
+  "files": zod.array(zod.object({
+  "path": zod.string(),
+  "status": zod.enum(['added', 'modified', 'deleted', 'renamed']),
+  "additions": zod.number().int(),
+  "deletions": zod.number().int(),
+  "excludedItem": zod.string().nullable().describe('The excluded item the check cited this file for, or null.')
+})).describe('The changed files the check read for this commit, by name and line count only (never their contents). Files cited for excluded work come first. Empty when the commit\'s file list wasn\'t recorded.'),
+  "fileCount": zod.number().int().describe('How many files the commit changes. Can exceed the length of files, which is capped.'),
   "checkedAt": zod.coerce.date()
 }))
 })

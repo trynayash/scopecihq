@@ -4,8 +4,8 @@ import { HugeiconsIcon, type IconSvgElement } from '@hugeicons/react';
  * The site's icons: Hugeicons' open-source stroke set (MIT,
  * github.com/hugeicons/hugeicons), re-exported under the plain names the
  * pages use. Every page imports from here, so the set stays small and one
- * swap changes it everywhere. Brand marks (GitHub, Linear) are not icons;
- * they come from VendorMark in site.tsx.
+ * swap changes it everywhere. The GitHub mark is not an icon; it comes from
+ * VendorMark in site.tsx.
  */
 export {
   Add01Icon as PlusIcon,

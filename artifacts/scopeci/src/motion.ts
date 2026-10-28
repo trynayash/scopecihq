@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 
 /**
  * The few motion helpers the site needs. Everything here degrades to the
@@ -157,3 +158,82 @@ export function usePointerTilt<T extends HTMLElement>(maxDegrees = 5) {
 
   return ref;
 }
+
+/**
+ * One selection mark that slides between the items of a group, so the eye
+ * follows the choice rather than seeing one item switch off and another on.
+ * Writes the selected item's box to `--ind-x`, `--ind-y`, `--ind-w` and
+ * `--ind-h` on the container; the CSS draws the mark. The container gets
+ * `data-indicator="placed"` before the first measure and `"ready"` a frame
+ * later, so the mark appears in place and only animates on later moves.
+ * With nothing selected the attribute goes, and the items' own selected
+ * style is all there is. `key` is whatever changes when the selection does.
+ */
+export function useIndicator<T extends HTMLElement>(selector: string, key: unknown) {
+  // A callback ref, so a group that mounts later (after data loads) is
+  // still found.
+  const [root, setRoot] = useState<T | null>(null);
+
+  useLayoutEffect(() => {
+    if (!root) return;
+    let frame = 0;
+    const place = () => {
+      const item = root.querySelector<HTMLElement>(selector);
+      if (!item) {
+        delete root.dataset.indicator;
+        return;
+      }
+      // Offsets are measured against the container, which the attribute
+      // makes the positioned ancestor; transforms (a pressed item) are ignored.
+      const first = !root.dataset.indicator;
+      if (first) root.dataset.indicator = 'placed';
+      root.style.setProperty('--ind-x', `${item.offsetLeft}px`);
+      root.style.setProperty('--ind-y', `${item.offsetTop}px`);
+      root.style.setProperty('--ind-w', `${item.offsetWidth}px`);
+      root.style.setProperty('--ind-h', `${item.offsetHeight}px`);
+      if (first) {
+        cancelAnimationFrame(frame);
+        frame = requestAnimationFrame(() => {
+          if (root.dataset.indicator) root.dataset.indicator = 'ready';
+        });
+      }
+    };
+    place();
+    // Labels change width when fonts load or the layout reflows.
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(place);
+    if (observer) {
+      observer.observe(root);
+      for (const child of Array.from(root.children)) observer.observe(child);
+    }
+    return () => {
+      observer?.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [root, selector, key]);
+
+  return setRoot;
+}
+
+/**
+ * Runs a DOM-changing update inside a view transition, so a page change or
+ * a theme change crossfades instead of cutting. `kind` is set on <html> as
+ * `data-transition` for the duration, for CSS that treats the two
+ * differently. Without the API, or with reduced motion, the update just runs.
+ */
+export function withViewTransition(update: () => void, kind: 'page' | 'theme' = 'page') {
+  if (typeof document === 'undefined' || !document.startViewTransition || prefersReducedMotion()) {
+    update();
+    return;
+  }
+  const html = document.documentElement;
+  const transition = document.startViewTransition(() => flushSync(update));
+  html.dataset.transition = kind;
+  current = transition;
+  // A newer transition skips this one; only the latest clears the marker.
+  const clear = () => {
+    if (current === transition) delete html.dataset.transition;
+  };
+  transition.finished.then(clear, clear);
+}
+
+let current: ViewTransition | null = null;

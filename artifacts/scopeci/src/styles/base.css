@@ -6,7 +6,7 @@
 
 html {
   scroll-behavior: smooth;
-  scroll-padding-top: calc(var(--header-h) + 24px);
+  scroll-padding-top: calc(var(--header-h) + var(--space-5));
   -webkit-text-size-adjust: 100%;
   background: var(--bg);
 }
@@ -39,7 +39,13 @@ p { text-wrap: pretty; }
 :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 3px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
+  animation: focus-ring var(--fast) var(--ease-out);
+}
+/* The ring closes in from the element's edge, so the eye catches where
+   focus went. */
+@keyframes focus-ring {
+  from { outline-color: transparent; outline-offset: 0; }
 }
 
 .sr-only {
@@ -59,7 +65,7 @@ p { text-wrap: pretty; }
   z-index: 80;
   top: 10px;
   left: 10px;
-  padding: 10px 14px;
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--line-3);
   border-radius: var(--radius-s);
   background: var(--bg-raised);
@@ -106,28 +112,28 @@ p { text-wrap: pretty; }
 .kicker {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
   color: var(--fg-muted);
-  font-size: var(--t-small);
+  font-size: var(--t-ui);
   font-weight: 500;
   letter-spacing: -0.005em;
 }
 .kicker-num {
   color: var(--brand);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--t-code-s);
   font-weight: 500;
 }
 .kicker-rule { width: 28px; height: 1px; background: var(--line-3); }
 
 .section-title {
-  margin-top: 18px;
+  margin-top: var(--space-4);
   font-size: var(--t-display);
 }
 
 .section-lede {
   max-width: 54ch;
-  margin-top: 20px;
+  margin-top: var(--space-4);
   color: var(--fg-muted);
   font-size: var(--t-lede);
   line-height: 1.6;
@@ -136,7 +142,7 @@ p { text-wrap: pretty; }
 
 .section {
   position: relative;
-  padding-block: clamp(72px, 9vw, 128px);
+  padding-block: clamp(var(--space-8), 9vw, var(--space-10));
 }
 .section + .section { border-top: 1px solid var(--line); }
 
@@ -163,13 +169,13 @@ p { text-wrap: pretty; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--space-2);
   min-height: 44px;
-  padding-inline: 18px;
+  padding-inline: var(--space-4);
   border: 1px solid transparent;
   border-radius: var(--radius);
-  font-size: 14.5px;
-  font-weight: 550;
+  font-size: var(--t-ui);
+  font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 1;
   white-space: nowrap;
@@ -180,14 +186,15 @@ p { text-wrap: pretty; }
     box-shadow var(--fast) var(--ease),
     transform var(--fast) var(--ease);
 }
-.button svg { flex: none; transition: transform 220ms var(--ease-out); }
-.button:active:not([disabled]) { transform: translateY(1px) scale(0.99); }
+.button svg { flex: none; transition: transform var(--fast) var(--ease-out); }
+/* Pressing is quick and letting go is a touch slower, like a key. */
+.button:active:not([disabled]) { transform: translateY(1px) scale(0.99); transition-duration: var(--press); }
 .button[disabled] { cursor: not-allowed; opacity: 0.6; }
 
 .button-primary {
   background: var(--button-bg);
   color: var(--button-fg);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 1px 2px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-1);
 }
 .button-primary:hover:not([disabled]) { background: var(--button-bg-hover); }
 .button-primary:hover:not([disabled]) svg:last-child { transform: translateX(3px); }
@@ -202,20 +209,20 @@ p { text-wrap: pretty; }
 
 .button-quiet {
   min-height: 38px;
-  padding-inline: 14px;
+  padding-inline: var(--space-4);
   border-color: var(--line-2);
   background: transparent;
   color: var(--fg-2);
-  font-size: 13.5px;
+  font-size: var(--t-ui);
   font-weight: 500;
 }
 .button-quiet:hover:not([disabled]) { border-color: var(--line-3); background: var(--bg-hover); color: var(--fg); }
 
-.button-danger { color: var(--alert); }
-.button-danger:hover:not([disabled]) { border-color: var(--alert-line); background: var(--alert-wash); color: var(--alert); }
+.button-danger { color: var(--error); }
+.button-danger:hover:not([disabled]) { border-color: var(--error-line); background: var(--error-wash); color: var(--error); }
 
-.button-sm { min-height: 36px; padding-inline: 14px; border-radius: var(--radius-s); font-size: 13.5px; }
-.button-lg { min-height: 50px; padding-inline: 24px; font-size: 15.5px; }
+.button-sm { min-height: 36px; padding-inline: var(--space-4); border-radius: var(--radius-s); font-size: var(--t-caption); }
+.button-lg { min-height: 50px; padding-inline: var(--space-5); font-size: var(--t-body); }
 
 .icon-button {
   display: inline-grid;
@@ -225,9 +232,30 @@ p { text-wrap: pretty; }
   border: 1px solid transparent;
   border-radius: var(--radius-s);
   color: var(--fg-muted);
-  transition: color var(--fast) var(--ease), background-color var(--fast) var(--ease), border-color var(--fast) var(--ease);
+  transition:
+    color var(--fast) var(--ease),
+    background-color var(--fast) var(--ease),
+    border-color var(--fast) var(--ease),
+    transform var(--fast) var(--ease);
 }
 .icon-button:hover { color: var(--fg); background: var(--bg-hover); border-color: var(--line); }
+.icon-button:active { transform: scale(0.94); transition-duration: var(--press); }
+
+/* Copy: the icon turns into a tick and the label into "Copied" in place
+   (CopyButton). Each pair shares one grid cell, so nothing shifts. */
+.copy-glyph,
+.copy-label { display: inline-grid; justify-items: start; }
+.copy-button .copy-glyph > *,
+.copy-button .copy-label > * {
+  grid-area: 1 / 1;
+  transition: opacity var(--fast) var(--ease), transform var(--medium) var(--ease-out);
+}
+.copy-button .copy-glyph > :last-child { color: var(--success); opacity: 0; transform: scale(0.4); }
+.copy-button .copy-label > :last-child { opacity: 0; }
+.copy-button.is-copied .copy-glyph > :first-child { opacity: 0; transform: scale(0.4); }
+.copy-button.is-copied .copy-glyph > :last-child { opacity: 1; transform: none; }
+.copy-button.is-copied .copy-label > :first-child { opacity: 0; }
+.copy-button.is-copied .copy-label > :last-child { opacity: 1; }
 
 .spinner {
   display: block;
@@ -245,48 +273,47 @@ p { text-wrap: pretty; }
    Fields
    ================================================================== */
 
-.field { display: grid; gap: 7px; min-width: 0; }
+.field { display: grid; gap: var(--space-2); min-width: 0; }
 .field > label,
 .field-label {
   color: var(--fg-2);
-  font-size: 13.5px;
+  font-size: var(--t-ui);
   font-weight: 500;
   letter-spacing: -0.005em;
 }
-.field-optional { margin-left: 6px; color: var(--fg-faint); font-weight: 400; }
+.field-optional { margin-left: var(--space-1); color: var(--fg-faint); font-weight: 400; }
 
 .field input,
 .field select,
 .input,
-.try-textarea,
-.try-inline input,
+.textarea,
+.inline-field input,
 .scope-add input {
   width: 100%;
   min-height: 44px;
-  padding: 10px 13px;
+  padding: var(--space-3);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-s);
   background: var(--input-bg);
   color: var(--fg);
-  font-size: 15px;
+  font-size: var(--t-body);
   letter-spacing: -0.005em;
-  box-shadow: inset 0 1px 1px rgba(17, 23, 20, 0.03);
   transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
 }
 .field input::placeholder,
 .input::placeholder,
-.try-textarea::placeholder,
-.try-inline input::placeholder,
+.textarea::placeholder,
+.inline-field input::placeholder,
 .scope-add input::placeholder { color: var(--fg-faint); }
 .field input:hover:not(:disabled),
 .input:hover:not(:disabled),
-.try-textarea:hover:not(:disabled),
-.try-inline input:hover:not(:disabled) { border-color: var(--line-3); }
+.textarea:hover:not(:disabled),
+.inline-field input:hover:not(:disabled) { border-color: var(--line-3); }
 .field input:focus,
 .field select:focus,
 .input:focus,
-.try-textarea:focus,
-.try-inline input:focus,
+.textarea:focus,
+.inline-field input:focus,
 .scope-add input:focus {
   outline: 0;
   border-color: var(--brand-bright);
@@ -295,21 +322,21 @@ p { text-wrap: pretty; }
   box-shadow: 0 0 0 1px var(--brand-bright);
 }
 .field input:disabled { opacity: 0.6; cursor: not-allowed; }
-.field input.is-invalid { border-color: var(--alert); }
-.field input.is-invalid:focus { box-shadow: 0 0 0 1px var(--alert); }
+.field input.is-invalid { border-color: var(--error); }
+.field input.is-invalid:focus { box-shadow: 0 0 0 1px var(--error); }
 
-.field-error { color: var(--alert); font-size: 13px; line-height: 1.45; }
+.field-error { color: var(--error); font-size: var(--t-caption); line-height: 1.45; }
 
 .form-status { margin: 0; }
 .form-status:empty { display: none; }
 .form-error {
   display: block;
-  padding: 11px 14px;
-  border: 1px solid var(--alert-line);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--error-line);
   border-radius: var(--radius-s);
-  background: var(--alert-wash);
-  color: var(--alert);
-  font-size: 13.5px;
+  background: var(--error-wash);
+  color: var(--error);
+  font-size: var(--t-ui);
   line-height: 1.5;
 }
 
@@ -330,21 +357,22 @@ p { text-wrap: pretty; }
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1);
   min-height: 24px;
-  padding: 2px 9px;
+  padding: 2px var(--space-2);
   border: 1px solid var(--line-2);
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   background: var(--bg-raised);
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--t-caption);
   font-weight: 500;
   line-height: 1.3;
   white-space: nowrap;
+  transition: background-color var(--medium) var(--ease), border-color var(--medium) var(--ease), color var(--medium) var(--ease);
 }
-.chip.is-ok { border-color: var(--ok-line); background: var(--ok-wash); color: var(--ok); }
-.chip.is-warn { border-color: var(--warn-line); background: var(--warn-wash); color: var(--warn); }
-.chip.is-alert { border-color: var(--alert-line); background: var(--alert-wash); color: var(--alert); }
+.chip.is-ok { border-color: var(--success-line); background: var(--success-wash); color: var(--success); }
+.chip.is-warn { border-color: var(--warning-line); background: var(--warning-wash); color: var(--warning); }
+.chip.is-alert { border-color: var(--error-line); background: var(--error-wash); color: var(--error); }
 
 /* Reveal on scroll: content is visible by default and only hidden once
    the script has marked the page as able to bring it back. */
@@ -352,11 +380,92 @@ p { text-wrap: pretty; }
   opacity: 0;
   transform: translateY(14px);
   transition:
-    opacity 700ms var(--ease-out),
-    transform 700ms var(--ease-out);
+    opacity var(--slow) var(--ease-out),
+    transform var(--slow) var(--ease-out);
   transition-delay: calc(var(--reveal-delay, 0) * 1ms);
 }
 .js-reveal [data-reveal].is-revealed { opacity: 1; transform: none; }
+
+/* ==================================================================
+   Disclosure
+   ================================================================== */
+
+/* A <details> opens to its height instead of appearing at full size. */
+@supports selector(::details-content) {
+  :root { interpolate-size: allow-keywords; }
+  :is(.faq-item, .pr-files, .try-comment)::details-content {
+    block-size: 0;
+    overflow: clip;
+    transition: block-size var(--panel) var(--ease-out), content-visibility var(--panel) allow-discrete;
+  }
+  :is(.faq-item, .pr-files, .try-comment)[open]::details-content { block-size: auto; }
+}
+
+/* ==================================================================
+   Selection indicator
+   ================================================================== */
+
+/* One mark per group that slides to the selected item (useIndicator in
+   motion.ts writes the item's box into --ind-*). Until it has been placed,
+   or without script, the item's own selected style shows instead. Each
+   control styles the mark and drops its item style once the mark exists. */
+[data-indicator] { position: relative; isolation: isolate; }
+[data-indicator]::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  top: 0;
+  left: 0;
+  width: var(--ind-w);
+  height: var(--ind-h);
+  transform: translate(var(--ind-x), var(--ind-y));
+  pointer-events: none;
+}
+[data-indicator='ready']::before {
+  transition:
+    transform var(--medium) var(--ease-emphasized),
+    width var(--medium) var(--ease-emphasized),
+    height var(--medium) var(--ease-emphasized);
+}
+
+/* ==================================================================
+   Page and theme changes
+   ================================================================== */
+
+/* withViewTransition() in motion.ts marks <html> with the kind of change.
+   A page fades through: the old one goes quickly, the new one comes in a
+   beat later with a short rise. The headers are held still, so only what
+   changed moves. A theme change is the browser's own crossfade of the
+   whole window, kept short since light into dark passes through grey. */
+html[data-transition='page']::view-transition { background: var(--bg); }
+html[data-transition='page']::view-transition-old(root) {
+  animation: vt-fade-out var(--fast) var(--ease) both;
+}
+html[data-transition='page']::view-transition-new(root) {
+  animation: vt-rise-in var(--medium) var(--ease-out) var(--stagger) both;
+}
+.site-header { view-transition-name: site-header; }
+.app-header { view-transition-name: app-header; }
+html[data-transition='page']::view-transition-group(site-header),
+html[data-transition='page']::view-transition-group(app-header),
+html[data-transition='page']::view-transition-new(site-header),
+html[data-transition='page']::view-transition-new(app-header) { animation: none; }
+html[data-transition='page']::view-transition-old(site-header),
+html[data-transition='page']::view-transition-old(app-header) { display: none; }
+
+html[data-transition='theme']::view-transition-group(*),
+html[data-transition='theme']::view-transition-old(*),
+html[data-transition='theme']::view-transition-new(*) {
+  animation-duration: var(--medium);
+  animation-timing-function: var(--ease);
+}
+
+@keyframes vt-fade-out {
+  to { opacity: 0; }
+}
+@keyframes vt-rise-in {
+  from { opacity: 0; transform: translateY(6px); }
+}
 
 /* ==================================================================
    Reduced motion

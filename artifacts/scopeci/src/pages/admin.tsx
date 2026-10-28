@@ -1,5 +1,7 @@
 import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { BASE, HOME_PATH, Logo, ThemeToggle, usePageMeta } from '../site';
+import { useConfirm } from '../components/confirm-dialog';
+import { Loading } from '../components/loading';
 import { CrossIcon, DownloadIcon, Icon, LockIcon, ReloadIcon, SignOutIcon, TickIcon } from '../icons';
 
 const ADMIN_API = `${BASE}/api/admin`;
@@ -60,6 +62,7 @@ const SETUP_RESULTS: Record<string, string> = {
 
 /** Creates ScopeCI's GitHub App with GitHub's manifest flow, or shows the one in use. */
 function GitHubAppPanel({ onSignedOut }: { onSignedOut: () => void }) {
+  const [confirm, confirmDialog] = useConfirm();
   const [status, setStatus] = useState<GitHubAppStatus | null>(null);
   const [name, setName] = useState('ScopeCI');
   const [organization, setOrganization] = useState('');
@@ -119,7 +122,13 @@ function GitHubAppPanel({ onSignedOut }: { onSignedOut: () => void }) {
   };
 
   const forget = async () => {
-    if (!window.confirm("Forget this GitHub App? Sign-in and pull request checks stop until you create one again. The App stays on GitHub until you delete it there.")) return;
+    const confirmed = await confirm({
+      title: 'Forget this GitHub App?',
+      description: 'Sign-in and pull request checks stop until you create one again. The App stays on GitHub until you delete it there.',
+      confirmLabel: 'Forget the App',
+      danger: true,
+    });
+    if (!confirmed) return;
     setError('');
     try {
       const res = await adminFetch('/github-app', { method: 'DELETE' });
@@ -135,7 +144,7 @@ function GitHubAppPanel({ onSignedOut }: { onSignedOut: () => void }) {
       <h2 id="github-app-heading">GitHub App</h2>
       {notice && <p className="notice" role="status">{notice}</p>}
       {!status ? (
-        !error && <p className="muted-text">Checking…</p>
+        !error && <Loading className="muted-text">Checking…</Loading>
       ) : status.configured ? (
         <>
           <p className="muted-text">
@@ -198,6 +207,7 @@ function GitHubAppPanel({ onSignedOut }: { onSignedOut: () => void }) {
         </form>
       )}
       {error && <p className="form-error" role="alert">{error}</p>}
+      {confirmDialog}
     </section>
   );
 }
@@ -234,6 +244,7 @@ export default function AdminWaitlist() {
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [confirm, confirmDialog] = useConfirm();
 
   /** Loads both lists; drops back to the sign-in form when the session is gone. */
   const load = useCallback(async () => {
@@ -308,7 +319,13 @@ export default function AdminWaitlist() {
   };
 
   const remove = async (signup: AdminSignup) => {
-    if (!window.confirm(`Remove ${signup.email} from the waitlist? This can't be undone.`)) return;
+    const confirmed = await confirm({
+      title: 'Remove this signup?',
+      description: `${signup.email} leaves the waitlist. This can't be undone.`,
+      confirmLabel: 'Remove signup',
+      danger: true,
+    });
+    if (!confirmed) return;
     setError('');
     try {
       const res = await adminFetch(`/waitlist/${signup.id}`, { method: 'DELETE' });
@@ -336,7 +353,7 @@ export default function AdminWaitlist() {
   if (view === 'checking') {
     return (
       <AdminShell>
-        <p className="admin-empty">Checking your session…</p>
+        <Loading className="admin-empty">Checking your session…</Loading>
       </AdminShell>
     );
   }
@@ -479,6 +496,7 @@ export default function AdminWaitlist() {
           </div>
         </>
       )}
+      {confirmDialog}
     </AdminShell>
   );
 }

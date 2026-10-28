@@ -1155,6 +1155,19 @@ components:
           oneOf:
             - $ref: "#/components/schemas/TrackedChangeOrder"
             - type: "null"
+        excluded:
+          type: array
+          description: Work this pull request builds that the scope excludes, each with the clause that excludes it. Empty unless the result names excluded work.
+          items:
+            $ref: "#/components/schemas/ExcludedItem"
+        files:
+          type: array
+          description: The changed files the check read for this commit, by name and line count only (never their contents). Files cited for excluded work come first. Empty when the commit's file list wasn't recorded.
+          items:
+            $ref: "#/components/schemas/ChangedFile"
+        fileCount:
+          type: integer
+          description: How many files the commit changes. Can exceed the length of files, which is capped.
         checkedAt:
           type: string
           format: date-time
@@ -1171,7 +1184,44 @@ components:
         - reason
         - estimate
         - changeOrder
+        - excluded
+        - files
+        - fileCount
         - checkedAt
+    ChangedFile:
+      type: object
+      properties:
+        path:
+          type: string
+        status:
+          type: string
+          enum: [added, modified, deleted, renamed]
+        additions:
+          type: integer
+        deletions:
+          type: integer
+        excludedItem:
+          type: ["string", "null"]
+          description: The excluded item the check cited this file for, or null.
+      required:
+        - path
+        - status
+        - additions
+        - deletions
+        - excludedItem
+    ExcludedItem:
+      type: object
+      properties:
+        item:
+          type: string
+        clauseRef:
+          type: string
+        clauseTitle:
+          type: string
+      required:
+        - item
+        - clauseRef
+        - clauseTitle
     PullRequestResultList:
       type: object
       properties:

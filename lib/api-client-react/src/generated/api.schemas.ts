@@ -415,6 +415,34 @@ export interface TrackedChangeOrder {
   decidedAt: string | null;
 }
 
+export interface ExcludedItem {
+  item: string;
+  clauseRef: string;
+  clauseTitle: string;
+}
+
+export type ChangedFileStatus = typeof ChangedFileStatus[keyof typeof ChangedFileStatus];
+
+
+export const ChangedFileStatus = {
+  added: 'added',
+  modified: 'modified',
+  deleted: 'deleted',
+  renamed: 'renamed',
+} as const;
+
+export interface ChangedFile {
+  path: string;
+  status: ChangedFileStatus;
+  additions: number;
+  deletions: number;
+  /**
+     * The excluded item the check cited this file for, or null.
+     * @nullable
+     */
+  excludedItem: string | null;
+}
+
 export interface PullRequestResult {
   evaluationId: string;
   number: number;
@@ -431,6 +459,12 @@ export interface PullRequestResult {
   estimate: string | null;
   changeOrder: DemoChangeOrder | null;
   trackedChangeOrder: TrackedChangeOrder | null;
+  /** Work this pull request builds that the scope excludes, each with the clause that excludes it. Empty unless the result names excluded work. */
+  excluded: ExcludedItem[];
+  /** The changed files the check read for this commit, by name and line count only (never their contents). Files cited for excluded work come first. Empty when the commit's file list wasn't recorded. */
+  files: ChangedFile[];
+  /** How many files the commit changes. Can exceed the length of files, which is capped. */
+  fileCount: number;
   checkedAt: string;
 }
 
