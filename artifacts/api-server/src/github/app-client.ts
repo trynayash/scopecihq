@@ -107,7 +107,8 @@ export class GitHubAppClient implements IGitHubClient {
           additions: f.additions ?? 0,
           deletions: f.deletions ?? 0,
           changes: f.changes,
-          patch: f.patch,
+          // GitHub sends each file's diff text too; ScopeCI reads names only
+          // and doesn't keep it.
           previous_filename: f.previous_filename,
         });
       }

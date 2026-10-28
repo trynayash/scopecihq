@@ -23,6 +23,19 @@ export async function ensureSchema(pool: Pool): Promise<{ warnings: string[] }> 
       // A single batch runs as one transaction: all of it applies, or none.
       await client.query(SCHEMA_STATEMENTS.join("\n"));
 
+      // Until 28 October 2026 each changed file's diff text was stored with
+      // its name. The check only ever read the names, so drop what was kept.
+      // Runs on every start and changes nothing once it has.
+      await client.query(
+        `UPDATE pr_diff_analyses
+            SET files_changed_json = (
+              SELECT coalesce(jsonb_agg(f.value - 'patch' - 'isTruncated' ORDER BY f.i), '[]'::jsonb)
+                FROM jsonb_array_elements(files_changed_json) WITH ORDINALITY AS f(value, i)
+            )
+          WHERE jsonb_typeof(files_changed_json) = 'array'
+            AND jsonb_path_exists(files_changed_json, '$[*].patch')`,
+      );
+
       const roles = await client.query<{ rolname: string }>(
         "SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated')",
       );
