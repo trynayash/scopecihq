@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useRef, useState } from 'react';
 import type { DemoScopeClause } from '@workspace/api-client-react';
 import { CrossIcon, Icon, PlusIcon, TickIcon } from './icons';
 import { CopyButton } from './components/copy-button';
@@ -48,6 +48,19 @@ export function ItemList({
   const [draft, setDraft] = useState('');
   // Only the item just typed in gets the entrance, not the list as loaded.
   const [added, setAdded] = useState<string | null>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Removing the focused item would drop focus to the page; it moves to the
+  // item that took its place, the one before it, or the field.
+  const remove = (index: number) => {
+    onChange(items.filter((_, i) => i !== index));
+    requestAnimationFrame(() => {
+      const buttons = listRef.current?.querySelectorAll<HTMLButtonElement>('.scope-remove');
+      const next = buttons?.[Math.min(index, buttons.length - 1)];
+      (next ?? inputRef.current)?.focus();
+    });
+  };
   const add = (event: FormEvent) => {
     event.preventDefault();
     const item = draft.trim().toLowerCase();
@@ -64,15 +77,15 @@ export function ItemList({
       {items.length === 0 ? (
         <p className="scope-list-empty">Nothing yet.</p>
       ) : (
-        <ul>
-          {items.map((item) => (
+        <ul ref={listRef}>
+          {items.map((item, index) => (
             <li key={item} className={item === added ? 'is-new' : undefined}>
               {tone === 'included' ? <Icon icon={TickIcon} size={13} /> : <Icon icon={CrossIcon} size={13} />}
               <span>{item}</span>
               <button
                 type="button"
                 className="scope-remove"
-                onClick={() => onChange(items.filter((i) => i !== item))}
+                onClick={() => remove(index)}
                 aria-label={`Remove "${item}" from ${label.toLowerCase()}`}
               >
                 <Icon icon={CrossIcon} size={13} />
@@ -87,15 +100,23 @@ export function ItemList({
         </label>
         <input
           id={id}
+          ref={inputRef}
           value={draft}
           maxLength={300}
           placeholder={tone === 'included' ? 'Add included work' : 'Add excluded work'}
+          aria-describedby={draft.trim() ? `${id}-hint` : undefined}
           onChange={(e) => setDraft(e.target.value)}
         />
         <button type="submit" className="scope-add-button" aria-label={`Add to ${label.toLowerCase()}`}>
           <Icon icon={PlusIcon} size={14} />
         </button>
       </form>
+      {/* Typed but not added: it isn't in the list, and saving won't include it. */}
+      {draft.trim() && (
+        <p className="scope-add-hint" id={`${id}-hint`}>
+          Press Enter to add it to the list.
+        </p>
+      )}
     </div>
   );
 }
@@ -175,6 +196,7 @@ export function ChangeOrderBox({
   onChange,
   onCopied,
   showHeading = true,
+  readOnlyNote,
 }: {
   id: string;
   text: string;
@@ -182,6 +204,8 @@ export function ChangeOrderBox({
   onCopied?: () => void;
   /** Off when the box already sits under a "Change order draft" label. */
   showHeading?: boolean;
+  /** When set, the letter can be read and copied but not edited, and this says why. */
+  readOnlyNote?: string;
 }) {
   return (
     <div className="change-order">
@@ -189,7 +213,7 @@ export function ChangeOrderBox({
         {showHeading ? <h3>Change order draft</h3> : <span />}
         <CopyButton text={text} onCopied={onCopied} />
       </div>
-      <p className="help">Edit it, then send it to your client instead of doing the work for free.</p>
+      <p className="help">{readOnlyNote ?? 'Edit it, then send it to your client instead of doing the work for free.'}</p>
       <label className="sr-only" htmlFor={id}>
         Change order draft
       </label>
@@ -198,6 +222,7 @@ export function ChangeOrderBox({
         className="textarea"
         rows={14}
         value={text}
+        readOnly={readOnlyNote !== undefined}
         onChange={(e) => onChange(e.target.value)}
       />
     </div>

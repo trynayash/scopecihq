@@ -9,14 +9,17 @@ export interface RawGitHubFile {
   is_binary?: boolean;
 }
 
+/**
+ * What ScopeCI keeps about one changed file: its name, status and line
+ * counts. The diff text itself is never kept; the check reads file names
+ * only, as the site says.
+ */
 export interface NormalizedFileChange {
   path: string;
   status: "added" | "modified" | "deleted" | "renamed";
   additions: number;
   deletions: number;
-  patch?: string;
   isBinary?: boolean;
-  isTruncated?: boolean;
   previousFilename?: string;
 }
 
@@ -32,8 +35,9 @@ export interface NormalizedDiffAnalysis {
   limitations: string[];
 }
 
-const MAX_PATCH_LENGTH = 50 * 1024; // 50 KB safety cap per file patch
-const MAX_FILES_PROCESSED = 300;
+// Everything GitHub lists (it lists at most 3,000 files). Only names and
+// counts are kept, so there's no reason to stop sooner.
+const MAX_FILES_PROCESSED = 3000;
 
 const BINARY_EXTENSIONS = new Set([
   "png", "jpg", "jpeg", "gif", "ico", "svg", "webp", "pdf", "zip", "tar", "gz", "wasm", "exe", "dll", "so", "dylib", "mp4", "mp3"
@@ -68,19 +72,6 @@ export function normalizePullRequestDiff(
     else if (raw.status === "removed" || raw.status === "deleted") status = "deleted";
     else if (raw.status === "renamed") status = "renamed";
 
-    let patch = raw.patch;
-    let isTruncated = false;
-
-    if (patch && patch.length > MAX_PATCH_LENGTH) {
-      patch = patch.substring(0, MAX_PATCH_LENGTH) + "\n... [diff truncated by ScopeCI safety limits]";
-      isTruncated = true;
-      limitations.push(`File ${raw.filename} patch exceeded 50KB and was truncated.`);
-    }
-
-    if (isBinary) {
-      patch = undefined;
-    }
-
     const additions = Number(raw.additions) || 0;
     const deletions = Number(raw.deletions) || 0;
     totalAdditions += additions;
@@ -91,9 +82,7 @@ export function normalizePullRequestDiff(
       status,
       additions,
       deletions,
-      patch,
       isBinary,
-      isTruncated,
       previousFilename: raw.previous_filename,
     });
 

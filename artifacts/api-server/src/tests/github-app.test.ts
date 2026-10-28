@@ -395,7 +395,10 @@ async function runPhase2TestSuite(): Promise<void> {
   console.log("\n▶ Test 15: Rename, delete, and binary file handling");
   const binaryFile = normalizedDiff.files.find((f) => f.path.endsWith(".png"));
   assert(binaryFile?.isBinary === true, "Binary image file recognized (isBinary: true)");
-  assert(binaryFile?.patch === undefined, "Binary file does not carry text patch");
+  assert(
+    normalizedDiff.files.every((f) => !("patch" in f)),
+    "No file keeps its diff text, only names, status and line counts",
+  );
 
   const renamedFile = normalizedDiff.files.find((f) => f.status === "renamed");
   assert(renamedFile !== undefined, "Renamed file status captured");

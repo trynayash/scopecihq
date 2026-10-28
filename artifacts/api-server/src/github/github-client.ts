@@ -56,6 +56,11 @@ export interface IGitHubClient {
     repo: string,
     prNumber: number
   ): Promise<RawGitHubFile[]>;
+  /**
+   * The repository's open pull requests, each as GitHub returns a single
+   * pull request (with its file and line counts), newest first, at most `limit`.
+   */
+  listOpenPullRequests?(installationId: string, owner: string, repo: string, limit: number): Promise<any[]>;
 }
 
 /**
@@ -199,5 +204,12 @@ export class MockGitHubClient implements IGitHubClient {
     this.checkFailure();
     const key = `${owner}/${repo}#${prNumber}`;
     return this.prFiles.get(key) || [];
+  }
+
+  public openPullRequests: Map<string, any[]> = new Map();
+
+  async listOpenPullRequests(installationId: string, owner: string, repo: string, limit: number): Promise<any[]> {
+    this.checkFailure();
+    return (this.openPullRequests.get(`${owner}/${repo}`) ?? []).slice(0, limit);
   }
 }

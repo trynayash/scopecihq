@@ -27,6 +27,7 @@ import {
   useLinkProjectRepository,
   useListGitHubRepositories,
   useListProjectPullRequests,
+  useRecheckProject,
   useListProjects,
   useParseDemoSow,
   useSaveProjectScope,
@@ -73,21 +74,35 @@ import {
 const RETURN_KEY = 'scopeci:return-to';
 const APP_HOME = `${BASE}/app`;
 
+/** How long a trip to GitHub to install the App may take before it's forgotten. */
+const RETURN_TTL_MS = 30 * 60 * 1000;
+
 function remember(path: string) {
   try {
-    sessionStorage.setItem(RETURN_KEY, path);
+    sessionStorage.setItem(RETURN_KEY, JSON.stringify({ path, at: Date.now() }));
   } catch {
     // private mode: the person lands on the project list instead
   }
 }
 
+/** The page to go back to after installing the App, once, if the trip was recent. */
 function recall(): string | null {
   try {
-    const path = sessionStorage.getItem(RETURN_KEY);
+    const stored = JSON.parse(sessionStorage.getItem(RETURN_KEY) ?? 'null') as { path?: string; at?: number } | null;
     sessionStorage.removeItem(RETURN_KEY);
-    return path;
+    return stored?.path && stored.at && Date.now() - stored.at < RETURN_TTL_MS ? stored.path : null;
   } catch {
     return null;
+  }
+}
+
+/** Drops the stored trip when the person got back to that page some other way. */
+function forget(path: string) {
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(RETURN_KEY) ?? 'null') as { path?: string } | null;
+    if (stored?.path === path) sessionStorage.removeItem(RETURN_KEY);
+  } catch {
+    // nothing stored
   }
 }
 
@@ -113,6 +128,7 @@ function WorkspaceSwitcher({ current, workspaces }: { current: SessionOrganizati
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
   const switchTo = useSwitchWorkspace();
+  const [error, setError] = useState('');
   if (workspaces.length < 2) return <span className="app-workspace-name">{current.name}</span>;
   return (
     <>
@@ -129,10 +145,12 @@ function WorkspaceSwitcher({ current, workspaces }: { current: SessionOrganizati
             { data: { organizationId: e.target.value } },
             {
               onSuccess: () => {
+                setError('');
                 // Everything on screen belonged to the other workspace.
                 queryClient.invalidateQueries();
                 navigate('/');
               },
+              onError: (err) => setError(errorMessage(err, "Couldn't switch workspace.")),
             },
           )
         }
@@ -143,6 +161,11 @@ function WorkspaceSwitcher({ current, workspaces }: { current: SessionOrganizati
           </option>
         ))}
       </select>
+      {error && (
+        <span className="app-header-error" role="alert">
+          {error}
+        </span>
+      )}
     </>
   );
 }
@@ -161,12 +184,16 @@ function AppHeader({
   const endSession = useEndSession();
   const onProjects = location === '/' || location.startsWith('/projects');
   const navRef = useIndicator<HTMLElement>('.is-active', onProjects ? 'projects' : location);
+  const [signOutError, setSignOutError] = useState('');
+  // Only a sign-out the server confirmed reloads; otherwise the cookie is
+  // still good and reloading would just sign them straight back in.
   const signOut = () =>
     endSession.mutate(undefined, {
-      onSettled: () => {
+      onSuccess: () => {
         queryClient.clear();
         window.location.assign(APP_HOME);
       },
+      onError: () => setSignOutError("Couldn't sign out. Check your connection and try again."),
     });
 
   return (
@@ -202,6 +229,11 @@ function AppHeader({
                 <Icon icon={SignOutIcon} size={14} />
                 <span className="app-header-label">Sign out</span>
               </button>
+              {signOutError && (
+                <span className="app-header-error" role="alert">
+                  {signOutError}
+                </span>
+              )}
             </>
           )}
         </div>
@@ -387,8 +419,10 @@ function ProjectsHome() {
 
   // Back from installing the GitHub App: return to the project that sent us.
   useEffect(() => {
+    // "#connect" reopens the repository list there, so they can pick the
+    // repository they just gave the App access to.
     const back = recall();
-    if (back && back.startsWith('/projects/')) navigate(back);
+    if (back && back.startsWith('/projects/')) navigate(`${back}#connect`);
   }, [navigate]);
 
   return (
@@ -610,6 +644,14 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
     [draft, scope],
   );
 
+  // Closing or reloading the tab with unsaved scope edits asks first.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+
   const read = (event: FormEvent) => {
     event.preventDefault();
     if (!sow.trim()) {
@@ -646,7 +688,12 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
       { projectId: project.id, data: { title: title.slice(0, 200), clauses: draft.slice(0, 60) } },
       {
         onSuccess: (saved) => {
-          setMessage(`Saved as ${saved.version}. New pull requests are checked against it.`);
+          setMessage(
+            project.repository
+              ? `Saved as ${saved.version}. Open pull requests are being checked against it now.`
+              : `Saved as ${saved.version}. Pull requests are checked against it once a repository is connected.`,
+          );
+          queryClient.invalidateQueries({ queryKey: getListProjectPullRequestsQueryKey(project.id) });
           queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(project.id) });
           queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
         },
@@ -681,12 +728,12 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
           />
           <p className="help">
             ScopeCI reads what each section includes and excludes. You check that list before anything is saved.{' '}
-            {!scope && (
+            {!scope && !draft && (
               <button type="button" className="text-link" onClick={startEmpty}>
                 No document? Start with an empty list
               </button>
             )}
-            {scope && (
+            {(scope || draft) && (
               <button type="button" className="text-link" onClick={() => setPasting(false)}>
                 Cancel
               </button>
@@ -717,11 +764,9 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
                 {error}
               </p>
             )}
-            {message && !dirty && (
-              <p className="help" role="status">
-                {message}
-              </p>
-            )}
+            <p className="app-status" role="status">
+              {message && !dirty ? message : ''}
+            </p>
             <div className="app-actions">
               {(dirty || !scope) && (
                 <button type="button" className="button button-primary" onClick={submit} disabled={save.isPending}>
@@ -748,9 +793,16 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
 
 function RepositorySection({ project }: { project: Project }) {
   const queryClient = useQueryClient();
-  const [choosing, setChoosing] = useState(false);
+  const [confirm, confirmDialog] = useConfirm();
+  // Back from installing the App on GitHub: open the list straight away.
+  const [choosing, setChoosing] = useState(() => typeof window !== 'undefined' && window.location.hash === '#connect');
   const [selected, setSelected] = useState('');
   const [error, setError] = useState('');
+  const [status, setStatus] = useState('');
+  useEffect(() => {
+    forget(`/projects/${project.id}`);
+    if (window.location.hash === '#connect') history.replaceState(history.state, '', window.location.pathname + window.location.search);
+  }, [project.id]);
   const repos = useListGitHubRepositories({
     query: { queryKey: getListGitHubRepositoriesQueryKey(), enabled: choosing, retry: false, staleTime: 0 },
   });
@@ -777,14 +829,28 @@ function RepositorySection({ project }: { project: Project }) {
         onSuccess: () => {
           setChoosing(false);
           refresh();
+          if (project.scopeVersion) {
+            setStatus('Connected. Its open pull requests are being checked now.');
+            // Their results arrive over the next few seconds.
+            window.setTimeout(() => queryClient.invalidateQueries({ queryKey: getListProjectPullRequestsQueryKey(project.id) }), 4000);
+          }
         },
         onError: (err) => setError(errorMessage(err, "We couldn't connect that repository.")),
       },
     );
   };
 
-  const disconnect = () =>
+  const disconnect = async () => {
+    const ok = await confirm({
+      title: `Disconnect ${project.repository?.fullName}?`,
+      description: 'Pull requests there stop being checked. Results so far stay on this page.',
+      confirmLabel: 'Disconnect',
+    });
+    if (!ok) return;
+    setError('');
+    setStatus('');
     unlink.mutate({ projectId: project.id }, { onSuccess: refresh, onError: (err) => setError(errorMessage(err, "We couldn't disconnect it.")) });
+  };
 
   const reauth = (repos.error as { status?: number } | null)?.status === 401;
   const install = () => remember(`/projects/${project.id}`);
@@ -806,6 +872,11 @@ function RepositorySection({ project }: { project: Project }) {
               ? `Every pull request opened or updated here is checked against scope ${project.scopeVersion}.`
               : 'Pull requests here are checked once the scope above is saved.'}
           </p>
+          {error && (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          )}
           <div className="app-actions">
             <button type="button" className="button button-quiet" onClick={disconnect} disabled={unlink.isPending}>
               Disconnect
@@ -824,16 +895,33 @@ function RepositorySection({ project }: { project: Project }) {
       ) : repos.isPending ? (
         <Loading>Asking GitHub which repositories you can connect…</Loading>
       ) : reauth ? (
-        <p className="notice is-warning" role="alert">
-          GitHub access expired.{' '}
-          <a className="text-link" href={signInHref(`/app/projects/${project.id}`)}>
-            Sign in again
-          </a>
-        </p>
+        <>
+          <p className="notice is-warning" role="alert">
+            GitHub access expired.{' '}
+            <a className="text-link" href={signInHref(`/app/projects/${project.id}`)}>
+              Sign in again
+            </a>
+          </p>
+          <div className="app-actions">
+            <button type="button" className="text-link" onClick={() => setChoosing(false)}>
+              Cancel
+            </button>
+          </div>
+        </>
       ) : repos.isError ? (
-        <p className="form-error" role="alert">
-          {errorMessage(repos.error, "We couldn't reach GitHub.")}
-        </p>
+        <>
+          <p className="form-error" role="alert">
+            {errorMessage(repos.error, "We couldn't reach GitHub.")}
+          </p>
+          <div className="app-actions">
+            <button type="button" className="button button-quiet" onClick={() => repos.refetch()} disabled={repos.isFetching}>
+              {repos.isFetching ? 'Trying…' : 'Try again'}
+            </button>
+            <button type="button" className="text-link" onClick={() => setChoosing(false)}>
+              Cancel
+            </button>
+          </div>
+        </>
       ) : (
         <form onSubmit={connect}>
           {repos.data.repositories.length === 0 ? (
@@ -892,6 +980,10 @@ function RepositorySection({ project }: { project: Project }) {
           </div>
         </form>
       )}
+      <p className="app-status" role="status">
+        {status}
+      </p>
+      {confirmDialog}
     </section>
   );
 }
@@ -990,32 +1082,74 @@ function ChangeOrderSteps({ pr }: { pr: PullRequestResult }) {
 function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestResult }) {
   const queryClient = useQueryClient();
   const update = useUpdateChangeOrder();
+  const [confirm, confirmDialog] = useConfirm();
   const tracked = pr.trackedChangeOrder;
   const source = tracked ? { subject: tracked.subject, body: tracked.body } : pr.changeOrder;
-  const [text, setText] = useState(changeOrderText(source));
+  const original = changeOrderText(source);
+  const [text, setText] = useState(original);
   const [hours, setHours] = useState(tracked?.hours ? String(tracked.hours) : '');
   const [error, setError] = useState('');
-  useEffect(() => setText(changeOrderText(source)), [source?.subject, source?.body]);
+  // Said aloud after each action, since the button pressed may be gone.
+  const [status, setStatus] = useState('');
+  const edited = text !== original;
+  // A newer draft from the server replaces the letter only if the PM hasn't
+  // changed it; their edits are never overwritten.
+  const shownOriginal = useRef(original);
+  useEffect(() => {
+    if (text === shownOriginal.current) setText(original);
+    shownOriginal.current = original;
+  }, [original]);
 
   const decided = tracked?.status === 'APPROVED' || tracked?.status === 'DECLINED';
-  const save = (data: { hours?: number | null; status?: 'SENT' | 'APPROVED' | 'DECLINED'; subject?: string; body?: string }) =>
+  const sent = tracked?.status === 'SENT';
+  const save = (
+    data: { hours?: number | null; status?: 'SENT' | 'APPROVED' | 'DECLINED'; subject?: string; body?: string },
+    done: string,
+  ) =>
     update.mutate(
       { projectId: project.id, data: { evaluationId: pr.evaluationId, ...data } },
       {
         onSuccess: () => {
           setError('');
+          setStatus(done);
           queryClient.invalidateQueries({ queryKey: getListProjectPullRequestsQueryKey(project.id) });
           queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(project.id) });
           queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
         },
-        onError: (err) => setError(errorMessage(err, "We couldn't update the change order.")),
+        onError: (err) => {
+          setStatus('');
+          setError(errorMessage(err, "We couldn't update the change order."));
+        },
       },
     );
 
   const price = (event: FormEvent) => {
     event.preventDefault();
     const value = hours.trim() === '' ? null : Math.min(10_000, Math.max(0, Math.round(Number(hours))));
-    save({ hours: value });
+    // An edited letter is sent along, so the server keeps it rather than
+    // redrawing it with the new price.
+    if (edited && !sent) save({ hours: value, ...splitMessage(text) }, 'Hours saved. Your edited letter was kept; update the price in it if it mentions one.');
+    else save({ hours: value }, sent ? 'Hours saved.' : 'Hours saved and the letter updated.');
+  };
+
+  const reference = tracked?.reference ?? 'this change order';
+  const approve = async () => {
+    const ok = await confirm({
+      title: `Record that the client approved ${reference}?`,
+      description:
+        'The work it lists is then covered on this and later pull requests, and their GitHub checks update now. A decision can\'t be changed afterwards.',
+      confirmLabel: 'Client approved',
+    });
+    if (ok) save({ status: 'APPROVED' }, 'Recorded as approved. The GitHub checks are updating.');
+  };
+  const decline = async () => {
+    const ok = await confirm({
+      title: `Record that the client declined ${reference}?`,
+      description: 'The work stays flagged wherever it appears. A decision can\'t be changed afterwards.',
+      confirmLabel: 'Client declined',
+      danger: true,
+    });
+    if (ok) save({ status: 'DECLINED' }, 'Recorded as declined.');
   };
 
   return (
@@ -1041,12 +1175,15 @@ function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestRe
       <div className="drawer-body">
         <ChangeOrderSteps pr={pr} />
         <WhyLine pr={pr} tone={verdictOf(pr.verdict).tone} />
+        {!decided && pr.verdict !== 'CHANGE_REQUIRED' && (
+          <p className="notice">The latest commit no longer builds the excluded work, so this change order may not be needed.</p>
+        )}
 
         {decided ? (
           <p className="help">
             {tracked!.status === 'APPROVED'
               ? 'The client approved it. This work is covered on this and later pull requests.'
-              : 'The client declined it. Take the work out of this pull request, or absorb it knowingly.'}
+              : 'The client declined it. Take the work out of this pull request; while it is there, it stays flagged.'}
           </p>
         ) : (
           <>
@@ -1071,12 +1208,29 @@ function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestRe
                     onChange={(e) => setHours(e.target.value)}
                   />
                   <button type="submit" className="button button-quiet" disabled={update.isPending}>
-                    Update the draft
+                    Save hours
                   </button>
                 </div>
               </div>
             </form>
-            <ChangeOrderBox id="change-order-text" text={text} onChange={setText} />
+            <ChangeOrderBox
+              id="change-order-text"
+              text={text}
+              onChange={setText}
+              readOnlyNote={
+                sent && tracked?.sentAt ? `Sent ${shortDate(tracked.sentAt)}. This is the letter the client received.` : undefined
+              }
+            />
+            {!sent && edited && (
+              <div className="app-actions">
+                <button type="button" className="button button-quiet" disabled={update.isPending} onClick={() => save(splitMessage(text), 'Draft saved.')}>
+                  Save draft
+                </button>
+                <button type="button" className="text-link" onClick={() => setText(original)}>
+                  Discard edits
+                </button>
+              </div>
+            )}
           </>
         )}
         {error && (
@@ -1084,28 +1238,32 @@ function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestRe
             {error}
           </p>
         )}
+        <p className="app-status" role="status">
+          {status}
+        </p>
       </div>
 
       {!decided && (
         <footer className="drawer-foot">
-          {tracked?.status !== 'SENT' && (
+          {!sent && (
             <button
               type="button"
               className="button button-primary"
               disabled={update.isPending}
-              onClick={() => save({ status: 'SENT', ...splitMessage(text) })}
+              onClick={() => save({ status: 'SENT', ...splitMessage(text) }, 'Marked as sent. The letter is kept as sent.')}
             >
               Mark as sent
             </button>
           )}
-          <button type="button" className="button button-quiet" disabled={update.isPending} onClick={() => save({ status: 'APPROVED' })}>
+          <button type="button" className="button button-quiet" disabled={update.isPending} onClick={approve}>
             Client approved
           </button>
-          <button type="button" className="button button-quiet button-danger" disabled={update.isPending} onClick={() => save({ status: 'DECLINED' })}>
+          <button type="button" className="button button-quiet button-danger" disabled={update.isPending} onClick={decline}>
             Client declined
           </button>
         </footer>
       )}
+      {confirmDialog}
     </>
   );
 }
@@ -1144,7 +1302,9 @@ function ChangeOrderDrawer({
             returnFocus();
           }}
         >
-          {shown && <ChangeOrderPanel key={shown.evaluationId} project={project} pr={shown} />}
+          {/* Keyed by pull request, not result: a new push or an approval
+              makes a new result, and the open panel keeps its state. */}
+          {shown && <ChangeOrderPanel key={shown.number} project={project} pr={shown} />}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
@@ -1192,12 +1352,21 @@ function ChangedFiles({ pr }: { pr: PullRequestResult }) {
   );
 }
 
-function PullRequestRow({ pr, onOpen }: { pr: PullRequestResult; onOpen: (button: HTMLButtonElement) => void }) {
+function PullRequestRow({
+  pr,
+  currentScope,
+  onOpen,
+}: {
+  pr: PullRequestResult;
+  currentScope: string | null;
+  onOpen: (button: HTMLButtonElement) => void;
+}) {
   const verdict = verdictOf(pr.verdict);
   const tracked = pr.trackedChangeOrder;
   // With excluded items the why line already says it; the full reason
   // follows as detail. Otherwise the why line is the reason itself.
   const reasonBelow = pr.excluded.length > 0 || verdict.tone === 'ok';
+  const stale = Boolean(pr.scopeVersion && currentScope && pr.scopeVersion !== currentScope);
 
   return (
     <li className={`verdict-card is-${verdict.tone} pr-row`} data-testid="pr-result">
@@ -1206,6 +1375,13 @@ function PullRequestRow({ pr, onOpen }: { pr: PullRequestResult; onOpen: (button
         <p className="pr-row-meta mono">
           {pr.prState === 'OPEN' ? 'open' : pr.prState === 'MERGED' ? 'merged' : 'closed'} · checked{' '}
           {relativeTime(pr.checkedAt)}
+          {pr.scopeVersion && (
+            <span className={stale ? 'is-stale' : undefined}>
+              {' '}
+              · scope {pr.scopeVersion}
+              {stale && ` (now ${currentScope})`}
+            </span>
+          )}
         </p>
       </div>
       <p className="pr-row-title">
@@ -1226,6 +1402,7 @@ function PullRequestRow({ pr, onOpen }: { pr: PullRequestResult; onOpen: (button
             type="button"
             className="button button-quiet button-sm"
             aria-haspopup="dialog"
+            aria-label={`Open the change order for #${pr.number}`}
             onClick={(event) => onOpen(event.currentTarget)}
             data-testid="button-open-change-order"
           >
@@ -1239,16 +1416,47 @@ function PullRequestRow({ pr, onOpen }: { pr: PullRequestResult; onOpen: (button
 }
 
 function PullRequestsSection({ project }: { project: Project }) {
+  const queryClient = useQueryClient();
   const results = useListProjectPullRequests(project.id, {
     query: { queryKey: getListProjectPullRequestsQueryKey(project.id), refetchInterval: 30_000 },
   });
-  const [openId, setOpenId] = useState<string | null>(null);
+  const recheck = useRecheckProject();
+  const [recheckStatus, setRecheckStatus] = useState('');
+  // The open panel follows the pull request, so a new result for it (a push,
+  // an approval) doesn't close it.
+  const [openNumber, setOpenNumber] = useState<number | null>(null);
   const opener = useRef<HTMLButtonElement | null>(null);
-  const open = results.data?.pullRequests.find((pr) => pr.evaluationId === openId) ?? null;
+  const open = results.data?.pullRequests.find((pr) => pr.number === openNumber) ?? null;
+  const ready = Boolean(project.repository && project.scopeVersion);
+
+  const recheckAll = () =>
+    recheck.mutate(
+      { projectId: project.id },
+      {
+        onSuccess: () => {
+          setRecheckStatus('Checking the open pull requests again. Results update here as they finish.');
+          // Each check takes a moment; look again a little later, then once more.
+          const refresh = () => queryClient.invalidateQueries({ queryKey: getListProjectPullRequestsQueryKey(project.id) });
+          window.setTimeout(refresh, 4000);
+          window.setTimeout(refresh, 12000);
+        },
+        onError: (err) => setRecheckStatus(errorMessage(err, "We couldn't start the re-check.")),
+      },
+    );
 
   return (
     <section className="panel" aria-labelledby="prs-title">
-      <SectionHead title="Checked pull requests" id="prs-title" />
+      <div className="panel-head-row">
+        <SectionHead title="Checked pull requests" id="prs-title" />
+        {ready && (
+          <button type="button" className="button button-quiet button-sm" onClick={recheckAll} disabled={recheck.isPending}>
+            {recheck.isPending ? 'Starting…' : 'Re-check open pull requests'}
+          </button>
+        )}
+      </div>
+      <p className="app-status" role="status">
+        {recheckStatus}
+      </p>
       {results.isPending && <Loading>Loading the checked pull requests…</Loading>}
       {results.isError && (
         <p className="form-error" role="alert">
@@ -1257,8 +1465,8 @@ function PullRequestsSection({ project }: { project: Project }) {
       )}
       {results.data && results.data.pullRequests.length === 0 && (
         <p className="help">
-          {project.repository && project.scopeVersion
-            ? `Nothing checked yet. The next pull request opened or updated on ${project.repository.fullName} shows up here.`
+          {ready
+            ? `Nothing checked yet. Pull requests already open on ${project.repository!.fullName} are checked when you re-check; new ones as they're opened or updated.`
             : 'Results appear here once the scope is saved and a repository is connected.'}
         </p>
       )}
@@ -1266,11 +1474,12 @@ function PullRequestsSection({ project }: { project: Project }) {
         <ul className="pr-list">
           {results.data.pullRequests.map((pr) => (
             <PullRequestRow
-              key={pr.evaluationId}
+              key={pr.number}
               pr={pr}
+              currentScope={project.scopeVersion}
               onOpen={(button) => {
                 opener.current = button;
-                setOpenId(pr.evaluationId);
+                setOpenNumber(pr.number);
               }}
             />
           ))}
@@ -1279,7 +1488,7 @@ function PullRequestsSection({ project }: { project: Project }) {
       <ChangeOrderDrawer
         project={project}
         pr={open}
-        onClose={() => setOpenId(null)}
+        onClose={() => setOpenNumber(null)}
         returnFocus={() => opener.current?.focus()}
       />
     </section>
@@ -1448,6 +1657,8 @@ function TeamPage() {
   const [confirm, confirmDialog] = useConfirm();
   const [name, setName] = useState('');
   const [link, setLink] = useState('');
+  // Which invite the shown link belongs to, so revoking it hides the link too.
+  const [linkId, setLinkId] = useState('');
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
 
@@ -1483,6 +1694,7 @@ function TeamPage() {
     createInvite.mutate(undefined, {
       onSuccess: (created) => {
         setLink(created.url);
+        setLinkId(created.id);
         setError('');
         refresh();
       },
@@ -1514,11 +1726,9 @@ function TeamPage() {
                 Save
               </button>
             </div>
-            {status && (
-              <p className="help" role="status">
-                {status}
-              </p>
-            )}
+            <p className="app-status" role="status">
+              {status}
+            </p>
           </form>
         </section>
       )}
@@ -1541,6 +1751,7 @@ function TeamPage() {
                   type="button"
                   className="text-link app-archive"
                   disabled={remove.isPending}
+                  aria-label={`Remove @${member.login}`}
                   onClick={async () => {
                     const confirmed = await confirm({
                       title: `Remove ${member.name ?? member.login} from ${team.name}?`,
@@ -1600,9 +1811,31 @@ function TeamPage() {
                     type="button"
                     className="text-link app-archive"
                     disabled={revoke.isPending}
-                    onClick={() => revoke.mutate({ inviteId: open.id }, { onSuccess: refresh, onError: fail("We couldn't cancel it.") })}
+                    aria-label={`Revoke the invite made ${relativeTime(open.createdAt)}`}
+                    onClick={async () => {
+                      const confirmed = await confirm({
+                        title: 'Revoke this invite?',
+                        description: 'Its link stops working straight away. You can make a new one at any time.',
+                        confirmLabel: 'Revoke invite',
+                        danger: true,
+                      });
+                      if (!confirmed) return;
+                      revoke.mutate(
+                        { inviteId: open.id },
+                        {
+                          onSuccess: () => {
+                            if (open.id === linkId) {
+                              setLink('');
+                              setLinkId('');
+                            }
+                            refresh();
+                          },
+                          onError: fail("We couldn't revoke it."),
+                        },
+                      );
+                    }}
                   >
-                    Cancel
+                    Revoke
                   </button>
                 </li>
               ))}

@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
-import { and, eq, gt } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   organizationMembersTable,
@@ -49,10 +49,18 @@ const hashToken = (token: string) => crypto.createHash("sha256").update(token).d
 
 export async function createSession(userId: string): Promise<{ cookie: string }> {
   const token = crypto.randomBytes(32).toString("base64url");
+  // A new sign-in opens the workspace they last chose on another device.
+  const [recent] = await db
+    .select({ organizationId: userSessionsTable.organizationId })
+    .from(userSessionsTable)
+    .where(and(eq(userSessionsTable.userId, userId), isNotNull(userSessionsTable.organizationId)))
+    .orderBy(desc(userSessionsTable.lastSeenAt))
+    .limit(1);
   await db.insert(userSessionsTable).values({
     userId,
     tokenHash: hashToken(token),
     expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+    organizationId: recent?.organizationId ?? null,
   });
   return { cookie: serializeCookie(SESSION_COOKIE, token, { maxAgeSeconds: SESSION_TTL_MS / 1000 }) };
 }
@@ -76,7 +84,9 @@ export interface Account {
 /**
  * The signed-in person and the workspace they are working in, or null. The
  * session remembers a chosen workspace; if they are no longer a member of
- * it (or never chose one), it falls back to the first they joined.
+ * it (or never chose one), it falls back to the one they joined most
+ * recently. Everyone gets a personal workspace at first sign-in, so a PM
+ * invited to their agency lands in the agency's, not their own empty one.
  */
 export async function loadAccount(req: Request): Promise<Account | null> {
   const token = readCookie(req, SESSION_COOKIE);
@@ -108,7 +118,7 @@ export async function loadAccount(req: Request): Promise<Account | null> {
     .innerJoin(organizationsTable, eq(organizationsTable.id, organizationMembersTable.organizationId))
     .where(eq(organizationMembersTable.userId, session.userId))
     .orderBy(organizationMembersTable.createdAt);
-  const membership = memberships.find((m) => m.organizationId === session.chosen) ?? memberships[0];
+  const membership = memberships.find((m) => m.organizationId === session.chosen) ?? memberships.at(-1);
   if (!membership) return null;
 
   if (Date.now() - session.lastSeenAt.getTime() > TOUCH_EVERY_MS) {

@@ -3,7 +3,9 @@
 ScopeCI uses one GitHub App for two things:
 
 - **Sign in with GitHub.** The App's OAuth credentials identify the person and let ScopeCI ask GitHub which of the App's installations and repositories they can see. That is how a repository is linked to a project without trusting anything the browser sends.
-- **Checking pull requests.** When a pull request on a connected repository is opened or updated, ScopeCI reads its title, branch, description and changed files, checks them against the project's confirmed scope, and posts a check run (`scopeci / commercial`) and one comment, which it updates on every push.
+- **Checking pull requests.** When a pull request on a connected repository is opened, reopened, marked ready for review, gets new commits, or has its title, description or base branch changed, ScopeCI reads its title, branch, description and the names of its changed files (never their contents), checks them against the project's confirmed scope, and posts a check run (`scopeci / commercial`) and one comment, which it updates on every push. Labels, assignees and review requests don't start a check. Events for the same pull request are handled one at a time.
+- **Re-checking.** The project page's *Re-check open pull requests* checks the repository's open pull requests (newest 30) against the current scope. It also runs by itself after the scope is saved, the repository is connected, the policy changes or a change order is approved, so pull requests opened before setup get a result.
+- **When something fails.** GitHub rate limits and server errors on reads are retried with backoff. If a check still can't finish, the commit gets a neutral "ScopeCI couldn't check this commit" check run, which never blocks a merge. GitHub lists at most 3,000 files per pull request; when a pull request changes more, the check says the rest weren't read.
 
 The real client lives in `artifacts/api-server/src/github/app-client.ts`. Without an App the server falls back to an in-memory client, which is what the test suites use; production answers webhooks with `503` in that state.
 

@@ -579,6 +579,36 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /projects/{projectId}/recheck:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      operationId: recheckProject
+      tags: [projects]
+      summary: Check the repository's open pull requests again
+      description: >-
+        Lists the open pull requests on the project's repository (newest first, at most 30) and checks each
+        against the current scope, in the background. Pull requests opened before the repository was connected
+        get their first result this way.
+      responses:
+        "202":
+          description: The re-check has started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecheckStarted"
+        "404":
+          description: No such project in this organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The project has no repository connected or no confirmed scope yet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /projects/{projectId}/pull-requests:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -1122,6 +1152,13 @@ components:
       required:
         - installationId
         - repositoryId
+    RecheckStarted:
+      type: object
+      properties:
+        started:
+          type: boolean
+      required:
+        - started
     PullRequestResult:
       type: object
       properties:
@@ -1168,10 +1205,14 @@ components:
         fileCount:
           type: integer
           description: How many files the commit changes. Can exceed the length of files, which is capped.
+        scopeVersion:
+          type: ["string", "null"]
+          description: The scope version this result was checked against, like "v3". Null for results from before versions were recorded.
         checkedAt:
           type: string
           format: date-time
       required:
+        - scopeVersion
         - trackedChangeOrder
         - evaluationId
         - number

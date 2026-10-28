@@ -11,6 +11,10 @@ export interface CommentFormatInput {
   evaluation: CommercialEvaluation;
   /** The project page in ScopeCI, where the change order draft is. */
   detailsUrl?: string;
+  /** The scope version the pull request was checked against, like "v3". */
+  scopeVersion?: string;
+  /** Something the reader should know about how complete the check was. */
+  note?: string;
 }
 
 /**
@@ -49,7 +53,7 @@ const MERGE_NOTE: Record<CommercialEvaluation["checkConclusion"], string> = {
  * every push. Written for the developers and project managers who read it.
  */
 export function formatScopeCIComment(input: CommentFormatInput): string {
-  const { projectName, issueIdentifier, prNumber, headSha, evaluation, detailsUrl } = input;
+  const { projectName, issueIdentifier, prNumber, headSha, evaluation, detailsUrl, scopeVersion, note } = input;
   const reason = evaluation.evidenceBundle?.decisionExplanation?.reason;
   const estimate = describeEstimate(evaluation);
 
@@ -57,6 +61,7 @@ export function formatScopeCIComment(input: CommentFormatInput): string {
     `| Project | ${sanitizeMarkdown(projectName)} |`,
     `| Pull request | #${prNumber}${headSha ? ` (\`${sanitizeMarkdown(headSha.substring(0, 7))}\`)` : ""} |`,
     ...(issueIdentifier ? [`| Linked issue | ${sanitizeMarkdown(issueIdentifier)} |`] : []),
+    ...(scopeVersion ? [`| Scope version | ${sanitizeMarkdown(scopeVersion)} |`] : []),
     ...(estimate ? [`| Estimated impact | ${sanitizeMarkdown(estimate)} |`] : []),
   ];
 
@@ -79,7 +84,7 @@ export function formatScopeCIComment(input: CommentFormatInput): string {
   return `${COMMENT_MARKER}
 ### ScopeCI: ${VERDICT_LABELS[evaluation.state] ?? evaluation.state}
 
-${reason ? `${sanitizeMarkdown(reason)}\n` : ""}
+${reason ? `${sanitizeMarkdown(reason)}\n` : ""}${note ? `\n_${sanitizeMarkdown(note)}_\n` : ""}
 | | |
 |---|---|
 ${facts.join("\n")}

@@ -107,13 +107,29 @@ export class GitHubAppClient implements IGitHubClient {
           additions: f.additions ?? 0,
           deletions: f.deletions ?? 0,
           changes: f.changes,
-          patch: f.patch,
+          // GitHub sends each file's diff text too; ScopeCI reads names only
+          // and doesn't keep it.
           previous_filename: f.previous_filename,
         });
       }
       next = nextPage(headers);
     }
     return files;
+  }
+
+  async listOpenPullRequests(installationId: string, owner: string, repo: string, limit: number): Promise<any[]> {
+    const { data } = await this.api<Array<{ number: number }>>(
+      installationId,
+      "GET",
+      `${this.repoPath(owner, repo)}/pulls?state=open&sort=updated&direction=desc&per_page=${Math.min(limit, 100)}`,
+    );
+    // The list leaves out file and line counts; the single pull request has them.
+    const full: any[] = [];
+    for (const { number } of data.slice(0, limit)) {
+      const { data: pr } = await this.api<any>(installationId, "GET", `${this.repoPath(owner, repo)}/pulls/${number}`);
+      full.push(pr);
+    }
+    return full;
   }
 
   private checkRunBody(params: Partial<CreateCheckRunParams>) {
