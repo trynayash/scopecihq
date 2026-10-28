@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from 'react';
 import type { DemoScopeClause } from '@workspace/api-client-react';
-import { CopyIcon, CrossIcon, Icon, PlusIcon, TickIcon } from './icons';
+import { CrossIcon, Icon, PlusIcon, TickIcon } from './icons';
+import { CopyButton } from './components/copy-button';
 
 /**
  * Pieces the public demo and the signed-in app share: the scope checklist
@@ -45,10 +46,15 @@ export function ItemList({
   onChange: (items: string[]) => void;
 }) {
   const [draft, setDraft] = useState('');
+  // Only the item just typed in gets the entrance, not the list as loaded.
+  const [added, setAdded] = useState<string | null>(null);
   const add = (event: FormEvent) => {
     event.preventDefault();
     const item = draft.trim().toLowerCase();
-    if (item && !items.includes(item)) onChange([...items, item]);
+    if (item && !items.includes(item)) {
+      onChange([...items, item]);
+      setAdded(item);
+    }
     setDraft('');
   };
 
@@ -60,7 +66,7 @@ export function ItemList({
       ) : (
         <ul>
           {items.map((item) => (
-            <li key={item}>
+            <li key={item} className={item === added ? 'is-new' : undefined}>
               {tone === 'included' ? <Icon icon={TickIcon} size={13} /> : <Icon icon={CrossIcon} size={13} />}
               <span>{item}</span>
               <button
@@ -177,25 +183,11 @@ export function ChangeOrderBox({
   /** Off when the box already sits under a "Change order draft" label. */
   showHeading?: boolean;
 }) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      onCopied?.();
-    } catch {
-      setCopied(false);
-    }
-  };
-
   return (
     <div className="change-order">
       <div className="change-order-head">
         {showHeading ? <h3>Change order draft</h3> : <span />}
-        <button type="button" className="button button-quiet" onClick={copy}>
-          <Icon icon={CopyIcon} size={14} />
-          {copied ? 'Copied' : 'Copy'}
-        </button>
+        <CopyButton text={text} onCopied={onCopied} />
       </div>
       <p className="help">Edit it, then send it to your client instead of doing the work for free.</p>
       <label className="sr-only" htmlFor={id}>
@@ -206,10 +198,7 @@ export function ChangeOrderBox({
         className="textarea"
         rows={14}
         value={text}
-        onChange={(e) => {
-          onChange(e.target.value);
-          setCopied(false);
-        }}
+        onChange={(e) => onChange(e.target.value)}
       />
     </div>
   );

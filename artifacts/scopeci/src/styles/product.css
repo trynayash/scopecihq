@@ -77,6 +77,15 @@ button.text-link { margin-right: var(--space-3); font-size: var(--t-ui); }
   font-size: var(--t-ui);
   line-height: 1.4;
 }
+/* A just-added item comes up from the field it was typed in, on a wash
+   that fades, so it's clear where it went. */
+.scope-list li.is-new { animation: item-in var(--slow) var(--ease-out); }
+.scope-list.is-included li.is-new { --item-wash: var(--success-wash); }
+.scope-list.is-excluded li.is-new { --item-wash: var(--error-wash); }
+@keyframes item-in {
+  from { opacity: 0; transform: translateY(6px); background-color: var(--item-wash); }
+  40% { opacity: 1; transform: none; background-color: var(--item-wash); }
+}
 .scope-list.is-included li > svg { color: var(--success); }
 .scope-list.is-excluded li > svg { color: var(--error); }
 .scope-remove {
@@ -310,7 +319,10 @@ button.text-link { margin-right: var(--space-3); font-size: var(--t-ui); }
   transition: color var(--fast) var(--ease), background-color var(--fast) var(--ease);
 }
 .app-nav-link:hover { color: var(--fg); background: var(--bg-hover); }
-.app-nav-link.is-active { color: var(--fg); background: var(--bg-sunken); box-shadow: inset 0 0 0 1px var(--line); }
+.app-nav-link.is-active,
+.app-nav[data-indicator]::before { color: var(--fg); background: var(--bg-sunken); box-shadow: inset 0 0 0 1px var(--line); }
+.app-nav[data-indicator]::before { border-radius: var(--radius-s); }
+.app-nav[data-indicator] .app-nav-link.is-active { background: transparent; box-shadow: none; }
 .app-account { display: flex; flex: none; align-items: center; gap: var(--space-2); margin-left: auto; }
 .app-avatar { width: 28px; height: 28px; border-radius: 50%; box-shadow: 0 0 0 1px var(--line-2); }
 
@@ -384,17 +396,41 @@ button.text-link { margin-right: var(--space-3); font-size: var(--t-ui); }
   border-radius: var(--radius-l);
   background: var(--bg-raised);
   box-shadow: var(--shadow-1);
-  transition: border-color var(--fast) var(--ease), box-shadow var(--medium) var(--ease), transform var(--medium) var(--ease-out);
+  transition: border-color var(--fast) var(--ease), box-shadow var(--medium) var(--ease), transform var(--fast) var(--ease);
 }
-.project-card:hover { border-color: var(--line-3); box-shadow: var(--shadow-2); transform: translateY(-2px); }
+/* The card doesn't lift; its edge firms up and the arrow points the way. */
+.project-card:hover { border-color: var(--line-3); box-shadow: var(--shadow-2); }
+.project-card:active { transform: scale(0.995); transition-duration: var(--press); }
 .project-card-top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
 .project-card-top svg { flex: none; color: var(--fg-faint); transition: transform var(--fast) var(--ease-out), color var(--fast) var(--ease); }
 .project-card:hover .project-card-top svg { color: var(--fg); transform: translateX(3px); }
 .project-card-name { font-family: var(--font-display); font-size: var(--t-clause); font-weight: 500; letter-spacing: -0.012em; line-height: 1.25; }
 .project-card-client { color: var(--fg-muted); font-size: var(--t-ui); }
-.project-status { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-2); }
-.project-status .chip { max-width: 100%; }
-.project-status .chip .mono { overflow: hidden; text-overflow: ellipsis; font-size: var(--t-code-s); }
+/* What the project is tied to, then what has happened on it: plain text
+   in two lines, with colour only on what asks for action. */
+.project-status { display: grid; gap: var(--space-1); margin-top: var(--space-2); }
+.project-meta,
+.project-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  color: var(--fg-muted);
+  font-size: var(--t-ui);
+  line-height: 1.5;
+}
+.project-meta > span { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; max-width: 100%; }
+.project-meta svg { flex: none; color: var(--fg-faint); }
+.project-meta .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--t-code-s); }
+.project-meta .is-warn,
+.project-meta .is-warn svg { color: var(--warning); }
+.project-meta .is-faint { color: var(--fg-faint); }
+.project-counts strong { color: var(--fg); font-weight: 600; }
+.project-counts .is-alert,
+.project-counts .is-alert strong { color: var(--error); }
+.project-counts .is-warn,
+.project-counts .is-warn strong { color: var(--warning); }
+.project-counts .is-ok,
+.project-counts .is-ok strong { color: var(--success); }
 
 .app-actions { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-top: var(--space-4); }
 .app-actions .text-link { margin-right: 0; }
@@ -624,17 +660,34 @@ button.text-link { margin-right: var(--space-3); font-size: var(--t-ui); }
 
 /* Progress as three ruled columns: the rule fills as each step happens. */
 .co-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
-.co-steps li { display: grid; gap: 2px; padding-top: var(--space-3); border-top: 2px solid var(--line-2); }
-.co-steps strong { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--fg-muted); font-size: var(--t-ui); font-weight: 600; }
-.co-steps span { color: var(--fg-faint); font-size: var(--t-caption); }
-.co-steps .is-done { border-top-color: var(--brand); }
+/* Each step is a track that fills from the left when it is reached, the
+   later step a beat after the earlier one, so progress reads as moving on. */
+.co-steps li { position: relative; display: grid; gap: 2px; padding-top: var(--space-3); border-top: 2px solid var(--line-2); }
+.co-steps li::before {
+  content: '';
+  position: absolute;
+  inset: -2px 0 auto;
+  height: 2px;
+  background: var(--step, transparent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--panel) var(--ease-emphasized), background-color var(--fast) var(--ease);
+}
+.co-steps li:nth-child(3)::before { transition-delay: calc(var(--stagger) * 2); }
+.co-steps strong { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--fg-muted); font-size: var(--t-ui); font-weight: 600; transition: color var(--fast) var(--ease); }
+.co-steps span { color: var(--fg-faint); font-size: var(--t-caption); transition: color var(--fast) var(--ease); }
+.co-steps :is(.is-done, .is-current, .is-declined)::before { transform: none; }
+.co-steps .is-done { --step: var(--brand); }
 .co-steps .is-done strong { color: var(--fg); }
-.co-steps .is-done svg { color: var(--brand); }
-.co-steps .is-current { border-top-color: var(--warning); }
+.co-steps .is-done svg { color: var(--brand); animation: step-tick var(--medium) var(--ease-out); }
+.co-steps .is-current { --step: var(--warning); }
 .co-steps .is-current strong { color: var(--fg); }
 .co-steps .is-current span { color: var(--warning); }
-.co-steps .is-declined { border-top-color: var(--error); }
+.co-steps .is-declined { --step: var(--error); }
 .co-steps .is-declined strong { color: var(--error); }
+@keyframes step-tick {
+  from { opacity: 0; transform: scale(0.4); }
+}
 
 .app-workspace-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-workspace-select {

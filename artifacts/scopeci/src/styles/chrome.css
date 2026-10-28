@@ -126,11 +126,14 @@ html.menu-open { overflow: hidden; }
   transition: color var(--fast) var(--ease), background-color var(--fast) var(--ease);
 }
 .theme-switch button:hover { color: var(--fg); }
-.theme-switch button.is-active {
+.theme-switch button.is-active,
+.theme-switch[data-indicator]::before {
   background: var(--bg-sunken);
   color: var(--fg);
   box-shadow: inset 0 0 0 1px var(--line-2);
 }
+.theme-switch[data-indicator]::before { border-radius: var(--radius-xs); }
+.theme-switch[data-indicator] button.is-active { background: transparent; box-shadow: none; }
 
 /* ==================================================================
    Footer

@@ -47,7 +47,7 @@ Facts the interface must never contradict:
 | Fonts | Google Fonts: **Newsreader** (variable, 400–600 with italics), **Geist** (400/500/600), **Geist Mono** (400/500). The CSP and the privacy policy both name Google Fonts. |
 | Icons | **Hugeicons** free stroke set (`@hugeicons/react` and `@hugeicons/core-free-icons`, MIT) through `src/icons.tsx` only. The GitHub mark comes from `react-icons/si` through `VendorMark`. |
 | Dialogs | `@radix-ui/react-dialog` for the change-order panel; `@radix-ui/react-alert-dialog` for confirmations (`src/components/confirm-dialog.tsx`) |
-| Motion | CSS transitions and keyframes, plus small hooks in `src/motion.ts` (`useInView`, `useTimeline`, `useReveal`, `usePointerTilt`). |
+| Motion | CSS transitions and keyframes, plus small helpers in `src/motion.ts` (`useInView`, `useTimeline`, `useReveal`, `usePointerTilt`, `useIndicator`, `withViewTransition`) and the browser's View Transitions API. |
 | Hosting | Render serves the API and the built site from one Node service (`render.yaml`). `vercel.json` exists, but no Vercel project is connected. |
 | Removed on 28 October 2026 | The unused shadcn/ui kit (55 files in `src/components/ui`) and the packages only it used: `lucide-react`, `framer-motion`, `recharts`, `embla-carousel-react`, `vaul`, `sonner`, `cmdk`, `input-otp`, `react-day-picker`, `react-hook-form`, `date-fns`, `react-resizable-panels` and the other Radix primitives |
 | Other artifact | `artifacts/mockup-sandbox`: a Vite component-preview sandbox. It is not deployed and not covered by this document. |
@@ -444,7 +444,8 @@ Shared rules for all components:
 - **App header**
   - Sticky.
   - Contents: logo, workspace switcher (a native select with a custom chevron), nav (Projects, Team) with the active page on a sunken fill, then the theme toggle, avatar and *Sign out*.
-- **Active state:** a `--bg-sunken` fill plus `--fg` text. Never a coloured underline and a fill together.
+- **Active state:** a `--bg-sunken` fill plus `--fg` text. Never a coloured underline and a fill together. In the app nav the fill is one shared mark that slides to the new page (see *Selection that moves* in section 7).
+- **Page changes:** an in-app link fades the old page out and the new one in, starting at the top of the page; both headers stay still.
 - **Footer:** brand plus two link columns, then a bottom row with © and the three-way theme switch.
 
 ### Buttons [Existing]
@@ -488,10 +489,12 @@ Shared rules for all components:
 - **Tabs** (the product tour) follow the full WAI-ARIA tabs pattern:
   - Roles: `tablist`, `tab` and `tabpanel`.
   - Roving `tabIndex`, with ArrowLeft/ArrowRight/Home/End to move.
-  - The selected tab has a 2px `--fg` underline and `--fg` text; the others are `--fg-muted`.
+  - The selected tab has a 2px `--brand` underline, a `--brand` icon and `--fg` text; the others are `--fg-muted`.
+  - There is one underline for the row, and it slides to the selected tab. On a phone, where the row scrolls, selecting a half-hidden tab scrolls it fully into view.
+  - Changing tab swaps the caption and the screenshot inside a frame that stays put. A tab's screenshot is fetched when it is pointed at or focused.
 - **Segmented controls** (the creep chart's "Without/With", the theme switch) are buttons with `aria-pressed` inside `role="group"`.
   - The track is `--bg-sunken` with an 8px outer radius.
-  - The selected segment is `--bg-raised` with `--shadow-1` and a 6px radius.
+  - The selected segment is `--bg-raised` with `--shadow-1` and a 6px radius. It is one thumb that slides between segments.
 - **Progress rail** (/try): numbered square markers for the steps (done, current, next), with `aria-current="step"`.
 
 ### Tables and data lists [Existing]
@@ -556,13 +559,16 @@ ScopeCI reads **changed file names and per-file line counts, not code**, so it n
 ### Status indicators [Existing]
 
 - **Verdict label:** text in the tone colour, plus the card's left rule. No dot.
-- **Chips:** 24px high, `--radius-xs`, a tone border and wash, 13px Geist 500. They state a status in words: "Scope v3", "2 need a change order", "Ready to send". A chip is never a button.
+- **Chips:** 24px high, `--radius-xs`, a tone border and wash, 13px Geist 500. They state one status in words: "Ready to send", "CO-007 sent 3 h ago". A chip is never a button, and chips are not lined up into a row of counts.
+- **Project status** (project page header and project cards): two lines of plain 14px text, no boxes.
+  - First, what the project is tied to: the scope version with `ContractIcon`, and the repository with the GitHub mark. "Scope not confirmed" is in `--warning`.
+  - Then what has happened: "23 checked", "2 need a change order", "1 to decide", "1 sent", "2 approved · $4,350". Numbers are tabular and `--fg`. Only counts that ask for something take a tone colour: change orders in `--error`, decisions in `--warning`, approvals in `--success`.
 - **Check glyphs:** use these, bare and in the tone colour, never inside a circle:
   - `TickIcon` for success
   - `AlertIcon` for warning
   - `CrossIcon` for error
   - `NeutralIcon` for neutral
-- **Change order progress:** three ruled columns (Drafted, Sent, Client's answer). The top rule fills in brand when a step is done, warning when it is current and error when the client declined. Each column carries its date.
+- **Change order progress:** three ruled columns (Drafted, Sent, Client's answer). Each top rule is a `--line-2` track that fills from the left: brand when the step is done, warning when it is current, error when the client declined. When a step is reached, its rule fills and its tick scales in; the next one follows a beat later. Each column carries its date.
 
 ### Empty, loading, error and success states
 
@@ -607,20 +613,24 @@ ScopeCI reads **changed file names and per-file line counts, not code**, so it n
 | `--fast` [Existing] | 160ms | Hover, press, colour and border changes |
 | `--medium` [Existing] | 240ms | Tabs, menus, the FAQ open, merge-box content swaps |
 | `--panel` [Existing] | 320ms | Side panel enter (exit at `--fast`) |
-| `--slow` [Existing] | 520ms | One-time illustration steps only |
+| `--slow` [Existing] | 520ms | One-time illustration steps; the wash on a just-added scope item |
+| `--press` [Existing] | 60ms | Pressing down on a button, icon button or card (letting go uses `--fast`) |
+| `--stagger` [Existing] | 60ms | The delay between two linked movements, so they read as one sequence |
 
 Easing:
 
 - `--ease` (`cubic-bezier(0.22, 0.68, 0.24, 1)`) for state changes.
 - `--ease-out` (`cubic-bezier(0.16, 1, 0.3, 1)`) for entering elements.
+- `--ease-emphasized` (`cubic-bezier(0.2, 0, 0, 1)`) for something that travels from one place to another: a selection mark, a progress rule.
 
-**[Existing]** Every transition and animation uses these four tokens. The only literal timings are two loops that stop with their state: the spinner's 0.72s turn and the 1s pulse on the hero's running check. A one-time illustration may run longer in total, but each of its steps uses `--slow` or less.
+**[Existing]** Every transition and animation uses these tokens. The only literal timings are two loops that stop with their state: the spinner's 0.72s turn and the 1s pulse on the hero's running check. A one-time illustration may run longer in total, but each of its steps uses `--slow` or less.
 
 ### What motion is for
 
 - **Allowed:**
-  - Confirming an action (button press, saved state).
-  - Showing where something came from or went (the panel slides in from the side it relates to).
+  - Confirming an action (button press, saved state, "Copied").
+  - Showing where something came from or went (the panel slides in from the side it relates to; a selection mark moves to the new choice; a new scope item rises out of the field it was typed in).
+  - Showing what changed and what didn't (on a page change the headers hold still; on a tab change the frame holds still).
   - Revealing detail the user asked for (FAQ, tabs).
   - One explanatory sequence that shows the product's mechanism: the hero's highlight, then the matched files, then the verdict.
 - **Not allowed:**
@@ -644,6 +654,16 @@ Easing:
 | Hero sequence (about 3.2s once, with a Replay button) | [Existing] keep. It explains the product. |
 | Hero pointer tilt (±4°, fine pointers only) | [Existing] keep, at most ±4° |
 | Product tour: scroll-linked 3D settle | Removed. The frame is static. |
+| Selection that moves: one mark slides to the new choice in the tour tabs, the chart switch, the theme switch and the app nav (`useIndicator`, `--medium`, `--ease-emphasized`). It appears in place on load and only moves on a change. | [Existing] |
+| Page change: the old page fades out (`--fast`), the new one fades in with a 6px rise (`--medium`, after `--stagger`), headers held still (`withViewTransition` from wouter's `aroundNav`) | [Existing] |
+| Theme change: a whole-window crossfade (`--medium`) | [Existing] |
+| Product tour view swap: the caption rises 4px into place, the screenshot fades in after `--stagger` | [Existing] |
+| Copy confirmation: the copy icon turns into a `--success` tick and the label into "Copied" in a button that keeps its width; it turns back after 2 seconds (`CopyButton`) | [Existing] |
+| Just-added scope item: rises 6px from the field, on a tone wash that fades (`--slow`). Only the new item; the list as loaded doesn't animate. | [Existing] |
+| Change order progress rules fill from the left, the later step after a beat | [Existing] |
+| Focus ring draws in from the element's edge (`--fast`) | [Existing] |
+| Changed-files list and the /try comment open to their height like the FAQ | [Existing] |
+| Project card lifting 2px on hover | Removed. The edge firms up and the arrow nudges. |
 | Scroll reveal | [Existing] only on the hero visual and the product tour frame. Text never waits on a reveal. |
 | Creep chart switching itself to "With ScopeCI" | Removed. The chart changes only when the visitor asks. Its one-time draw uses `--slow`. |
 | Pulsing "checking" glyph in the hero | [Existing] keep. It stops when the sequence ends. |
@@ -656,6 +676,8 @@ Under `prefers-reduced-motion: reduce`:
 - Revealed content is visible immediately.
 - The hero shows its final state.
 - Pointer tilt and scroll-linked effects do not run.
+- Page and theme changes are not wrapped in view transitions; they happen at once.
+- Selection marks jump to the new choice.
 
 Any new motion must keep all of these true.
 
@@ -729,6 +751,8 @@ Do not ship any of these:
 16. Dependencies added only for decoration: animation, particle, carousel or icon packs beyond Hugeicons. **[Existing]** The unused packages are gone.
 17. Confusing "premium" with a dark background, tiny uppercase labels and borders on everything.
 18. Mixing icon sets. Only `src/icons.tsx` (Hugeicons) is allowed, plus official brand marks through `VendorMark`. No lucide.
+19. Badge rows: a run of bordered, coloured chips for counts and metadata. Write it as a line of text and colour only what needs action (see *Project status*).
+20. Hover theatrics: cards and list rows that lift, tilt, glow or scale on hover; staggered fade-ins on every list; motion that plays because the page loaded rather than because something changed.
 
 ---
 

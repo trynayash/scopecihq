@@ -126,10 +126,17 @@
   /* Motion */
   --ease: cubic-bezier(0.22, 0.68, 0.24, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  /* For something that travels from one place to another: leaves quickly,
+     settles slowly. */
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
   --fast: 160ms;
   --medium: 240ms;
   --panel: 320ms;
   --slow: 520ms;
+  /* Pressing down is near-instant; letting go uses --fast. */
+  --press: 60ms;
+  /* The beat between two linked movements, so they read as one sequence. */
+  --stagger: 60ms;
 }
 
 /* `.on-dark` lends the dark roles to one panel on a light page. */

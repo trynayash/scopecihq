@@ -406,12 +406,32 @@
 .tour-tab[aria-selected='true'] { color: var(--fg); }
 .tour-tab[aria-selected='true']::after { transform: none; }
 .tour-tab[aria-selected='true'] .icon { color: var(--brand); }
+/* Once placed, one underline slides between the tabs instead. */
+.tour-tabs[data-indicator]::before {
+  top: auto;
+  bottom: 0;
+  width: calc(var(--ind-w) - var(--space-3) * 2);
+  height: 2px;
+  transform: translateX(calc(var(--ind-x) + var(--space-3)));
+  background: var(--brand);
+}
+.tour-tabs[data-indicator] .tour-tab::after { display: none; }
 /* Inside the scrolling row an outside ring would be clipped. */
 .tour-tab:focus-visible { outline-offset: -2px; }
 
 .tour-panel { margin-top: var(--space-4); }
 .tour-panel:focus-visible { outline-offset: 6px; border-radius: var(--radius-l); }
 .tour-caption { max-width: 72ch; color: var(--fg-muted); font-size: var(--t-ui); line-height: 1.55; }
+/* Changing view swaps what is in the window, not the window: the caption
+   and the screen settle in, the frame stays where it is. */
+.tour-caption { animation: tour-caption-in var(--medium) var(--ease-out) both; }
+.shot { animation: tour-shot-in var(--medium) var(--ease) var(--stagger) both; }
+@keyframes tour-caption-in {
+  from { opacity: 0; transform: translateY(4px); }
+}
+@keyframes tour-shot-in {
+  from { opacity: 0; }
+}
 
 .shot-frame {
   margin-top: var(--space-4);
@@ -496,11 +516,14 @@
   transition: color var(--fast) var(--ease), background-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
 }
 .segmented button:hover { color: var(--fg); }
-.segmented button.is-active {
+.segmented button.is-active,
+.segmented[data-indicator]::before {
   background: var(--bg-raised);
   color: var(--fg);
   box-shadow: var(--shadow-1), inset 0 0 0 1px var(--line-2);
 }
+.segmented[data-indicator]::before { border-radius: var(--radius-s); }
+.segmented[data-indicator] button.is-active { background: transparent; box-shadow: none; }
 
 .creep-plot { position: relative; height: clamp(190px, 24vw, 250px); margin-top: var(--space-4); }
 .creep-plot svg { width: 100%; height: 100%; overflow: visible; }
@@ -1055,16 +1078,6 @@
   color: var(--fg-muted);
   font-size: var(--t-body);
   line-height: 1.68;
-}
-
-@supports selector(::details-content) {
-  :root { interpolate-size: allow-keywords; }
-  .faq-item::details-content {
-    block-size: 0;
-    overflow: clip;
-    transition: block-size var(--panel) var(--ease-out), content-visibility var(--panel) allow-discrete;
-  }
-  .faq-item[open]::details-content { block-size: auto; }
 }
 
 /* ==================================================================

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useInView } from '../motion';
+import { useInView, useIndicator } from '../motion';
 
 /**
  * An illustrative fixed-price project, not customer data: twelve weeks,
@@ -58,6 +58,7 @@ export function CreepChart() {
   const [view, setView] = useState<View>('without');
   const [ref, inView] = useInView<HTMLDivElement>('-25% 0px -25% 0px');
   const flagged = view === 'with';
+  const switchRef = useIndicator<HTMLDivElement>('[aria-pressed="true"]', view);
 
   return (
     <figure className={`creep ${inView ? 'is-drawn' : ''} ${flagged ? 'is-flagged' : ''}`} ref={ref}>
@@ -65,7 +66,7 @@ export function CreepChart() {
         <p className="creep-caption">
           Hours on an illustrative 12-week fixed-price build
         </p>
-        <div className="segmented" role="group" aria-label="Show the project">
+        <div className="segmented" role="group" aria-label="Show the project" ref={switchRef}>
           <button type="button" aria-pressed={!flagged} className={!flagged ? 'is-active' : ''} onClick={() => setView('without')}>
             Without ScopeCI
           </button>

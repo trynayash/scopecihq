@@ -1,6 +1,6 @@
 import { type CSSProperties, type KeyboardEvent, type SyntheticEvent, useRef, useState } from 'react';
 import { BASE } from '../site';
-import { useInView } from '../motion';
+import { prefersReducedMotion, useIndicator, useInView } from '../motion';
 import { ContractIcon, DocumentIcon, FolderIcon, GitPullRequestIcon, Icon, type IconSvgElement, LockIcon } from '../icons';
 
 /**
@@ -10,8 +10,9 @@ import { ContractIcon, DocumentIcon, FolderIcon, GitPullRequestIcon, Icon, type 
  * They are CSS backgrounds rather than <img>s, with the context menu,
  * dragging and long-press saving turned off, so they are not one click away
  * from a download. Only the selected view's screenshot is in the page, and
- * only once the tour is near the viewport; the other views are fetched when
- * someone selects them.
+ * only once the tour is near the viewport; another view's screenshot is
+ * fetched when someone points at or focuses its tab, so it is usually there
+ * by the time they select it.
  */
 
 type ViewId = 'results' | 'scope' | 'projects' | 'try';
@@ -55,10 +56,36 @@ const shotUrl = (id: ViewId, theme: 'light' | 'dark', phone = false) =>
 /** Keeps the browser's save and drag gestures off the screenshots. */
 const block = (event: SyntheticEvent) => event.preventDefault();
 
+const fetched = new Set<string>();
+/** Fetches the screenshot a view would show right now, once. */
+function prefetch(id: ViewId) {
+  if (typeof window === 'undefined') return;
+  const theme = document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+  const phone = window.matchMedia('(max-width: 719px)').matches;
+  const src = `${BASE}/product/${id}${phone ? '-phone' : ''}-${theme}.webp`;
+  if (fetched.has(src)) return;
+  fetched.add(src);
+  new Image().src = src;
+}
+
 export function ProductTour() {
   const [active, setActive] = useState(0);
   const tabs = useRef<Array<HTMLButtonElement | null>>([]);
   const [viewRef, near] = useInView<HTMLDivElement>('0px 0px 600px 0px');
+  const railRef = useIndicator<HTMLDivElement>('[aria-selected="true"]', active);
+
+  const select = (index: number) => {
+    setActive(index);
+    // On a phone the row scrolls; bring a half-shown tab fully into it
+    // without moving the page.
+    const tab = tabs.current[index];
+    const rail = tab?.parentElement;
+    if (!tab || !rail) return;
+    const left = tab.offsetLeft - rail.scrollLeft;
+    const overflow = left + tab.offsetWidth - rail.clientWidth;
+    const by = left < 0 ? left - 16 : overflow > 0 ? overflow + 16 : 0;
+    if (by) rail.scrollBy({ left: by, behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+  };
 
   // Arrow keys move between tabs and select as they go (the WAI-ARIA tabs
   // pattern with automatic activation); Tab then leaves for the panel.
@@ -73,14 +100,14 @@ export function ProductTour() {
     const next = targets[event.key];
     if (next === undefined) return;
     event.preventDefault();
-    setActive(next);
-    tabs.current[next]?.focus();
+    select(next);
+    tabs.current[next]?.focus({ preventScroll: true });
   };
 
   return (
     <div className="tour" ref={viewRef}>
       <div className="tour-rail">
-        <div className="tour-tabs" role="tablist" aria-label="Screens in ScopeCI" onKeyDown={onKeyDown}>
+        <div className="tour-tabs" role="tablist" aria-label="Screens in ScopeCI" onKeyDown={onKeyDown} ref={railRef}>
           {VIEWS.map((view, index) => {
             const selected = index === active;
             return (
@@ -96,7 +123,9 @@ export function ProductTour() {
                 aria-controls={panelId(view.id)}
                 tabIndex={selected ? 0 : -1}
                 className="tour-tab"
-                onClick={() => setActive(index)}
+                onClick={() => select(index)}
+                onPointerEnter={() => near && prefetch(view.id)}
+                onFocus={() => near && prefetch(view.id)}
               >
                 <Icon icon={view.icon} size={14} />
                 {view.label}

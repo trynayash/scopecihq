@@ -46,12 +46,14 @@ import {
 import { BASE, ICON_MARK, Logo, TRY_PATH, ThemeToggle, usePageMeta } from '../site';
 import { useConfirm } from '../components/confirm-dialog';
 import { Loading } from '../components/loading';
+import { CopyButton } from '../components/copy-button';
+import { useIndicator } from '../motion';
 import { ChangeOrderBox, ScopeEditor, changeOrderText, errorMessage, itemCount, verdictOf } from '../scope-ui';
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
   ChevronDownIcon,
-  CopyIcon,
+  ContractIcon,
   CrossIcon,
   ExternalIcon,
   FolderIcon,
@@ -158,6 +160,7 @@ function AppHeader({
   const [location] = useLocation();
   const endSession = useEndSession();
   const onProjects = location === '/' || location.startsWith('/projects');
+  const navRef = useIndicator<HTMLElement>('.is-active', onProjects ? 'projects' : location);
   const signOut = () =>
     endSession.mutate(undefined, {
       onSettled: () => {
@@ -178,7 +181,7 @@ function AppHeader({
             <span className="app-account-name">
               {organization ? <WorkspaceSwitcher current={organization} workspaces={workspaces} /> : <span>{user.login}</span>}
             </span>
-            <nav className="app-nav" aria-label="App">
+            <nav className="app-nav" aria-label="App" ref={navRef}>
               <Link href="/" className={`app-nav-link ${onProjects ? 'is-active' : ''}`} data-testid="link-projects">
                 <Icon icon={FolderIcon} size={14} />
                 <span className="app-header-label">Projects</span>
@@ -326,31 +329,54 @@ export default function AppPage() {
 /* Projects                                                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Two quiet lines rather than a row of badges: what the project is tied to
+ * (its scope version and repository), then what has happened on it. Only
+ * the counts that ask for something are in colour.
+ */
 function ProjectStatus({ project }: { project: Project }) {
   const { checked, changeOrders, decisions, changeOrdersSent, changeOrdersApproved, approvedValue } = project.counts;
   return (
-    <p className="project-status">
-      <span className={`chip ${project.scopeVersion ? 'is-ok' : 'is-warn'}`}>
-        {project.scopeVersion ? `Scope ${project.scopeVersion}` : 'Scope not confirmed'}
-      </span>
-      <span className="chip">
-        <SiGithub size={11} aria-hidden="true" />
-        <span className="mono">{project.repository ? project.repository.fullName : 'No repository'}</span>
-      </span>
-      {checked > 0 && <span className="chip">{checked} checked</span>}
-      {changeOrders > 0 && (
-        <span className="chip is-alert">
-          {changeOrders} need{changeOrders === 1 ? 's' : ''} a change order
+    <div className="project-status">
+      <p className="project-meta">
+        <span className={project.scopeVersion ? undefined : 'is-warn'}>
+          <Icon icon={ContractIcon} size={14} />
+          {project.scopeVersion ? `Scope ${project.scopeVersion}` : 'Scope not confirmed'}
         </span>
-      )}
-      {decisions > 0 && <span className="chip is-warn">{decisions} to decide</span>}
-      {changeOrdersSent > 0 && <span className="chip">{changeOrdersSent} sent</span>}
-      {changeOrdersApproved > 0 && (
-        <span className="chip is-ok">
-          {changeOrdersApproved} approved{approvedValue > 0 ? ` · ${money(approvedValue)}` : ''}
+        <span className={project.repository ? undefined : 'is-faint'}>
+          <SiGithub size={13} aria-hidden="true" />
+          <span className="mono">{project.repository ? project.repository.fullName : 'No repository'}</span>
         </span>
+      </p>
+      {checked > 0 && (
+        <p className="project-counts">
+          <span>
+            <strong className="num">{checked}</strong> checked
+          </span>
+          {changeOrders > 0 && (
+            <span className="is-alert">
+              <strong className="num">{changeOrders}</strong> need{changeOrders === 1 ? 's' : ''} a change order
+            </span>
+          )}
+          {decisions > 0 && (
+            <span className="is-warn">
+              <strong className="num">{decisions}</strong> to decide
+            </span>
+          )}
+          {changeOrdersSent > 0 && (
+            <span>
+              <strong className="num">{changeOrdersSent}</strong> sent
+            </span>
+          )}
+          {changeOrdersApproved > 0 && (
+            <span className="is-ok">
+              <strong className="num">{changeOrdersApproved}</strong> approved
+              {approvedValue > 0 && <span className="num"> · {money(approvedValue)}</span>}
+            </span>
+          )}
+        </p>
       )}
-    </p>
+    </div>
   );
 }
 
@@ -946,8 +972,10 @@ function ChangeOrderSteps({ pr }: { pr: PullRequestResult }) {
   ];
   return (
     <ol className="co-steps" aria-label="Change order progress">
-      {steps.map((step) => (
-        <li key={step.label} className={`is-${step.state}`}>
+      {/* Keyed by position, so a step that changes state keeps its element
+          and its track fills rather than reappearing. */}
+      {steps.map((step, index) => (
+        <li key={index} className={`is-${step.state}`}>
           <strong>
             {step.state === 'done' && <Icon icon={TickIcon} size={13} strokeWidth={2} />}
             {step.label}
@@ -1420,7 +1448,6 @@ function TeamPage() {
   const [confirm, confirmDialog] = useConfirm();
   const [name, setName] = useState('');
   const [link, setLink] = useState('');
-  const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
 
@@ -1456,21 +1483,11 @@ function TeamPage() {
     createInvite.mutate(undefined, {
       onSuccess: (created) => {
         setLink(created.url);
-        setCopied(false);
         setError('');
         refresh();
       },
       onError: fail("We couldn't make an invite."),
     });
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(link);
-      setCopied(true);
-    } catch {
-      setCopied(false);
-    }
-  };
 
   return (
     <>
@@ -1557,10 +1574,7 @@ function TeamPage() {
               </label>
               <div className="inline-field">
                 <input id="invite-url" className="mono" readOnly value={link} onFocus={(e) => e.target.select()} />
-                <button type="button" className="button button-quiet" onClick={copy}>
-                  <Icon icon={CopyIcon} size={14} />
-                  {copied ? 'Copied' : 'Copy'}
-                </button>
+                <CopyButton text={link} />
               </div>
               <p className="help">This link is only shown now. Make another one if it gets lost.</p>
             </div>

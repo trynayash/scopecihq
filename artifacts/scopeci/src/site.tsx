@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTheme } from 'next-themes';
 import { SiGithub } from 'react-icons/si';
 import { ArrowRightIcon, CrossIcon, Icon, MenuIcon, MoonIcon, SunIcon, SystemThemeIcon } from './icons';
+import { useIndicator, withViewTransition } from './motion';
 
 /**
  * Pieces every public page shares: paths, analytics, page metadata, the
@@ -159,7 +160,7 @@ export function ThemeToggle() {
     <button
       type="button"
       className="icon-button theme-toggle"
-      onClick={() => setTheme(dark ? 'light' : 'dark')}
+      onClick={() => withViewTransition(() => setTheme(dark ? 'light' : 'dark'), 'theme')}
       aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'}
       title={dark ? 'Light theme' : 'Dark theme'}
       data-testid="button-theme-toggle"
@@ -179,17 +180,19 @@ const THEME_OPTIONS = [
 export function ThemeSwitch() {
   const { theme, setTheme } = useTheme();
   const mounted = useMounted();
+  const current = mounted ? (theme ?? 'system') : null;
+  const ref = useIndicator<HTMLDivElement>('[aria-pressed="true"]', current);
   return (
-    <div className="theme-switch" role="group" aria-label="Theme">
+    <div className="theme-switch" role="group" aria-label="Theme" ref={ref}>
       {THEME_OPTIONS.map(({ value, label, glyph }) => {
-        const checked = mounted && (theme ?? 'system') === value;
+        const checked = current === value;
         return (
           <button
             key={value}
             type="button"
             aria-pressed={checked}
             className={checked ? 'is-active' : ''}
-            onClick={() => setTheme(value)}
+            onClick={() => withViewTransition(() => setTheme(value), 'theme')}
             title={label}
           >
             <Icon icon={glyph} size={14} />

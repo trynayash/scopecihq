@@ -40,6 +40,12 @@ p { text-wrap: pretty; }
   outline: 2px solid var(--focus);
   outline-offset: 3px;
   border-radius: var(--radius-xs);
+  animation: focus-ring var(--fast) var(--ease-out);
+}
+/* The ring closes in from the element's edge, so the eye catches where
+   focus went. */
+@keyframes focus-ring {
+  from { outline-color: transparent; outline-offset: 0; }
 }
 
 .sr-only {
@@ -181,7 +187,8 @@ p { text-wrap: pretty; }
     transform var(--fast) var(--ease);
 }
 .button svg { flex: none; transition: transform var(--fast) var(--ease-out); }
-.button:active:not([disabled]) { transform: translateY(1px) scale(0.99); }
+/* Pressing is quick and letting go is a touch slower, like a key. */
+.button:active:not([disabled]) { transform: translateY(1px) scale(0.99); transition-duration: var(--press); }
 .button[disabled] { cursor: not-allowed; opacity: 0.6; }
 
 .button-primary {
@@ -225,9 +232,30 @@ p { text-wrap: pretty; }
   border: 1px solid transparent;
   border-radius: var(--radius-s);
   color: var(--fg-muted);
-  transition: color var(--fast) var(--ease), background-color var(--fast) var(--ease), border-color var(--fast) var(--ease);
+  transition:
+    color var(--fast) var(--ease),
+    background-color var(--fast) var(--ease),
+    border-color var(--fast) var(--ease),
+    transform var(--fast) var(--ease);
 }
 .icon-button:hover { color: var(--fg); background: var(--bg-hover); border-color: var(--line); }
+.icon-button:active { transform: scale(0.94); transition-duration: var(--press); }
+
+/* Copy: the icon turns into a tick and the label into "Copied" in place
+   (CopyButton). Each pair shares one grid cell, so nothing shifts. */
+.copy-glyph,
+.copy-label { display: inline-grid; justify-items: start; }
+.copy-button .copy-glyph > *,
+.copy-button .copy-label > * {
+  grid-area: 1 / 1;
+  transition: opacity var(--fast) var(--ease), transform var(--medium) var(--ease-out);
+}
+.copy-button .copy-glyph > :last-child { color: var(--success); opacity: 0; transform: scale(0.4); }
+.copy-button .copy-label > :last-child { opacity: 0; }
+.copy-button.is-copied .copy-glyph > :first-child { opacity: 0; transform: scale(0.4); }
+.copy-button.is-copied .copy-glyph > :last-child { opacity: 1; transform: none; }
+.copy-button.is-copied .copy-label > :first-child { opacity: 0; }
+.copy-button.is-copied .copy-label > :last-child { opacity: 1; }
 
 .spinner {
   display: block;
@@ -340,6 +368,7 @@ p { text-wrap: pretty; }
   font-weight: 500;
   line-height: 1.3;
   white-space: nowrap;
+  transition: background-color var(--medium) var(--ease), border-color var(--medium) var(--ease), color var(--medium) var(--ease);
 }
 .chip.is-ok { border-color: var(--success-line); background: var(--success-wash); color: var(--success); }
 .chip.is-warn { border-color: var(--warning-line); background: var(--warning-wash); color: var(--warning); }
@@ -356,6 +385,87 @@ p { text-wrap: pretty; }
   transition-delay: calc(var(--reveal-delay, 0) * 1ms);
 }
 .js-reveal [data-reveal].is-revealed { opacity: 1; transform: none; }
+
+/* ==================================================================
+   Disclosure
+   ================================================================== */
+
+/* A <details> opens to its height instead of appearing at full size. */
+@supports selector(::details-content) {
+  :root { interpolate-size: allow-keywords; }
+  :is(.faq-item, .pr-files, .try-comment)::details-content {
+    block-size: 0;
+    overflow: clip;
+    transition: block-size var(--panel) var(--ease-out), content-visibility var(--panel) allow-discrete;
+  }
+  :is(.faq-item, .pr-files, .try-comment)[open]::details-content { block-size: auto; }
+}
+
+/* ==================================================================
+   Selection indicator
+   ================================================================== */
+
+/* One mark per group that slides to the selected item (useIndicator in
+   motion.ts writes the item's box into --ind-*). Until it has been placed,
+   or without script, the item's own selected style shows instead. Each
+   control styles the mark and drops its item style once the mark exists. */
+[data-indicator] { position: relative; isolation: isolate; }
+[data-indicator]::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  top: 0;
+  left: 0;
+  width: var(--ind-w);
+  height: var(--ind-h);
+  transform: translate(var(--ind-x), var(--ind-y));
+  pointer-events: none;
+}
+[data-indicator='ready']::before {
+  transition:
+    transform var(--medium) var(--ease-emphasized),
+    width var(--medium) var(--ease-emphasized),
+    height var(--medium) var(--ease-emphasized);
+}
+
+/* ==================================================================
+   Page and theme changes
+   ================================================================== */
+
+/* withViewTransition() in motion.ts marks <html> with the kind of change.
+   A page fades through: the old one goes quickly, the new one comes in a
+   beat later with a short rise. The headers are held still, so only what
+   changed moves. A theme change is the browser's own crossfade of the
+   whole window, kept short since light into dark passes through grey. */
+html[data-transition='page']::view-transition { background: var(--bg); }
+html[data-transition='page']::view-transition-old(root) {
+  animation: vt-fade-out var(--fast) var(--ease) both;
+}
+html[data-transition='page']::view-transition-new(root) {
+  animation: vt-rise-in var(--medium) var(--ease-out) var(--stagger) both;
+}
+.site-header { view-transition-name: site-header; }
+.app-header { view-transition-name: app-header; }
+html[data-transition='page']::view-transition-group(site-header),
+html[data-transition='page']::view-transition-group(app-header),
+html[data-transition='page']::view-transition-new(site-header),
+html[data-transition='page']::view-transition-new(app-header) { animation: none; }
+html[data-transition='page']::view-transition-old(site-header),
+html[data-transition='page']::view-transition-old(app-header) { display: none; }
+
+html[data-transition='theme']::view-transition-group(*),
+html[data-transition='theme']::view-transition-old(*),
+html[data-transition='theme']::view-transition-new(*) {
+  animation-duration: var(--medium);
+  animation-timing-function: var(--ease);
+}
+
+@keyframes vt-fade-out {
+  to { opacity: 0; }
+}
+@keyframes vt-rise-in {
+  from { opacity: 0; transform: translateY(6px); }
+}
 
 /* ==================================================================
    Reduced motion
