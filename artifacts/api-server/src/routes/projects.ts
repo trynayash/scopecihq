@@ -10,6 +10,7 @@ import {
   prDiffAnalysesTable,
   projectsTable,
   pullRequestsTable,
+  scopeBaselinesTable,
 } from "@workspace/db/schema";
 import {
   CreateProjectBody,
@@ -19,6 +20,7 @@ import {
   ListGitHubRepositoriesResponse,
   ListProjectPullRequestsResponse,
   ListProjectsResponse,
+  RecheckProjectResponse,
   SaveProjectScopeBody,
   SaveProjectScopeResponse,
   UpdateChangeOrderBody,
@@ -33,6 +35,7 @@ import { accountOf, requireAccount, sameOriginWrites, type Account } from "../li
 import { checklistFromRecord, loadActiveBaseline, saveChecklist } from "../lib/scope-store.js";
 import { GitHubReauthRequired, userGitHubToken } from "../lib/github-token.js";
 import { installUrl, listInstallationRepositories, listUserInstallations } from "../github/user-api.js";
+import { GitHubApiError } from "../github/github-http.js";
 
 /**
  * The signed-in app: projects, their confirmed scope, the repository each
@@ -44,6 +47,19 @@ const router: IRouter = Router();
 router.use(["/projects", "/github/repositories"], sameOriginWrites, requireAccount);
 
 const gitHubLimiter = rateLimiter({ windowMs: 60_000, max: 30, message: "Too many GitHub lookups. Wait a minute." });
+
+/**
+ * Checks the project's open pull requests again in the background, after
+ * something that changes their verdict: a new scope version, a newly
+ * connected repository, a different policy or an approved change order.
+ */
+function recheckLater(req: Request, projectId: string): void {
+  setImmediate(() => {
+    currentWebhookService()
+      .then((service) => service?.recheckOpenPullRequests(projectId))
+      .catch((err) => req.log.warn({ err, projectId }, "Re-checking open pull requests failed"));
+  });
+}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -250,6 +266,10 @@ router.get("/projects", async (_req, res): Promise<void> => {
 router.post("/projects", async (req, res): Promise<void> => {
   const parsed = CreateProjectBody.safeParse(req.body);
   if (!parsed.success) return badRequest(res, parsed.error);
+  if (!parsed.data.name.trim()) {
+    res.status(400).json({ error: "Give the project a name." });
+    return;
+  }
   const account = accountOf(res);
   const [row] = await db
     .insert(projectsTable)
@@ -289,6 +309,10 @@ router.patch("/projects/:projectId", async (req, res): Promise<void> => {
   const project = await withProject(req, res);
   if (!project) return;
   const patch = parsed.data;
+  if (patch.name !== undefined && !patch.name.trim()) {
+    res.status(400).json({ error: "Give the project a name." });
+    return;
+  }
   const [row] = await db
     .update(projectsTable)
     .set({
@@ -300,6 +324,8 @@ router.patch("/projects/:projectId", async (req, res): Promise<void> => {
     })
     .where(eq(projectsTable.id, project.id))
     .returning();
+  // A stricter or looser policy changes what the GitHub check says.
+  if (patch.policyMode !== undefined && patch.policyMode !== project.policyMode) recheckLater(req, project.id);
   res.json(UpdateProjectResponse.parse(await presentProject(row)));
 });
 
@@ -339,6 +365,8 @@ router.put("/projects/:projectId/scope", async (req, res): Promise<void> => {
   const account = accountOf(res);
   const saved = await saveChecklist(project, parsed.data, account.login);
   const baseline = await loadActiveBaseline((await findProject(account, project.id))!.contractId!);
+  // Open pull requests are judged against the new version straight away.
+  recheckLater(req, project.id);
   res.json(
     SaveProjectScopeResponse.parse({
       version: saved.version,
@@ -356,6 +384,11 @@ function reauth(res: Response): void {
   res.status(401).json({ error: "GitHub access expired. Sign in again to see your repositories." });
 }
 
+/** GitHub refusing the person's token means the same as it having expired. */
+function gitHubRefused(err: unknown): boolean {
+  return err instanceof GitHubReauthRequired || (err instanceof GitHubApiError && err.status === 401);
+}
+
 router.get("/github/repositories", gitHubLimiter, async (_req, res): Promise<void> => {
   const account = accountOf(res);
   let token: string;
@@ -366,18 +399,23 @@ router.get("/github/repositories", gitHubLimiter, async (_req, res): Promise<voi
     throw err;
   }
 
-  const installations = (await listUserInstallations(token)).slice(0, 20);
   const repositories = [];
-  for (const installation of installations) {
-    for (const repo of await listInstallationRepositories(token, installation.id)) {
-      repositories.push({
-        installationId: installation.id,
-        accountLogin: installation.accountLogin,
-        id: repo.id,
-        fullName: repo.fullName,
-        private: repo.private,
-      });
+  try {
+    const installations = (await listUserInstallations(token)).slice(0, 20);
+    for (const installation of installations) {
+      for (const repo of await listInstallationRepositories(token, installation.id)) {
+        repositories.push({
+          installationId: installation.id,
+          accountLogin: installation.accountLogin,
+          id: repo.id,
+          fullName: repo.fullName,
+          private: repo.private,
+        });
+      }
     }
+  } catch (err) {
+    if (gitHubRefused(err)) return reauth(res);
+    throw err;
   }
 
   const linked = repositories.length
@@ -422,10 +460,17 @@ router.put("/projects/:projectId/repository", gitHubLimiter, async (req, res): P
 
   // Ask GitHub, as this person, whether they can see the installation and
   // the repository. Nothing the browser sends is trusted on its own.
-  const installation = (await listUserInstallations(token)).find((i) => i.id === parsed.data.installationId);
-  const repo = installation
-    ? (await listInstallationRepositories(token, installation.id)).find((r) => r.id === parsed.data.repositoryId)
-    : undefined;
+  let installation: Awaited<ReturnType<typeof listUserInstallations>>[number] | undefined;
+  let repo: Awaited<ReturnType<typeof listInstallationRepositories>>[number] | undefined;
+  try {
+    installation = (await listUserInstallations(token)).find((i) => i.id === parsed.data.installationId);
+    repo = installation
+      ? (await listInstallationRepositories(token, installation.id)).find((r) => r.id === parsed.data.repositoryId)
+      : undefined;
+  } catch (err) {
+    if (gitHubRefused(err)) return reauth(res);
+    throw err;
+  }
   if (!installation || !repo) {
     res.status(403).json({ error: "You don't have access to that repository through the ScopeCI GitHub App." });
     return;
@@ -435,9 +480,24 @@ router.put("/projects/:projectId/repository", gitHubLimiter, async (req, res): P
   const existing = await db.query.githubInstallationsTable.findFirst({
     where: eq(githubInstallationsTable.installationId, installationId),
   });
+  // A GitHub account feeds one workspace. It can move to this one only when
+  // no project in its current workspace uses it, so a person who connected
+  // it from the wrong workspace (say their personal one) can't lock their
+  // agency out of its own repositories.
   if (existing && existing.organizationId !== account.organizationId) {
-    res.status(409).json({ error: `The GitHub account ${installation.accountLogin} is already connected to another ScopeCI workspace.` });
-    return;
+    const inUse = await db.query.projectsTable.findFirst({
+      where: and(
+        eq(projectsTable.organizationId, existing.organizationId),
+        eq(projectsTable.githubInstallationId, installationId),
+        isNull(projectsTable.archivedAt),
+      ),
+    });
+    if (inUse) {
+      res.status(409).json({
+        error: `The GitHub account ${installation.accountLogin} feeds a project in another ScopeCI workspace. Disconnect it there first.`,
+      });
+      return;
+    }
   }
 
   const takenBy = await db.query.projectsTable.findFirst({
@@ -456,7 +516,12 @@ router.put("/projects/:projectId/repository", gitHubLimiter, async (req, res): P
   if (existing) {
     await db
       .update(githubInstallationsTable)
-      .set({ suspendedAt: null, permissionsJson: installation.permissions, updatedAt: new Date() })
+      .set({
+        organizationId: account.organizationId,
+        suspendedAt: null,
+        permissionsJson: installation.permissions,
+        updatedAt: new Date(),
+      })
       .where(eq(githubInstallationsTable.id, existing.id));
   } else {
     await db.insert(githubInstallationsTable).values({
@@ -481,6 +546,8 @@ router.put("/projects/:projectId/repository", gitHubLimiter, async (req, res): P
     })
     .where(eq(projectsTable.id, project.id))
     .returning();
+  // Pull requests already open on the repository get checked now, not on their next push.
+  if (row.contractId) recheckLater(req, project.id);
   res.json(UpdateProjectResponse.parse(await presentProject(row)));
 });
 
@@ -578,11 +645,20 @@ router.put("/projects/:projectId/change-order", async (req, res): Promise<void> 
     return;
   }
 
+  // Once sent, the letter is what the client received: it no longer changes,
+  // though hours can still be recorded against it.
+  const sent = row.status !== "DRAFT";
+  if (sent && (input.subject !== undefined || input.body !== undefined)) {
+    res.status(409).json({ error: `${row.reference} was already sent; its letter is kept as sent.` });
+    return;
+  }
   const items = (row.itemsJson as ChangeOrderItem[] | null) ?? [];
   const hours = input.hours !== undefined ? input.hours || null : row.hours;
   let subject = row.messageSubject ?? "";
   let body = row.messageBody ?? "";
-  if (input.hours !== undefined) ({ subject, body } = compose(items, hours));
+  if (input.hours !== undefined && !sent && input.subject === undefined && input.body === undefined) {
+    ({ subject, body } = compose(items, hours));
+  }
   if (input.subject !== undefined) subject = input.subject;
   if (input.body !== undefined) body = input.body;
   const value = hours && project.hourlyRate ? hours * project.hourlyRate : 0;
@@ -624,18 +700,39 @@ router.put("/projects/:projectId/change-order", async (req, res): Promise<void> 
   }
 
   if (nextStatus === "APPROVED" && row.status !== "APPROVED") {
-    // Check the pull request again now, so the GitHub check reflects the
-    // approval without waiting for another push.
+    // Check again now, so GitHub reflects the approval without waiting for
+    // another push: this pull request first, then the project's other open
+    // ones, since the approved work is covered on them too.
     setImmediate(() => {
       currentWebhookService()
-        .then((service) => service?.reevaluatePullRequest(pr.id))
-        .catch((err) => {
-          req.log.warn({ err, pullRequestId: pr.id }, "Re-check after change order approval failed");
-        });
+        .then(async (service) => {
+          await service?.reevaluatePullRequest(pr.id);
+          await service?.recheckOpenPullRequests(project.id, [pr.number]);
+        })
+        .catch((err) => req.log.warn({ err, pullRequestId: pr.id }, "Re-check after change order approval failed"));
     });
   }
 
   res.json(UpdateChangeOrderResponse.parse(toTracked(updated)));
+});
+
+/* ------------------------------------------------------------------ */
+/* Re-check                                                            */
+/* ------------------------------------------------------------------ */
+
+router.post("/projects/:projectId/recheck", gitHubLimiter, async (req, res): Promise<void> => {
+  const project = await withProject(req, res);
+  if (!project) return;
+  if (!project.repositoryExternalId || !project.githubInstallationId) {
+    res.status(409).json({ error: "Connect a repository first." });
+    return;
+  }
+  if (!project.contractId) {
+    res.status(409).json({ error: "Confirm the scope first; pull requests are checked against it." });
+    return;
+  }
+  recheckLater(req, project.id);
+  res.status(202).json(RecheckProjectResponse.parse({ started: true }));
 });
 
 /* ------------------------------------------------------------------ */
@@ -651,17 +748,26 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
     orderBy: [desc(pullRequestsTable.updatedAt)],
     limit: 100,
   });
+  // Only the latest result per pull request; earlier ones stay for the record.
   const evaluations = prs.length
-    ? await db.query.commercialEvaluationsTable.findMany({
-        where: inArray(
-          commercialEvaluationsTable.pullRequestId,
-          prs.map((p) => p.id),
-        ),
-        orderBy: [desc(commercialEvaluationsTable.createdAt)],
-      })
+    ? await db
+        .selectDistinctOn([commercialEvaluationsTable.pullRequestId])
+        .from(commercialEvaluationsTable)
+        .where(inArray(commercialEvaluationsTable.pullRequestId, prs.map((p) => p.id)))
+        .orderBy(commercialEvaluationsTable.pullRequestId, desc(commercialEvaluationsTable.createdAt))
     : [];
-  const latest = new Map<string, (typeof evaluations)[number]>();
-  for (const e of evaluations) if (!latest.has(e.pullRequestId)) latest.set(e.pullRequestId, e);
+  const latest = new Map(evaluations.map((e) => [e.pullRequestId, e]));
+  const baselineIds = [...new Set(evaluations.flatMap((e) => (e.scopeBaselineId ? [e.scopeBaselineId] : [])))];
+  const versionOf = new Map(
+    baselineIds.length
+      ? (
+          await db
+            .select({ id: scopeBaselinesTable.id, version: scopeBaselinesTable.versionNumber })
+            .from(scopeBaselinesTable)
+            .where(inArray(scopeBaselinesTable.id, baselineIds))
+        ).map((b) => [b.id, b.version])
+      : [],
+  );
   const tracked = prs.length
     ? await db.query.changeOrdersTable.findMany({
         where: inArray(
@@ -671,20 +777,18 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
       })
     : [];
   const trackedBy = new Map(tracked.map((t) => [t.pullRequestId, t]));
-  // The file list the check read for each result's commit.
-  const diffs = prs.length
-    ? await db
-        .select({
-          pullRequestId: prDiffAnalysesTable.pullRequestId,
-          headSha: prDiffAnalysesTable.headSha,
-          files: prDiffAnalysesTable.filesChangedJson,
-        })
-        .from(prDiffAnalysesTable)
-        .where(inArray(prDiffAnalysesTable.pullRequestId, prs.map((p) => p.id)))
-        .orderBy(desc(prDiffAnalysesTable.createdAt))
-    : [];
-  const diffFor = (pullRequestId: string, headSha: string | null) =>
-    diffs.find((d) => d.pullRequestId === pullRequestId && d.headSha === headSha)?.files;
+  // The file list each latest result read, and no other.
+  const diffIds = evaluations.flatMap((e) => (e.prDiffAnalysisId ? [e.prDiffAnalysisId] : []));
+  const diffs = new Map(
+    diffIds.length
+      ? (
+          await db
+            .select({ id: prDiffAnalysesTable.id, files: prDiffAnalysesTable.filesChangedJson })
+            .from(prDiffAnalysesTable)
+            .where(inArray(prDiffAnalysesTable.id, diffIds))
+        ).map((d) => [d.id, d.files])
+      : [],
+  );
 
   const pullRequests = prs.flatMap((pr) => {
     const e = latest.get(pr.id);
@@ -716,10 +820,11 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
         trackedChangeOrder: trackedBy.has(pr.id) ? toTracked(trackedBy.get(pr.id)!) : null,
         excluded,
         ...changedFiles(
-          diffFor(pr.id, e.headSha),
+          e.prDiffAnalysisId ? diffs.get(e.prDiffAnalysisId) : undefined,
           e.evidenceBundleJson as Partial<EvidenceBundle> | null,
           draft?.items ?? [],
         ),
+        scopeVersion: e.scopeBaselineId ? (versionOf.get(e.scopeBaselineId) ?? null) : null,
         checkedAt: e.createdAt,
       },
     ];

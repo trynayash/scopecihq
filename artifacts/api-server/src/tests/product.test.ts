@@ -32,7 +32,9 @@ process.env.GITHUB_APP_SLUG = "scopeci-test";
 process.env.APP_BASE_URL = "http://localhost:3000";
 
 const { default: app } = await import("../app");
-const { setGitHubFetch } = await import("../github/github-http.js");
+const { setGitHubFetch, setGitHubRetryPause } = await import("../github/github-http.js");
+// Retries after a GitHub error happen at once here.
+setGitHubRetryPause(() => Promise.resolve());
 const { GitHubAppClient, createAppJwt } = await import("../github/app-client.js");
 const { NoIssueProvider } = await import("../github/issue-provider.js");
 const { WebhookService } = await import("../github/webhook-service.js");
@@ -74,6 +76,8 @@ const fake = {
     "harbor-agency/marketing#3": [[{ filename: "pages/about.tsx", status: "modified", additions: 3, deletions: 1 }]],
   } as Record<string, Array<Array<object>>>,
   checkRuns: [] as Array<{ id: number; repo: string; body: any }>,
+  // Open pull requests per repository, as GitHub would list them.
+  open: {} as Record<string, any[]>,
   comments: {
     "harbor-agency/storefront#12": [
       // A person quoting the marker: ScopeCI must never edit this one.
@@ -173,6 +177,14 @@ async function fakeGitHub(url: string, init: RequestInit): Promise<Response> {
     const link: Record<string, string> =
       page < pages.length ? { link: `<${API}${path.split("&page=")[0]}&page=${page + 1}>; rel="next"` } : {};
     return json(pages[page - 1] ?? [], 200, link);
+  }
+
+  const openList = path.match(/^\/repos\/([^/]+\/[^/]+)\/pulls\?state=open/);
+  if (openList) return json((fake.open[openList[1]] ?? []).map((p) => ({ number: p.number })));
+  const single = path.match(/^\/repos\/([^/]+\/[^/]+)\/pulls\/(\d+)$/);
+  if (single) {
+    const pr = (fake.open[single[1]] ?? []).find((p) => p.number === Number(single[2]));
+    return pr ? json(pr) : json({ message: "Not Found" }, 404);
   }
 
   const checkCreate = path.match(/^\/repos\/([^/]+\/[^/]+)\/check-runs$/);
@@ -641,6 +653,24 @@ async function run() {
       assert.strictEqual(counts.changeOrdersSent, 1);
     });
 
+    await scenario("A sent change order keeps the letter the client received; hours can still be recorded", async () => {
+      const edit = await call(server, `/api/projects/${projectId}/change-order`, {
+        method: "PUT",
+        body: { evaluationId, body: "Something else entirely" },
+        cookie: dana,
+      });
+      assert.strictEqual(edit.status, 409);
+      const hours = await call(server, `/api/projects/${projectId}/change-order`, {
+        method: "PUT",
+        body: { evaluationId, hours: 20 },
+        cookie: dana,
+      });
+      assert.strictEqual(hours.status, 200);
+      assert.strictEqual(hours.body.body, "Hi Harbor & Pine, as discussed on the call…", "the letter isn't redrawn");
+      assert.strictEqual(hours.body.amount, 3000);
+      await call(server, `/api/projects/${projectId}/change-order`, { method: "PUT", body: { evaluationId, hours: 16 }, cookie: dana });
+    });
+
     await scenario("Approving it covers the work, and the pull request is re-checked at once", async () => {
       const approved = await call(server, `/api/projects/${projectId}/change-order`, {
         method: "PUT",
@@ -702,6 +732,77 @@ async function run() {
     await scenario("Later pull requests building the approved work are covered too", async () => {
       const result: any = await deliver(prPayload({ id: 7001, full_name: "harbor-agency/storefront" }, 12, "f".repeat(40), "synchronize"));
       assert.strictEqual(result.evaluationState, "APPROVED_CHANGE");
+    });
+
+    const storefront = { id: 7001, full_name: "harbor-agency/storefront" };
+
+    await scenario("Labels, assignees and review requests don't start a check", async () => {
+      const before = fake.checkRuns.length;
+      const result: any = await deliver(prPayload(storefront, 12, "f".repeat(40), "labeled"));
+      assert.strictEqual(result.status, "ignored");
+      assert.strictEqual(fake.checkRuns.length, before);
+    });
+
+    await scenario("Events for one pull request arriving together give one comment and one check run", async () => {
+      fake.files["harbor-agency/storefront#17"] = [[{ filename: "src/cart/totals.ts", status: "modified", additions: 4, deletions: 1 }]];
+      const sha = "1".repeat(40);
+      const opened = prPayload(storefront, 17, sha);
+      const results: any[] = await Promise.all([
+        deliver(opened),
+        deliver({ ...opened, action: "reopened" }),
+        deliver({ ...opened, action: "review_requested" }),
+      ]);
+      assert.deepStrictEqual(results.map((r) => r.status), ["processed", "processed", "ignored"]);
+      assert.strictEqual(fake.comments["harbor-agency/storefront#17"].length, 1, "one comment");
+      assert.strictEqual(fake.checkRuns.filter((r) => r.body.head_sha === sha).length, 1, "one check run");
+    });
+
+    await scenario("The pull request's description is read, as on the demo", async () => {
+      fake.files["harbor-agency/storefront#18"] = [[{ filename: "src/pages/footer.tsx", status: "modified", additions: 10, deletions: 2 }]];
+      const payload = prPayload(storefront, 18, "2".repeat(40));
+      payload.pull_request.title = "Footer tweaks";
+      payload.pull_request.body = "Adds a gift cards page and links it from the footer.";
+      const result: any = await deliver(payload);
+      // Wording in a description alone is weaker evidence than a file path,
+      // so it asks a person rather than call it out of scope; before, the
+      // description wasn't read at all and this came back in scope.
+      assert.strictEqual(result.evaluationState, "REVIEW_REQUIRED", JSON.stringify(result));
+      const latest = await db.query.commercialEvaluationsTable.findFirst({
+        where: eq(commercialEvaluationsTable.headSha, "2".repeat(40)),
+      });
+      assert.match(latest?.reason ?? "", /gift cards/i);
+    });
+
+    await scenario("A pull request with more files than GitHub lists says the rest weren't checked", async () => {
+      const payload = prPayload(storefront, 17, "3".repeat(40), "synchronize");
+      payload.pull_request.changed_files = 5000;
+      await deliver(payload);
+      const run = fake.checkRuns.find((r) => r.body.head_sha === "3".repeat(40));
+      assert.ok(
+        run?.body.output.summary.includes("GitHub listed 1 of this pull request's 5,000 changed files; the rest weren't checked."),
+        run?.body.output.summary,
+      );
+      const comment = fake.comments["harbor-agency/storefront#17"][0].body;
+      assert.ok(comment.includes("5,000 changed files") && comment.includes("| Scope version | v2 |"), comment);
+    });
+
+    await scenario("Re-check gives pull requests opened before the repository was connected a result", async () => {
+      fake.files["harbor-agency/storefront#16"] = [[{ filename: "src/giftcards/redeem.ts", status: "added", additions: 30, deletions: 0 }]];
+      const early = prPayload(storefront, 16, "4".repeat(40)).pull_request;
+      fake.open["harbor-agency/storefront"] = [{ ...early, title: "Gift card redemption", head: { ref: "feat/gift-cards", sha: "4".repeat(40) } }];
+      const started = await call(server, `/api/projects/${projectId}/recheck`, { method: "POST", cookie: dana });
+      assert.strictEqual(started.status, 202, JSON.stringify(started.body));
+      let found: any;
+      for (let i = 0; i < 50 && !found; i++) {
+        const list = await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana });
+        found = list.body.pullRequests.find((p: any) => p.number === 16);
+        if (!found) await new Promise((r) => setTimeout(r, 100));
+      }
+      assert.ok(found, "the early pull request has a result");
+      assert.strictEqual(found.verdict, "CHANGE_REQUIRED");
+      assert.strictEqual(found.scopeVersion, "v2");
+      const foreign = await call(server, `/api/projects/${projectId}/recheck`, { method: "POST", cookie: eve });
+      assert.strictEqual(foreign.status, 404);
     });
 
     let eveWorkspace = "";
@@ -767,6 +868,12 @@ async function run() {
       });
       assert.strictEqual(notMine.status, 404);
       await call(server, "/api/session/workspace", { method: "PUT", body: { organizationId: danaWorkspace }, cookie: eve });
+    });
+
+    await scenario("A new sign-in opens the workspace chosen last, not the personal one", async () => {
+      const again = await signIn(server, "eve-code");
+      const session = await call(server, "/api/session", { cookie: again });
+      assert.strictEqual(session.body.organization.id, danaWorkspace);
     });
 
     await scenario("Removing a member cuts their access; the last owner can't be removed", async () => {
@@ -873,6 +980,21 @@ async function run() {
       assert.strictEqual((await call(server, `/api/projects/${projectId}`, { cookie: dana })).status, 404);
       const row = await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) });
       assert.strictEqual(row?.repositoryExternalId, null);
+    });
+
+    await scenario("A GitHub account its workspace no longer uses can be connected from another", async () => {
+      await call(server, "/api/session/workspace", { method: "PUT", body: { organizationId: eveWorkspace }, cookie: eve });
+      const eveProject = await call(server, "/api/projects", { body: { name: "Eve's marketing" }, cookie: eve });
+      const claim = await call(server, `/api/projects/${eveProject.body.id}/repository`, {
+        method: "PUT",
+        body: { installationId: 501, repositoryId: 7002 },
+        cookie: eve,
+      });
+      assert.strictEqual(claim.status, 200, JSON.stringify(claim.body));
+      const install = await db.query.githubInstallationsTable.findFirst({
+        where: eq(githubInstallationsTable.installationId, "501"),
+      });
+      assert.strictEqual(install?.organizationId, eveWorkspace);
     });
 
     await scenario("Signing out ends the session", async () => {

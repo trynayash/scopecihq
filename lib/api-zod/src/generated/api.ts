@@ -796,6 +796,23 @@ export const UpdateChangeOrderResponse = zod.object({
 
 
 /**
+ * Lists the open pull requests on the project's repository (newest first, at most 30) and checks each against the current scope, in the background. Pull requests opened before the repository was connected get their first result this way.
+ * @summary Check the repository's open pull requests again
+ */
+export const recheckProjectPathProjectIdMax = 36;
+
+
+
+export const RecheckProjectParams = zod.object({
+  "projectId": zod.coerce.string().max(recheckProjectPathProjectIdMax)
+})
+
+export const RecheckProjectResponse = zod.object({
+  "started": zod.boolean()
+})
+
+
+/**
  * @summary The latest result for each checked pull request, newest first
  */
 export const listProjectPullRequestsPathProjectIdMax = 36;
@@ -848,6 +865,7 @@ export const ListProjectPullRequestsResponse = zod.object({
   "excludedItem": zod.string().nullable().describe('The excluded item the check cited this file for, or null.')
 })).describe('The changed files the check read for this commit, by name and line count only (never their contents). Files cited for excluded work come first. Empty when the commit\'s file list wasn\'t recorded.'),
   "fileCount": zod.number().int().describe('How many files the commit changes. Can exceed the length of files, which is capped.'),
+  "scopeVersion": zod.string().nullable().describe('The scope version this result was checked against, like \"v3\". Null for results from before versions were recorded.'),
   "checkedAt": zod.coerce.date()
 }))
 })

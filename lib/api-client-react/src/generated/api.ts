@@ -39,6 +39,7 @@ import type {
   ProjectList,
   ProjectUpdateInput,
   PullRequestResultList,
+  RecheckStarted,
   RepositoryLinkInput,
   SavedScope,
   SessionInfo,
@@ -1837,6 +1838,78 @@ export const useUpdateChangeOrder = <TError = ErrorType<ErrorResponse>,
         TContext
       > => {
       return useMutation(getUpdateChangeOrderMutationOptions(options));
+    }
+
+export const getRecheckProjectUrl = (projectId: string,) => {
+
+
+
+
+  return `/api/projects/${projectId}/recheck`
+}
+
+/**
+ * Lists the open pull requests on the project's repository (newest first, at most 30) and checks each against the current scope, in the background. Pull requests opened before the repository was connected get their first result this way.
+ * @summary Check the repository's open pull requests again
+ */
+export const recheckProject = async (projectId: string, options?: Parameters<typeof customFetch>[1]): Promise<RecheckStarted> => {
+
+  return customFetch<RecheckStarted>(getRecheckProjectUrl(projectId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRecheckProjectMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recheckProject>>, TError,{projectId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof recheckProject>>, TError,{projectId: string}, TContext> => {
+
+const mutationKey = ['recheckProject'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof recheckProject>>, {projectId: string}> = (props) => {
+          const {projectId} = props ?? {};
+
+          return  recheckProject(projectId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RecheckProjectMutationResult = NonNullable<Awaited<ReturnType<typeof recheckProject>>>
+
+    export type RecheckProjectMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Check the repository's open pull requests again
+ */
+export const useRecheckProject = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recheckProject>>, TError,{projectId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof recheckProject>>,
+        TError,
+        {projectId: string},
+        TContext
+      > => {
+      return useMutation(getRecheckProjectMutationOptions(options));
     }
 
 export const getListProjectPullRequestsUrl = (projectId: string,) => {

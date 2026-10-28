@@ -18,6 +18,7 @@ import {
 } from "@workspace/db/schema";
 import {
   describeEstimate,
+  composeChangeOrder,
   draftChangeOrder,
   evaluateCommercialScope,
   pullRequestAsWorkItem,
@@ -82,6 +83,29 @@ export function verifyWebhookSignature(
     return crypto.timingSafeEqual(Buffer.from(digest, "utf8"), Buffer.from(expectedSignature, "utf8"));
   } catch {
     return false;
+  }
+}
+
+/**
+ * Whether a pull_request event changes anything the check reads: a new or
+ * reopened pull request, new commits, leaving draft, or a new title,
+ * description or base branch. "rechecked" is ScopeCI's own re-run.
+ */
+export function checksPullRequest(payload: any): boolean {
+  switch (payload?.action) {
+    case "opened":
+    case "reopened":
+    case "synchronize":
+    case "ready_for_review":
+    case "rechecked":
+    case "closed":
+      return true;
+    case "edited": {
+      const changes = payload.changes ?? {};
+      return Boolean(changes.title || changes.body || changes.base);
+    }
+    default:
+      return false;
   }
 }
 
@@ -280,11 +304,67 @@ export class WebhookService {
   }
 
   /**
+   * Checks the open pull requests on a project's repository again, as GitHub
+   * has them now. Run after the scope is saved, the repository connected, the
+   * policy changed or a change order approved, so pull requests opened before
+   * the project was set up get a result and none stays judged against an
+   * older scope. Newest first, at most 30, one at a time.
+   */
+  async recheckOpenPullRequests(projectId: string, skipNumbers: number[] = []): Promise<{ checked: number }> {
+    const project = await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) });
+    if (
+      !project ||
+      project.archivedAt ||
+      !project.githubInstallationId ||
+      !project.repositoryFullName ||
+      !project.repositoryExternalId ||
+      !this.gitHubClient.listOpenPullRequests
+    ) {
+      return { checked: 0 };
+    }
+    const [owner, name] = project.repositoryFullName.split("/");
+    const open = await this.gitHubClient.listOpenPullRequests(project.githubInstallationId, owner, name, 30);
+    let checked = 0;
+    for (const pullRequest of open) {
+      if (skipNumbers.includes(pullRequest.number)) continue;
+      const result = await this.processPullRequestEvent(`recheck_${crypto.randomUUID()}`, {
+        action: "rechecked",
+        installation: { id: Number(project.githubInstallationId) },
+        repository: { id: Number(project.repositoryExternalId), name, full_name: project.repositoryFullName, owner: { login: owner } },
+        pull_request: pullRequest,
+      });
+      if (result.status === "processed") checked++;
+    }
+    return { checked };
+  }
+
+  /** The last piece of work queued for each pull request, keyed by repository and number. */
+  private pullRequestQueues = new Map<string, Promise<unknown>>();
+
+  /**
+   * Handles one pull request event. Events for the same pull request run one
+   * after another, never side by side: GitHub sends several at once when a
+   * pull request is opened with reviewers and labels, and two checks running
+   * together would each post their own comment and check run.
+   */
+  async processPullRequestEvent(deliveryId: string, payload: any): Promise<WebhookProcessResult> {
+    const key = `${payload?.repository?.full_name}#${payload?.pull_request?.number}`;
+    const previous = this.pullRequestQueues.get(key) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(() => this.handlePullRequestEvent(deliveryId, payload));
+    this.pullRequestQueues.set(key, run);
+    try {
+      return await run;
+    } finally {
+      if (this.pullRequestQueues.get(key) === run) this.pullRequestQueues.delete(key);
+    }
+  }
+
+  /**
    * Asynchronous delivery processing.
    * Handles installation resolution, PR upsert, issue extraction, diff analysis,
    * commercial scope evaluation, check-run update, and PR comment.
    */
-  async processPullRequestEvent(
+  private async handlePullRequestEvent(
     deliveryId: string,
     payload: any
   ): Promise<WebhookProcessResult> {
@@ -297,6 +377,16 @@ export class WebhookService {
       return { deliveryId, status: "ignored", action };
     }
 
+    // Only events that change what the check reads start one. Labels,
+    // assignees, review requests and the like leave the verdict as it is.
+    if (!checksPullRequest(payload)) {
+      await db
+        .update(webhookDeliveriesTable)
+        .set({ status: "IGNORED", errorMessage: `Nothing to check on "${action}"` })
+        .where(eq(webhookDeliveriesTable.deliveryId, deliveryId));
+      return { deliveryId, status: "ignored", action, prNumber: prData.number };
+    }
+
     const prNumber = prData.number;
     const headSha = prData.head?.sha;
     const repositoryFullName = repoData.full_name;
@@ -305,6 +395,10 @@ export class WebhookService {
       { deliveryId, prNumber, headSha, repositoryFullName, action },
       "Processing GitHub pull request event"
     );
+
+    // Set once the pull request is known to belong to a project, so a
+    // failure can still be reported on it.
+    let failureCheck: { installationId: string; owner: string; repo: string; detailsUrl?: string } | null = null;
 
     try {
       // 1. Resolve GitHub App Installation -> ScopeCI Organization
@@ -504,6 +598,12 @@ export class WebhookService {
       );
 
       const normalizedDiff = normalizePullRequestDiff(headSha, rawFiles);
+      // GitHub lists at most 3,000 files for a pull request.
+      const reportedFiles = Number(prData.changed_files) || 0;
+      const partialNote =
+        reportedFiles > rawFiles.length
+          ? `GitHub listed ${rawFiles.length.toLocaleString("en-US")} of this pull request's ${reportedFiles.toLocaleString("en-US")} changed files; the rest weren't checked.`
+          : undefined;
 
       // Persist diff analysis with exact headSha
       const [diffAnalysis] = await db
@@ -529,6 +629,7 @@ export class WebhookService {
       const detailsUrl = project && process.env.APP_BASE_URL
         ? `${process.env.APP_BASE_URL.replace(/\/+$/, "")}/app/projects/${project.id}`
         : undefined;
+      if (project && installationId && headSha) failureCheck = { installationId, owner, repo, detailsUrl };
 
       let baselineRecord: Awaited<ReturnType<typeof loadActiveBaseline>>;
       if (project) {
@@ -598,6 +699,9 @@ export class WebhookService {
           id: prRecord.id,
           number: prNumber,
           title: prRecord.title,
+          // The description is read like the title, as on the /try demo.
+          body: prRecord.body || undefined,
+          headSha,
           branch: prRecord.headBranch,
           base: prRecord.baseBranch,
           author: prRecord.authorExternalId,
@@ -612,7 +716,10 @@ export class WebhookService {
             linesAdded: f.additions,
             linesDeleted: f.deletions,
           })),
-          detectedSubsystems: normalizedDiff.detectedSubsystems,
+          // The path-fragment "subsystems" the diff collector guesses (any
+          // path containing "org" or "token") are kept for the record but
+          // not judged on: they flagged files like components/organisms as
+          // organization roles. The check reads the paths themselves.
         },
         // A project's pull request is judged on its own when no issue is
         // linked; older Linear-mapped setups still ask for the link.
@@ -675,6 +782,40 @@ export class WebhookService {
         })
         .returning();
 
+      // 7b. A change order still in draft follows the pull request: new
+      // excluded work on a later push joins its items. The letter is redrawn
+      // only if nobody edited it; an edited letter is the PM's to change.
+      if (project && changeOrder && changeOrder.items.length > 0) {
+        const draft = await db.query.changeOrdersTable.findFirst({
+          where: and(eq(changeOrdersTable.pullRequestId, prRecord.id), eq(changeOrdersTable.status, "DRAFT")),
+        });
+        const oldItems = (draft?.itemsJson as ChangeOrderItem[] | null) ?? [];
+        const key = (items: ChangeOrderItem[]) => items.map((i) => `${i.item}|${i.clauseRef ?? ""}`).sort().join("\n");
+        if (draft && key(oldItems) !== key(changeOrder.items)) {
+          const letterFor = (items: ChangeOrderItem[]) =>
+            composeChangeOrder({
+              items,
+              pullRequestTitle: prRecord.title,
+              projectName: domainBaseline.title || project.name,
+              clientName: project.clientName ?? undefined,
+              hours: draft.hours ?? undefined,
+              hourlyRate: project.hourlyRate ?? undefined,
+            });
+          const before = letterFor(oldItems);
+          const untouched = draft.messageSubject === before.subject && draft.messageBody === before.body;
+          const after = untouched ? letterFor(changeOrder.items) : null;
+          await db
+            .update(changeOrdersTable)
+            .set({
+              itemsJson: changeOrder.items,
+              title: changeOrder.items.map((i) => i.item).join(", ").slice(0, 255),
+              ...(after ? { messageSubject: after.subject, messageBody: after.body } : {}),
+              updatedAt: new Date(),
+            })
+            .where(eq(changeOrdersTable.id, draft.id));
+        }
+      }
+
       // 8. One check run per commit: GitHub attaches a check run to the SHA it
       // was created on, so a new push gets a new run and a redelivery for the
       // same commit updates the existing one.
@@ -682,6 +823,7 @@ export class WebhookService {
       const estimateLine = describeEstimate(evaluation);
       const checkSummary = [
         evaluation.evidenceBundle?.decisionExplanation?.reason ?? evaluation.detectedDelta.join("; "),
+        partialNote ?? "",
         estimateLine ? `Estimated impact: ${estimateLine}.` : "",
         `Scope version ${baselineRecord.versionNumber}. Policy: ${policyMode}.`,
       ]
@@ -757,6 +899,8 @@ export class WebhookService {
         headSha,
         evaluation,
         detailsUrl,
+        scopeVersion: baselineRecord.versionNumber,
+        note: partialNote,
       });
 
       await this.gitHubClient.createOrUpdateComment(
@@ -812,6 +956,24 @@ export class WebhookService {
         .update(webhookDeliveriesTable)
         .set({ status: "FAILED", errorMessage: err.message || "Processing error" })
         .where(eq(webhookDeliveriesTable.deliveryId, deliveryId));
+
+      // Say so on the pull request rather than leave it with no result. A
+      // neutral check doesn't block a merge, even where the check is required.
+      if (failureCheck) {
+        try {
+          await this.gitHubClient.createCheckRun({
+            ...failureCheck,
+            headSha,
+            name: "scopeci / commercial",
+            status: "completed",
+            conclusion: "neutral",
+            title: "ScopeCI couldn't check this commit",
+            summary: "Something went wrong while checking this commit, so it has no verdict. Push again, or use Re-check on the pull request in ScopeCI.",
+          });
+        } catch (reportErr: any) {
+          logger.warn({ deliveryId, err: reportErr.message }, "Couldn't report the failed check on the pull request");
+        }
+      }
 
       return {
         deliveryId,

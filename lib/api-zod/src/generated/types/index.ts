@@ -44,6 +44,7 @@ export * from './pullRequestResult';
 export * from './pullRequestResultList';
 export * from './pullRequestResultPrState';
 export * from './pullRequestResultVerdict';
+export * from './recheckStarted';
 export * from './repositoryLinkInput';
 export * from './savedScope';
 export * from './sessionInfo';

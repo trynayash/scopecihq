@@ -34,5 +34,10 @@ export interface PullRequestResult {
   files: ChangedFile[];
   /** How many files the commit changes. Can exceed the length of files, which is capped. */
   fileCount: number;
+  /**
+     * The scope version this result was checked against, like "v3". Null for results from before versions were recorded.
+     * @nullable
+     */
+  scopeVersion: string | null;
   checkedAt: Date;
 }

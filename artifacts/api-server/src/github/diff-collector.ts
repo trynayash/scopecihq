@@ -35,7 +35,9 @@ export interface NormalizedDiffAnalysis {
   limitations: string[];
 }
 
-const MAX_FILES_PROCESSED = 300;
+// Everything GitHub lists (it lists at most 3,000 files). Only names and
+// counts are kept, so there's no reason to stop sooner.
+const MAX_FILES_PROCESSED = 3000;
 
 const BINARY_EXTENSIONS = new Set([
   "png", "jpg", "jpeg", "gif", "ico", "svg", "webp", "pdf", "zip", "tar", "gz", "wasm", "exe", "dll", "so", "dylib", "mp4", "mp3"
