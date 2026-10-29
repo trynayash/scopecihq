@@ -1,4 +1,8 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { and, eq } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
@@ -22,7 +26,10 @@ import { MockGitHubClient } from "../github/github-client.js";
 import { MockIssueProvider } from "../github/issue-provider.js";
 import { extractIssueReferences } from "../github/extractor.js";
 import { normalizePullRequestDiff, type RawGitHubFile } from "../github/diff-collector.js";
-import { COMMENT_MARKER } from "../github/comment-formatter.js";
+import { COMMENT_MARKER, formatScopeCIComment } from "../github/comment-formatter.js";
+import { GitHubApiError, gitHubRequest, setGitHubFetch, setGitHubRetryPause } from "../github/github-http.js";
+import { listInstallationRepositories } from "../github/user-api.js";
+import { drain, runInBackground } from "../lib/background.js";
 
 const TEST_SECRET = "test_webhook_secret_scopeci_alpha_phase2";
 
@@ -548,6 +555,155 @@ async function runPhase2TestSuite(): Promise<void> {
   });
   assert(prIssueLink !== undefined, "PR -> Issue link persisted in pr_issue_links");
   assert(Number(prIssueLink?.confidence) > 0.9, "High confidence linkage recorded");
+
+  // -------------------------------------------------------------
+  // Test 23: A GitHub answer whose body can't be read
+  // -------------------------------------------------------------
+  console.log("\n▶ Test 23: A GitHub answer whose body can't be read is GitHub's error, not the database's");
+  setGitHubRetryPause(() => Promise.resolve());
+  const bodyFails = async (respond: () => Response) => {
+    setGitHubFetch(async () => respond());
+    try {
+      await gitHubRequest("https://api.github.com/user/installations");
+      return null;
+    } catch (err) {
+      return err;
+    } finally {
+      setGitHubFetch(null);
+    }
+  };
+  const reset = await bodyFails(
+    () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"installations": ['));
+            controller.error(Object.assign(new TypeError("terminated"), { cause: { code: "ECONNRESET" } }));
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  );
+  assert(reset instanceof GitHubApiError && reset.status === 0, "A connection reset mid-body is a GitHubApiError with status 0");
+  assert(reset instanceof Error && /couldn't be read \(ECONNRESET\)/.test(reset.message), "It says GitHub's answer couldn't be read");
+  const notJson = await bodyFails(() => new Response("<html>busy</html>", { status: 200 }));
+  assert(notJson instanceof GitHubApiError && notJson.status === 0, "A 200 that isn't JSON is a GitHubApiError too");
+
+  // -------------------------------------------------------------
+  // Test 24: Repository listing past 1,000 repositories
+  // -------------------------------------------------------------
+  console.log("\n▶ Test 24: An installation's repositories are listed past 1,000, and a capped list says so");
+  const repoPages = (pages: number) => async (url: string) => {
+    const page = Number(new URL(url).searchParams.get("page") ?? 1);
+    const repositories = Array.from({ length: 100 }, (_, i) => ({ id: page * 1000 + i, full_name: `big-org/repo-${page}-${i}`, private: true }));
+    const next = new URL(url);
+    next.searchParams.set("page", String(page + 1));
+    return new Response(JSON.stringify({ total_count: pages * 100, repositories }), {
+      status: 200,
+      headers: { "content-type": "application/json", ...(page < pages ? { link: `<${next}>; rel="next"` } : {}) },
+    });
+  };
+  setGitHubFetch(repoPages(12));
+  const twelve = await listInstallationRepositories("user-token", 77);
+  assert(twelve.length === 1200 && !twelve.truncated, "All 1,200 repositories of 12 pages are listed");
+  setGitHubFetch(repoPages(60));
+  const capped = await listInstallationRepositories("user-token", 77);
+  assert(capped.length === 5000 && capped.truncated, "A list stopped at 5,000 repositories says it was cut short");
+  setGitHubFetch(null);
+
+  // -------------------------------------------------------------
+  // Test 25: The PR comment reads correctly on GitHub
+  // -------------------------------------------------------------
+  console.log("\n▶ Test 25: The comment escapes for GitHub tables without showing raw entities");
+  const comment = formatScopeCIComment({
+    projectName: "Harbor & Pine",
+    prNumber: 7,
+    headSha: "abcdef1234567",
+    evaluation: {
+      state: "OVERRIDDEN",
+      checkConclusion: "neutral",
+      estimateSource: "NONE",
+      estimatedHours: { min: 0, max: 0 },
+      commercialValue: { currency: "USD", min: 0, max: 0 },
+      detectedDelta: ["Accepted without a change order by @dana: Client's OK'd it\non the call", "Touches src/gift/__init__.py"],
+      evidence: [
+        { source: "contract", value: "§3.1 Storefront & Checkout", result: "excluded" },
+        { source: "override", value: 'dana: "Client\'s OK\'d it\non the call"', result: "override" },
+      ],
+      evidenceBundle: { decisionExplanation: { reason: "Accepted by @dana:\n# not a heading" } },
+    } as any,
+  });
+  const lines = comment.split("\n");
+  assert(
+    lines.includes("| override | dana: &quot;Client&#039;s OK&#039;d it on the call&quot; | override |"),
+    "A multi-line reason stays in one table row, outside a code span, so its entities read as quotes",
+  );
+  assert(lines.includes("| contract | §3.1 Storefront &amp; Checkout | excluded |"), "A clause title's & reads as &");
+  assert(comment.includes("src/gift/\\_\\_init\\_\\_.py"), "A file name's underscores aren't read as bold");
+  assert(!lines.some((l) => l.startsWith("# not a heading")), "A line break in the reason can't start a heading");
+  assert(lines.includes("| Project | Harbor &amp; Pine |"), "The project's name is escaped in its cell");
+
+  // -------------------------------------------------------------
+  // Test 26: Background work finishes before a shutdown
+  // -------------------------------------------------------------
+  console.log("\n▶ Test 26: Background work is waited for at shutdown, up to a limit");
+  const order: string[] = [];
+  runInBackground(
+    new Promise<void>((resolve) => setTimeout(resolve, 30)).then(() => {
+      order.push("first");
+      // Work started by background work is waited for too.
+      runInBackground(new Promise<void>((resolve) => setTimeout(resolve, 30)).then(() => void order.push("second")));
+    }),
+  );
+  assert((await drain(2000)) === true && order.join(",") === "first,second", "drain waits for all of it, started late or not");
+  runInBackground(new Promise(() => undefined));
+  const started = Date.now();
+  assert((await drain(50)) === false && Date.now() - started < 1000, "drain gives up after its limit");
+
+  // -------------------------------------------------------------
+  // Test 27: TLS settings from DATABASE_URL reach the database driver
+  // -------------------------------------------------------------
+  console.log("\n▶ Test 27: sslmode in DATABASE_URL and DATABASE_CA_CERT decide the database's TLS");
+  const dbIndex = new URL("../../../../lib/db/src/index.ts", import.meta.url).href;
+  const probeDir = fs.mkdtempSync(path.join(os.tmpdir(), "scopeci-tls-"));
+  const probe = path.join(probeDir, "probe.mts");
+  // What the driver will use: pg merges the URL's own settings over the ones given.
+  fs.writeFileSync(
+    probe,
+    `const { pool } = await import(${JSON.stringify(dbIndex)});
+const ssl = new pool.Client(pool.options).connectionParameters.ssl;
+console.log(JSON.stringify(typeof ssl === "object" && ssl
+  ? { rejectUnauthorized: ssl.rejectUnauthorized, ca: ssl.ca ?? null, skipsHostname: typeof ssl.checkServerIdentity === "function" }
+  : ssl));
+await pool.end();
+`,
+  );
+  const tlsFor = (url: string, ca?: string) => {
+    const env: NodeJS.ProcessEnv = { ...process.env, DATABASE_URL: url };
+    delete env.DATABASE_CA_CERT;
+    if (ca) env.DATABASE_CA_CERT = ca;
+    const out = spawnSync(process.execPath, [...process.execArgv, probe], { env, encoding: "utf8" });
+    try {
+      return JSON.parse(out.stdout.trim().split("\n").pop() ?? "");
+    } catch {
+      return { error: out.stderr.slice(0, 300) };
+    }
+  };
+  const remote = "postgres://app:secret@db.example.com:5432/scopeci";
+  const pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----";
+  const requireMode = tlsFor(`${remote}?sslmode=require`);
+  assert(requireMode?.rejectUnauthorized === false, `sslmode=require encrypts without verifying the chain (${JSON.stringify(requireMode)})`);
+  const verify = tlsFor(`${remote}?sslmode=verify-full`, pem.replace(/\n/g, "\\n"));
+  assert(
+    verify?.rejectUnauthorized === true && verify.ca === pem && !verify.skipsHostname,
+    `sslmode=verify-full verifies against DATABASE_CA_CERT, given on one line (${JSON.stringify(verify)})`,
+  );
+  const verifyCa = tlsFor(`${remote}?sslmode=verify-ca`, pem);
+  assert(verifyCa?.rejectUnauthorized === true && verifyCa.skipsHostname, "sslmode=verify-ca verifies the chain, not the host name");
+  assert(tlsFor(remote)?.rejectUnauthorized === false, "A remote host without sslmode still gets TLS");
+  assert(tlsFor(`${remote}?sslmode=disable`) === false, "sslmode=disable turns TLS off");
+  assert(tlsFor("postgres://app:secret@localhost:5432/scopeci") === false, "A local database gets no TLS by default");
+  fs.rmSync(probeDir, { recursive: true, force: true });
 
   console.log("\n================================================================");
   console.log(` PHASE 2 TEST RESULTS: ${passed} PASSED / ${failed} FAILED`);

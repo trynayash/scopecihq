@@ -22,7 +22,8 @@ export function gitHubWebUrl(): string {
 }
 
 /**
- * GitHub answered with an error, or (status 0) couldn't be reached at all.
+ * GitHub answered with an error, or (status 0) couldn't be reached at all or
+ * its answer couldn't be read.
  * `rateLimited` is set when GitHub said it was limiting requests: a 429, or
  * a 403 carrying the rate-limit headers (other 403s are about access).
  */
@@ -95,8 +96,15 @@ export async function gitHubRequest<T>(
       throw new GitHubApiError(`GitHub couldn't be reached (${why})`, 0);
     }
     if (res.ok) {
-      const data = res.status === 204 ? (undefined as T) : ((await res.json()) as T);
-      return { data, headers: res.headers };
+      if (res.status === 204) return { data: undefined as T, headers: res.headers };
+      try {
+        return { data: (await res.json()) as T, headers: res.headers };
+      } catch (err: any) {
+        // The headers came but the body didn't (a reset, the timeout) or
+        // wasn't JSON: still GitHub's trouble, never the database's.
+        const why = err?.name === "TimeoutError" ? "timed out" : (err?.cause?.code ?? err?.message ?? "unreadable answer");
+        throw new GitHubApiError(`GitHub's answer couldn't be read (${why})`, 0);
+      }
     }
     const retryAfter = Number(res.headers.get("retry-after")) || undefined;
     if (attempt < 2 && retryable(res.status, method, res.headers)) {

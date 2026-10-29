@@ -1,5 +1,6 @@
 import { gitHubAppSettings } from "./app-settings.js";
 import { API_HEADERS, gitHubApiUrl, gitHubRequest, gitHubWebUrl, nextPage } from "./github-http.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Calls made as the signed-in person, with the user token the GitHub App's
@@ -102,8 +103,11 @@ export async function fetchUser(token: string): Promise<GitHubUser> {
   };
 }
 
-/** Pages through a list endpoint whose items sit under `key`, up to `maxPages`. */
-async function listAll<T>(url: string, token: string, key: string, maxPages = 10): Promise<T[]> {
+/**
+ * Pages through a list endpoint whose items sit under `key`, up to
+ * `maxPages`, and says whether GitHub had more pages than that.
+ */
+async function listAll<T>(url: string, token: string, key: string, maxPages = 10): Promise<{ items: T[]; truncated: boolean }> {
   const items: T[] = [];
   let next: string | undefined = url;
   for (let page = 0; next && page < maxPages; page++) {
@@ -113,11 +117,11 @@ async function listAll<T>(url: string, token: string, key: string, maxPages = 10
     items.push(...((data[key] as T[] | undefined) ?? []));
     next = nextPage(headers);
   }
-  return items;
+  return { items, truncated: Boolean(next) };
 }
 
 export async function listUserInstallations(token: string): Promise<GitHubInstallation[]> {
-  const raw = await listAll<{
+  const { items: raw } = await listAll<{
     id: number;
     account?: { login?: string; type?: string; id?: number };
     repository_selection?: string;
@@ -133,13 +137,31 @@ export async function listUserInstallations(token: string): Promise<GitHubInstal
   }));
 }
 
-export async function listInstallationRepositories(token: string, installationId: number): Promise<GitHubRepository[]> {
-  const raw = await listAll<{ id: number; full_name: string; private?: boolean }>(
+/**
+ * Pages of 100 read from one installation's repositories. An installation on
+ * "All repositories" in a large organization can hold thousands; past this
+ * many the list stops and says so.
+ */
+const MAX_REPOSITORY_PAGES = 50;
+
+/** An installation's repositories; `truncated` when it holds more than ScopeCI lists. */
+export type GitHubRepositoryList = GitHubRepository[] & { truncated: boolean };
+
+export async function listInstallationRepositories(token: string, installationId: number): Promise<GitHubRepositoryList> {
+  const { items, truncated } = await listAll<{ id: number; full_name: string; private?: boolean }>(
     `${gitHubApiUrl()}/user/installations/${installationId}/repositories?per_page=100`,
     token,
     "repositories",
+    MAX_REPOSITORY_PAGES,
   );
-  return raw.map((r) => ({ id: r.id, fullName: r.full_name, private: Boolean(r.private) }));
+  if (truncated) {
+    logger.warn(
+      { installationId, listed: items.length },
+      "The installation has more repositories than ScopeCI lists; the rest can't be chosen until it is limited to selected repositories",
+    );
+  }
+  const repositories = items.map((r) => ({ id: r.id, fullName: r.full_name, private: Boolean(r.private) }));
+  return Object.assign(repositories, { truncated });
 }
 
 /** Where to send someone to install the App on their account or organization. */
