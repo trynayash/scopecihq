@@ -861,3 +861,25 @@ button.text-link { margin-right: var(--space-3); font-size: var(--t-ui); }
   .app-avatar { display: none; }
   .app-workspace-select { padding: 0 var(--space-5) 0 var(--space-3); background-position: right 10px center; }
 }
+
+/* A refresh failed while the page still shows what it had: said in the
+   warning colour, not the error one, since nothing on screen was lost. */
+.stale-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--warning-line);
+  border-radius: var(--radius);
+  background: var(--warning-wash);
+  color: var(--warning);
+  font-size: var(--t-ui);
+}
+.stale-notice p { flex: 1 1 260px; }
+
+/* What the change order covers, as the client will approve it. */
+.co-items { color: var(--fg-muted); font-size: var(--t-ui); line-height: 1.5; }
+.co-items strong { color: var(--fg); font-weight: 600; letter-spacing: -0.01em; }
