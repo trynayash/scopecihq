@@ -173,8 +173,12 @@ export const changeOrdersTable = pgTable(
     index("co_project_idx").on(table.projectId),
     // Several per pull request: new excluded work after a decision gets its own.
     index("co_pull_request_idx").on(table.pullRequestId),
-    // But at most one open (draft or sent) at a time.
-    uniqueIndex("co_pull_request_open_uidx").on(table.pullRequestId).where(sql`status in ('DRAFT', 'SENT')`),
+    // But at most one open (draft or sent) at a time in each project. Per
+    // project because a pull request row could once move to another project
+    // with the old one's open change order still on it.
+    uniqueIndex("co_pull_request_project_open_uidx")
+      .on(table.pullRequestId, table.projectId)
+      .where(sql`status in ('DRAFT', 'SENT')`),
   ]
 ).enableRLS();
 
@@ -419,12 +423,22 @@ export const pullRequestsTable = pgTable(
     commitsCount: integer("commits_count").default(0).notNull(),
     openedAt: timestamp("opened_at", { withTimezone: true }).notNull(),
     mergedAt: timestamp("merged_at", { withTimezone: true }),
+    // GitHub's updated_at of the newest event stored, so an older event
+    // (redelivered, or delivered out of order) never overwrites a newer one.
+    providerUpdatedAt: timestamp("provider_updated_at", { withTimezone: true }),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    uniqueIndex("pr_provider_external_uidx").on(table.externalProvider, table.externalId),
+    // One row per pull request in each project: a repository connected to
+    // another project starts afresh there, and the old project keeps its
+    // results, change orders and acceptances. Rows outside any project (older
+    // project-link setups) stay one per pull request.
+    uniqueIndex("pr_provider_external_project_uidx").on(table.externalProvider, table.externalId, table.projectId),
+    uniqueIndex("pr_provider_external_unlinked_uidx")
+      .on(table.externalProvider, table.externalId)
+      .where(sql`project_id is null`),
     index("pr_org_idx").on(table.organizationId),
     index("pr_number_idx").on(table.number),
     index("pr_state_idx").on(table.state),

@@ -952,6 +952,325 @@ async function run() {
       );
     });
 
+    await scenario("A draft's letter follows new work even after a rename; a letter the PM edited is kept, also when hours are saved", async () => {
+      const giftCards = { filename: "src/giftcards/balance.ts", status: "added", additions: 30, deletions: 0 };
+      const wishlist = { filename: "src/wishlist/list.tsx", status: "added", additions: 30, deletions: 0 };
+      let title = "Checkout polish";
+      const push = async (sha: string, files: object[], action = "synchronize") => {
+        fake.files["harbor-agency/storefront#21"] = [files];
+        const payload = prPayload(storefront, 21, sha, action);
+        payload.pull_request.title = title;
+        const result: any = await deliver(payload);
+        assert.strictEqual(result.evaluationState, "CHANGE_REQUIRED", JSON.stringify(result));
+        const list = await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana });
+        return list.body.pullRequests.find((p: any) => p.number === 21);
+      };
+      const update = (body: object) => call(server, `/api/projects/${projectId}/change-order`, { method: "PUT", body, cookie: dana });
+
+      let pr21 = await push("a1".repeat(20), [giftCards], "opened");
+      const priced = await update({ evaluationId: pr21.evaluationId, hours: 4 });
+      assert.strictEqual(priced.status, 200, JSON.stringify(priced.body));
+      assert.deepStrictEqual(priced.body.items, ["Gift cards"]);
+      assert.ok(priced.body.body.includes("$600"), priced.body.body);
+
+      // Renamed, then a push adds the wishlist: the letter nobody edited is
+      // redrawn with both, at the same price. Before, the rename made it look
+      // edited, so it kept naming gift cards alone.
+      title = "Checkout polish, round two";
+      pr21 = await push("a2".repeat(20), [giftCards, wishlist]);
+      assert.deepStrictEqual([...pr21.trackedChangeOrder.items].sort(), ["Gift cards", "Wishlist"]);
+      assert.match(pr21.trackedChangeOrder.subject, /wishlist/);
+      assert.match(pr21.trackedChangeOrder.body, /^- Wishlist/m);
+      assert.ok(pr21.trackedChangeOrder.body.includes('"Checkout polish, round two"'), pr21.trackedChangeOrder.body);
+      assert.ok(pr21.trackedChangeOrder.body.includes("$600"), "the price stays");
+
+      // The PM writes their own letter, then saves hours: the letter stays theirs.
+      const own = { subject: "Gift cards and a wishlist", body: "Hi Harbor & Pine,\n\nAs agreed on Tuesday's call, here is the extra work." };
+      assert.strictEqual((await update({ evaluationId: pr21.evaluationId, ...own })).status, 200);
+      const hours = await update({ evaluationId: pr21.evaluationId, hours: 8 });
+      assert.strictEqual(hours.status, 200, JSON.stringify(hours.body));
+      assert.strictEqual(hours.body.subject, own.subject, "saving hours keeps the PM's letter");
+      assert.strictEqual(hours.body.body, own.body);
+      assert.strictEqual(hours.body.amount, 1200);
+
+      // A push changes the items; the edited letter still isn't redrawn.
+      pr21 = await push("a3".repeat(20), [giftCards]);
+      assert.deepStrictEqual(pr21.trackedChangeOrder.items, ["Gift cards"]);
+      assert.strictEqual(pr21.trackedChangeOrder.subject, own.subject);
+      assert.strictEqual(pr21.trackedChangeOrder.body, own.body);
+
+      // Nothing is sent with items the PM hasn't seen.
+      const removed = await update({ evaluationId: pr21.evaluationId, status: "SENT", items: ["Gift cards", "Wishlist"] });
+      assert.strictEqual(removed.status, 409, JSON.stringify(removed.body));
+      assert.match(removed.body.error, /now lists Gift cards\. Review the letter/);
+      pr21 = await push("a4".repeat(20), [giftCards, wishlist]);
+      const added = await update({ evaluationId: pr21.evaluationId, status: "SENT", items: ["Gift cards"] });
+      assert.strictEqual(added.status, 409, JSON.stringify(added.body));
+      assert.match(added.body.error, /now also lists Wishlist\. Review the letter/);
+      const [unsent] = await db.select().from(changeOrdersTable).where(eq(changeOrdersTable.id, priced.body.id));
+      assert.strictEqual(unsent.status, "DRAFT", "it wasn't sent");
+      const sent = await update({ evaluationId: pr21.evaluationId, status: "SENT", items: ["wishlist", "GIFT CARDS"] });
+      assert.strictEqual(sent.status, 200, JSON.stringify(sent.body));
+      assert.strictEqual(sent.body.status, "SENT");
+      assert.strictEqual(sent.body.subject, own.subject);
+    });
+
+    await scenario("A change order is raised only from the pull request's latest result", async () => {
+      const list = async () =>
+        (await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana })).body.pullRequests.find((p: any) => p.number === 19);
+      const before = await list();
+      assert.strictEqual(before.trackedChangeOrder, null);
+      fake.files["harbor-agency/storefront#19"] = [
+        [
+          { filename: "src/giftcards/apply.ts", status: "added", additions: 22, deletions: 0 },
+          { filename: "src/wishlist/list.tsx", status: "added", additions: 12, deletions: 0 },
+        ],
+      ];
+      const pushed = prPayload(storefront, 19, "b1".repeat(20), "synchronize");
+      pushed.pull_request.title = "Apply gift cards at checkout";
+      assert.strictEqual(((await deliver(pushed)) as any).evaluationState, "CHANGE_REQUIRED");
+
+      // The page still shows the result from before the push.
+      const price = (evaluationId: string) =>
+        call(server, `/api/projects/${projectId}/change-order`, { method: "PUT", body: { evaluationId, hours: 2 }, cookie: dana });
+      const stale = await price(before.evaluationId);
+      assert.strictEqual(stale.status, 409, JSON.stringify(stale.body));
+      assert.match(stale.body.error, /checked again since the page loaded\. Reload/);
+      const after = await list();
+      assert.strictEqual(after.trackedChangeOrder, null, "nothing was raised from the old result");
+      const raised = await price(after.evaluationId);
+      assert.strictEqual(raised.status, 200, JSON.stringify(raised.body));
+      assert.deepStrictEqual([...raised.body.items].sort(), ["Gift cards", "Wishlist"], "the new work is on it");
+      assert.strictEqual((await price(before.evaluationId)).status, 200, "an open change order stands whichever result the page showed");
+    });
+
+    const marketing = { id: 7002, full_name: "harbor-agency/marketing" };
+    const admin = { id: 7003, full_name: "harbor-agency/admin" };
+    let phaseOne = "";
+    await scenario("Two pull requests with one number in a project: accepting and withdrawing act on the one shown", async () => {
+      phaseOne = (
+        await call(server, "/api/projects", { body: { name: "Harbor admin, phase one", clientName: "Harbor & Pine", hourlyRate: 100 }, cookie: dana })
+      ).body.id;
+      assert.strictEqual((await call(server, `/api/projects/${phaseOne}/scope`, { method: "PUT", body: SCOPE, cookie: dana })).status, 200);
+      const link = (repositoryId: number) =>
+        call(server, `/api/projects/${phaseOne}/repository`, { method: "PUT", body: { installationId: 501, repositoryId }, cookie: dana });
+      assert.strictEqual((await link(marketing.id)).status, 200);
+      fake.files["harbor-agency/marketing#5"] = [[{ filename: "src/giftcards/redeem.ts", status: "added", additions: 20, deletions: 0 }]];
+      assert.strictEqual(((await deliver(prPayload(marketing, 5, "c1".repeat(20)))) as any).evaluationState, "CHANGE_REQUIRED");
+
+      // The project moves to another repository, whose #5 is flagged too.
+      assert.strictEqual((await call(server, `/api/projects/${phaseOne}/repository`, { method: "DELETE", cookie: dana })).status, 200);
+      fake.repos[501].push({ id: admin.id, full_name: admin.full_name, private: true });
+      assert.strictEqual((await link(admin.id)).status, 200);
+      fake.files["harbor-agency/admin#5"] = [[{ filename: "src/loyalty/points.ts", status: "added", additions: 30, deletions: 0 }]];
+      assert.strictEqual(((await deliver(prPayload(admin, 5, "c2".repeat(20)))) as any).evaluationState, "CHANGE_REQUIRED");
+
+      const byRepo = async (repo: string) =>
+        (await call(server, `/api/projects/${phaseOne}/pull-requests`, { cookie: dana })).body.pullRequests.find(
+          (p: any) => p.number === 5 && p.url.includes(`/${repo}/pull/`),
+        );
+      let fromMarketing = await byRepo(marketing.full_name);
+      let fromAdmin = await byRepo(admin.full_name);
+      assert.ok(fromMarketing && fromAdmin, "both are listed");
+
+      const accept = (number: number, evaluationId: string) =>
+        call(server, `/api/projects/${phaseOne}/pull-requests/${number}/acceptance`, {
+          method: "PUT",
+          body: { reason: "Absorbed as goodwill", evaluationId },
+          cookie: dana,
+        });
+      const accepted = await accept(5, fromMarketing.evaluationId);
+      assert.strictEqual(accepted.status, 200, JSON.stringify(accepted.body));
+      fromMarketing = await byRepo(marketing.full_name);
+      fromAdmin = await byRepo(admin.full_name);
+      assert.strictEqual(fromMarketing.acceptance?.acceptedBy, "dana", "the pull request shown is the one accepted");
+      assert.strictEqual(fromAdmin.acceptance, null, "not the connected repository's #5");
+      assert.strictEqual(fromAdmin.verdict, "CHANGE_REQUIRED");
+
+      const withdraw = (evaluationId: string) =>
+        call(server, `/api/projects/${phaseOne}/pull-requests/5/acceptance?evaluationId=${evaluationId}`, { method: "DELETE", cookie: dana });
+      assert.strictEqual((await withdraw(fromAdmin.evaluationId)).status, 404, "that one isn't accepted");
+      assert.strictEqual((await withdraw(fromMarketing.evaluationId)).status, 200);
+      assert.strictEqual((await byRepo(marketing.full_name)).acceptance, null);
+      assert.strictEqual((await withdraw("not-a-uuid")).status, 404);
+
+      // A result that isn't the latest is refused, as is one from another
+      // number or another project.
+      await deliver(prPayload(admin, 5, "c3".repeat(20), "synchronize"));
+      const outdated = await accept(5, fromAdmin.evaluationId);
+      assert.strictEqual(outdated.status, 409, JSON.stringify(outdated.body));
+      assert.match(outdated.body.error, /^The page is out of date/);
+      fromAdmin = await byRepo(admin.full_name);
+      assert.strictEqual((await accept(6, fromAdmin.evaluationId)).status, 404);
+      const elsewhere = (await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana })).body.pullRequests[0];
+      assert.strictEqual((await accept(elsewhere.number, elsewhere.evaluationId)).status, 404);
+      assert.strictEqual(fromAdmin.acceptance, null);
+    });
+
+    await scenario("A repository moved to another project starts afresh there; the old project keeps its change orders and acceptances", async () => {
+      const { pullRequestsTable, commercialEventsTable } = await import("@workspace/db/schema");
+      const { acceptancesFor } = await import("../lib/acceptance.js");
+      const adminFive = async (id: string) =>
+        (await call(server, `/api/projects/${id}/pull-requests`, { cookie: dana })).body.pullRequests.find(
+          (p: any) => p.number === 5 && p.url.includes(`/${admin.full_name}/pull/`),
+        );
+
+      // Phase one prices a change order for admin #5, then accepts it.
+      const ours = await adminFive(phaseOne);
+      const priced = await call(server, `/api/projects/${phaseOne}/change-order`, {
+        method: "PUT",
+        body: { evaluationId: ours.evaluationId, hours: 5 },
+        cookie: dana,
+      });
+      assert.strictEqual(priced.status, 200, JSON.stringify(priced.body));
+      const accepted = await call(server, `/api/projects/${phaseOne}/pull-requests/5/acceptance`, {
+        method: "PUT",
+        body: { reason: "Goodwill for phase one" },
+        cookie: dana,
+      });
+      assert.strictEqual(accepted.status, 200, JSON.stringify(accepted.body));
+      assert.strictEqual(accepted.body.checkUpdated, true);
+
+      // Phase one is archived and phase two takes the repository; its open
+      // pull requests are checked once the scope is confirmed.
+      fake.open["harbor-agency/admin"] = [prPayload(admin, 5, "c3".repeat(20)).pull_request];
+      assert.strictEqual((await call(server, `/api/projects/${phaseOne}`, { method: "DELETE", cookie: dana })).status, 204);
+      const phaseTwo = (
+        await call(server, "/api/projects", { body: { name: "Harbor admin, phase two", clientName: "Harbor & Pine", hourlyRate: 100 }, cookie: dana })
+      ).body.id;
+      const linked = await call(server, `/api/projects/${phaseTwo}/repository`, {
+        method: "PUT",
+        body: { installationId: 501, repositoryId: admin.id },
+        cookie: dana,
+      });
+      assert.strictEqual(linked.status, 200, JSON.stringify(linked.body));
+      assert.strictEqual((await call(server, `/api/projects/${phaseTwo}/scope`, { method: "PUT", body: SCOPE, cookie: dana })).status, 200);
+      let theirs: any;
+      for (let i = 0; i < 50 && !theirs; i++) {
+        theirs = await adminFive(phaseTwo);
+        if (!theirs) await new Promise((r) => setTimeout(r, 100));
+      }
+      assert.ok(theirs, "phase two checked the open pull request");
+      assert.strictEqual(theirs.verdict, "CHANGE_REQUIRED", "phase one's acceptance doesn't carry over");
+      assert.strictEqual(theirs.acceptance, null);
+      assert.strictEqual(theirs.trackedChangeOrder, null, "nor its change order");
+      assert.strictEqual(theirs.previousChangeOrder, null);
+
+      // Phase two raises and approves its own change order, which clears its check.
+      const own = await call(server, `/api/projects/${phaseTwo}/change-order`, {
+        method: "PUT",
+        body: { evaluationId: theirs.evaluationId, hours: 3 },
+        cookie: dana,
+      });
+      assert.strictEqual(own.status, 200, JSON.stringify(own.body));
+      assert.strictEqual(own.body.reference, "CO-1", "numbered in phase two's own contract");
+      assert.notStrictEqual(own.body.id, priced.body.id);
+      const approved = await call(server, `/api/projects/${phaseTwo}/change-order`, {
+        method: "PUT",
+        body: { evaluationId: theirs.evaluationId, status: "APPROVED" },
+        cookie: dana,
+      });
+      assert.strictEqual(approved.status, 200, JSON.stringify(approved.body));
+      let verdict = "";
+      for (let i = 0; i < 50 && verdict !== "APPROVED_CHANGE"; i++) {
+        verdict = (await adminFive(phaseTwo)).verdict;
+        if (verdict !== "APPROVED_CHANGE") await new Promise((r) => setTimeout(r, 100));
+      }
+      assert.strictEqual(verdict, "APPROVED_CHANGE", "the approval in phase two covers the work there");
+
+      // Restored, phase one still has its results, change order and acceptance.
+      assert.strictEqual((await call(server, `/api/projects/${phaseOne}/restore`, { method: "POST", cookie: dana })).status, 200);
+      const kept = await adminFive(phaseOne);
+      assert.ok(kept, "phase one's results are still there");
+      assert.strictEqual(kept.verdict, "OVERRIDDEN");
+      assert.strictEqual(kept.acceptance?.reason, "Goodwill for phase one");
+      assert.strictEqual(kept.trackedChangeOrder?.id, priced.body.id);
+      assert.strictEqual(kept.trackedChangeOrder?.status, "DRAFT");
+
+      // One row per project, and a decision applies only where it was made.
+      const rows = await db.select().from(pullRequestsTable).where(eq(pullRequestsTable.externalId, `gh_pr_${admin.id * 1000 + 5}`));
+      assert.deepStrictEqual(rows.map((r) => r.projectId).sort(), [phaseOne, phaseTwo].sort());
+      const one = rows.find((r) => r.projectId === phaseOne)!;
+      const two = rows.find((r) => r.projectId === phaseTwo)!;
+      const danaOrg = one.organizationId;
+      const eveOrg = (await call(server, "/api/session", { cookie: eve })).body.organization.id;
+      assert.notStrictEqual(eveOrg, danaOrg);
+      assert.ok((await acceptancesFor([one.id], { organizationId: danaOrg, projectId: phaseOne })).has(one.id));
+      assert.ok(!(await acceptancesFor([one.id], { organizationId: danaOrg, projectId: phaseTwo })).has(one.id), "not in another project");
+      assert.ok(!(await acceptancesFor([one.id], { organizationId: eveOrg, projectId: phaseOne })).has(one.id), "not in another workspace");
+
+      // An acceptance recorded before decisions named their project counts
+      // in its own workspace only.
+      const [legacy] = await db
+        .insert(commercialEventsTable)
+        .values({
+          organizationId: danaOrg,
+          entityType: "PULL_REQUEST",
+          entityId: two.id,
+          eventType: "PR_ACCEPTED",
+          actorType: "PM",
+          actorId: "dana",
+          metadataJson: { reason: "Recorded before projects were named", items: ["Loyalty points programme"] },
+        })
+        .returning();
+      assert.strictEqual(
+        (await acceptancesFor([two.id], { organizationId: danaOrg, projectId: phaseTwo })).get(two.id)?.reason,
+        "Recorded before projects were named",
+      );
+      assert.ok(!(await acceptancesFor([two.id], { organizationId: eveOrg, projectId: phaseTwo })).has(two.id));
+      await db.delete(commercialEventsTable).where(eq(commercialEventsTable.id, legacy.id));
+
+      // Leave the workspace as the next scenarios expect it.
+      assert.strictEqual((await call(server, `/api/projects/${phaseTwo}`, { method: "DELETE", cookie: dana })).status, 204);
+      assert.strictEqual((await call(server, `/api/projects/${phaseOne}`, { method: "DELETE", cookie: dana })).status, 204);
+      fake.repos[501] = fake.repos[501].filter((r) => r.id !== admin.id);
+      delete fake.open["harbor-agency/admin"];
+    });
+
+    await scenario("An older pull request event arriving late changes nothing; a merged pull request stays merged", async () => {
+      const { pullRequestsTable } = await import("@workspace/db/schema");
+      fake.files["harbor-agency/storefront#23"] = [[{ filename: "src/cart/coupon.ts", status: "added", additions: 12, deletions: 0 }]];
+      const event = (sha: string, action: string, updatedAt: string, title: string) => {
+        const payload: any = prPayload(storefront, 23, sha, action);
+        payload.pull_request.title = title;
+        payload.pull_request.updated_at = updatedAt;
+        return payload;
+      };
+      const row = async () =>
+        (await db.select().from(pullRequestsTable).where(and(eq(pullRequestsTable.projectId, projectId), eq(pullRequestsTable.number, 23))))[0];
+      const first = event("d1".repeat(20), "opened", "2026-10-01T10:00:00Z", "Cart coupons");
+      const second = event("d2".repeat(20), "synchronize", "2026-10-01T11:00:00Z", "Cart coupons, tidied");
+
+      // Two pushes delivered out of order: the older one, arriving second, is skipped.
+      assert.strictEqual(((await deliver(second)) as any).status, "processed");
+      const late: any = await deliver(first);
+      assert.strictEqual(late.status, "ignored", JSON.stringify(late));
+      const comment = () => fake.comments["harbor-agency/storefront#23"].at(-1)!.body;
+      assert.ok(comment().includes("d2d2d2d") && !comment().includes("d1d1d1d"), "the comment stays on the newer commit");
+      assert.strictEqual((await row()).title, "Cart coupons, tidied");
+
+      // An old delivery sent again after the merge doesn't reopen it.
+      const merged = event("d2".repeat(20), "closed", "2026-10-01T12:00:00Z", "Cart coupons, tidied");
+      Object.assign(merged.pull_request, { state: "closed", merged: true, merged_at: "2026-10-01T12:00:00Z" });
+      assert.strictEqual(((await deliver(merged)) as any).status, "processed");
+      const redelivered: any = await deliver(first);
+      assert.strictEqual(redelivered.status, "ignored", JSON.stringify(redelivered));
+      assert.strictEqual((await row()).state, "MERGED");
+      const listed = (await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana })).body.pullRequests.find(
+        (p: any) => p.number === 23,
+      );
+      assert.strictEqual(listed.prState, "MERGED");
+      assert.strictEqual(listed.headSha, "d2".repeat(20), "the latest result is still the newer commit's");
+      const [delivery] = await db.select().from(webhookDeliveriesTable).where(eq(webhookDeliveriesTable.deliveryId, redelivered.deliveryId));
+      assert.strictEqual(delivery?.status, "IGNORED");
+      assert.strictEqual(delivery?.errorMessage, "Superseded by a newer pull request event");
+
+      // A newer event still applies.
+      const reopened = event("d2".repeat(20), "reopened", "2026-10-01T13:00:00Z", "Cart coupons, tidied");
+      assert.strictEqual(((await deliver(reopened)) as any).status, "processed");
+      assert.strictEqual((await row()).state, "OPEN");
+    });
+
     let eveWorkspace = "";
     let danaWorkspace = "";
     await scenario("An owner renames the workspace and invites someone with a single-use link", async () => {

@@ -28,6 +28,15 @@ export async function ensureSchema(pool: Pool): Promise<{ warnings: string[] }> 
       // the schema has ever given up, so it is dropped by name here.
       await client.query('DROP INDEX IF EXISTS "co_pull_request_uidx"');
 
+      // Until 29 October 2026 a pull request had one row whatever project
+      // checked it, so connecting its repository to another project (or
+      // another workspace) moved the row there, change orders and all. Now
+      // each project keeps its own row, and one open change order per pull
+      // request per project. The replacements, created above, are looser
+      // than these, so existing rows already satisfy them and nothing is lost.
+      await client.query('DROP INDEX IF EXISTS "pr_provider_external_uidx"');
+      await client.query('DROP INDEX IF EXISTS "co_pull_request_open_uidx"');
+
       // Until 28 October 2026 each changed file's diff text was stored with
       // its name. The check only ever read the names, so drop what was kept.
       // Runs on every start and changes nothing once it has.
