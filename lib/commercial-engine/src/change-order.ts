@@ -1,3 +1,4 @@
+import { formatHours, formatMoney } from "./formatter.js";
 import type { CommercialEvaluation } from "./types.js";
 
 /**
@@ -91,8 +92,8 @@ export function composeChangeOrder(input: ChangeOrderMessageInput): { subject: s
   let cost: string;
   if (hours) {
     cost = rate
-      ? `We estimate ${hours} hours for this, which is $${(hours * rate).toLocaleString("en-US")} at our rate of $${rate.toLocaleString("en-US")} an hour.`
-      : `We estimate ${hours} hours for this.`;
+      ? `We estimate ${formatHours(hours)} for this, which is ${formatMoney(hours * rate)} at our rate of ${formatMoney(rate)} an hour.`
+      : `We estimate ${formatHours(hours)} for this.`;
   } else {
     cost = "We'll send you an estimate for this before starting it.";
   }

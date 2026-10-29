@@ -2,6 +2,23 @@ import type { CommercialEvaluation, PullRequest, LinearIssue, ScopeBaseline } fr
 import { isPullRequestWorkItem } from './work-item.js';
 
 /**
+ * Money as a client reads it: whole units when there are no cents
+ * ("$1,440"), otherwise rounded to the cent ("$103.13"), never a fraction of
+ * a cent.
+ */
+export function formatMoney(amount: number): string {
+  const cents = Math.round(amount * 100) / 100;
+  const fraction = Number.isInteger(cents) ? 0 : 2;
+  return `$${cents.toLocaleString('en-US', { minimumFractionDigits: fraction, maximumFractionDigits: fraction })}`;
+}
+
+/** "1 hour", "1.5 hours", "12 hours". */
+export function formatHours(hours: number): string {
+  const rounded = Math.round(hours * 100) / 100;
+  return `${rounded.toLocaleString('en-US')} ${rounded === 1 ? 'hour' : 'hours'}`;
+}
+
+/**
  * Formats a CommercialEvaluation for terminal / CLI output.
  */
 export function formatEvaluationSummary(
@@ -107,14 +124,14 @@ export function describeEstimate(evaluation: CommercialEvaluation): string | und
   }
 
   const { min, max } = evaluation.estimatedHours;
-  const hours = min === max ? `${max} hours` : `${min}–${max} hours`;
+  const hours = min === max ? formatHours(max) : `${min}–${max} hours`;
   const source = ownWorkItem
     ? 'from the hours given for this pull request'
     : `from the estimate on ${evaluation.issueId ?? 'the linked issue'}`;
   const { commercialValue: value } = evaluation;
   const money =
     value.status === 'available' && value.max > 0
-      ? `$${value.min.toLocaleString()}${value.max !== value.min ? `–$${value.max.toLocaleString()}` : ''} ${value.currency} at the configured hourly rate`
+      ? `${formatMoney(value.min)}${value.max !== value.min ? `–${formatMoney(value.max)}` : ''} ${value.currency} at the configured hourly rate`
       : 'no value shown because no hourly rate is configured';
   return `${hours}, ${source}; ${money}`;
 }
