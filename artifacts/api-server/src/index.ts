@@ -1,6 +1,7 @@
 import { ensureSchema, pool } from "@workspace/db";
 import app from "./app";
 import { logger } from "./lib/logger";
+import { currentWebhookService } from "./routes/github";
 
 const rawPort = process.env["PORT"];
 
@@ -40,6 +41,19 @@ const server = app.listen(port, (err) => {
   logger.info({ port }, "Server listening");
 });
 
+// GitHub doesn't resend a webhook it gave up on (the server was waking up,
+// or a deploy was in flight), so open pull requests are swept regularly and
+// any commit without a result is checked. SCOPECI_SWEEP_MS=0 turns it off.
+const sweepEvery = Number(process.env.SCOPECI_SWEEP_MS ?? 10 * 60 * 1000);
+if (sweepEvery > 0) {
+  const sweep = () =>
+    currentWebhookService()
+      .then((service) => service?.sweepMissedPullRequests())
+      .catch((err) => logger.warn({ err }, "Sweep for missed pull requests failed"));
+  setTimeout(sweep, Math.min(30_000, sweepEvery)).unref();
+  setInterval(sweep, sweepEvery).unref();
+}
+
 // Render sends SIGTERM on every deploy. Finish in-flight requests (a waitlist
 // signup mid-insert, say) and release the database pool before exiting,
 // rather than dropping them.
@@ -50,6 +64,18 @@ function shutdown(signal: string) {
     pool.end().finally(() => process.exit(0));
   });
 }
+
+// Background work (a re-check, a webhook) runs outside any request, so a
+// failure there must be logged, not lost. A rejection is logged and the
+// server carries on; an exception leaves the process in an unknown state,
+// so it is logged and the server restarts cleanly.
+process.on("unhandledRejection", (reason) => {
+  logger.error({ err: reason }, "Unhandled promise rejection");
+});
+process.on("uncaughtException", (err) => {
+  logger.fatal({ err }, "Uncaught exception; restarting");
+  shutdown("uncaughtException");
+});
 
 process.once("SIGTERM", () => shutdown("SIGTERM"));
 process.once("SIGINT", () => shutdown("SIGINT"));

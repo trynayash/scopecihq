@@ -61,6 +61,15 @@ export interface IGitHubClient {
    * pull request (with its file and line counts), newest first, at most `limit`.
    */
   listOpenPullRequests?(installationId: string, owner: string, repo: string, limit: number): Promise<any[]>;
+  /** Just the numbers and head commits of the open pull requests: one request. */
+  listOpenPullRequestHeads?(
+    installationId: string,
+    owner: string,
+    repo: string,
+    limit: number,
+  ): Promise<Array<{ number: number; headSha: string }>>;
+  /** One pull request as GitHub returns it. */
+  getPullRequest?(installationId: string, owner: string, repo: string, number: number): Promise<any>;
 }
 
 /**
@@ -211,5 +220,17 @@ export class MockGitHubClient implements IGitHubClient {
   async listOpenPullRequests(installationId: string, owner: string, repo: string, limit: number): Promise<any[]> {
     this.checkFailure();
     return (this.openPullRequests.get(`${owner}/${repo}`) ?? []).slice(0, limit);
+  }
+
+  async listOpenPullRequestHeads(installationId: string, owner: string, repo: string, limit: number) {
+    return (await this.listOpenPullRequests(installationId, owner, repo, limit)).map((pr) => ({
+      number: pr.number,
+      headSha: pr.head?.sha,
+    }));
+  }
+
+  async getPullRequest(installationId: string, owner: string, repo: string, number: number): Promise<any> {
+    this.checkFailure();
+    return (this.openPullRequests.get(`${owner}/${repo}`) ?? []).find((pr) => pr.number === number);
   }
 }

@@ -151,10 +151,38 @@ if (fs.existsSync(publicDir)) {
   logger.warn({ publicDir }, "Frontend build not found; serving API only.");
 }
 
+/** Postgres and network codes that mean the database is unreachable or busy, not that the query was wrong. */
+const DATABASE_UNAVAILABLE = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ENOTFOUND",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "57P01", // admin shutdown
+  "57P02", // crash shutdown
+  "57P03", // cannot connect now
+  "53300", // too many connections
+  "08000",
+  "08001",
+  "08003",
+  "08004",
+  "08006",
+]);
+
+function databaseUnavailable(err: any): boolean {
+  for (let e = err, depth = 0; e && depth < 4; e = e.cause, depth++) {
+    if (DATABASE_UNAVAILABLE.has(e.code)) return true;
+    if (typeof e.message === "string" && /Connection terminated|timeout exceeded when trying to connect/i.test(e.message)) return true;
+  }
+  return false;
+}
+
 /**
  * Last-resort error handler. Without it, a malformed JSON body or a rejected
  * CORS origin reaches Express's default handler, which answers 500 with an
- * HTML page (and a stack trace outside production).
+ * HTML page (and a stack trace outside production). Outages the person can
+ * do nothing about but wait (the database, GitHub) say so, with a 503 or 502
+ * and a time to try again, instead of a bare "something went wrong".
  */
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) {
@@ -173,8 +201,27 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
     res.status(403).json({ error: "Origin not allowed." });
     return;
   }
+  // GitHub first: its network failures carry the same codes as the database's.
+  if (err?.name === "GitHubApiError") {
+    (req.log ?? logger).warn({ err }, "GitHub request failed");
+    if (err.rateLimited) {
+      if (err.retryAfter) res.setHeader("Retry-After", String(err.retryAfter));
+      res.status(503).json({ error: "GitHub is limiting requests right now. Try again in a minute." });
+    } else if (err.status === 403) {
+      res.status(502).json({ error: "GitHub refused the request. Check the ScopeCI App's access to this repository on GitHub, then try again." });
+    } else {
+      res.status(502).json({ error: "GitHub didn't answer properly. Try again in a minute." });
+    }
+    return;
+  }
+  if (databaseUnavailable(err)) {
+    (req.log ?? logger).error({ err }, "Database unavailable");
+    res.setHeader("Retry-After", "30");
+    res.status(503).json({ error: "ScopeCI can't reach its database right now. Try again in a minute." });
+    return;
+  }
   (req.log ?? logger).error({ err }, "Unhandled request error");
-  res.status(500).json({ error: "Something went wrong on our side." });
+  res.status(500).json({ error: "Something went wrong on our side. Try again in a moment." });
 });
 
 export default app;

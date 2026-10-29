@@ -10,6 +10,8 @@ import {
 } from "@workspace/db/schema";
 import {
   AcceptInviteResponse,
+  ChangeMemberRoleBody,
+  ChangeMemberRoleResponse,
   CreateInviteResponse,
   GetInviteResponse,
   GetWorkspaceResponse,
@@ -167,35 +169,104 @@ router.delete("/workspace/invites/:inviteId", async (req, res): Promise<void> =>
   res.status(204).end();
 });
 
-router.delete("/workspace/members/:userId", async (req, res): Promise<void> => {
-  const account = accountOf(res);
-  if (!ownersOnly(account, res)) return;
-  const userId = String(req.params.userId);
-  const target = UUID.test(userId)
-    ? await db.query.organizationMembersTable.findFirst({
-        where: and(
-          eq(organizationMembersTable.organizationId, account.organizationId),
-          eq(organizationMembersTable.userId, userId),
-        ),
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Runs a change to a workspace's members with its member list locked, so
+ * two owners demoting each other (or both leaving) at once can't leave the
+ * workspace with no owner: the second waits, then sees the first's change.
+ */
+function withMembersLocked<T>(organizationId: string, fn: (tx: Tx) => Promise<T>): Promise<T> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`members:${organizationId}`}))`);
+    return fn(tx);
+  });
+}
+
+async function memberOf(tx: Tx, organizationId: string, userId: string) {
+  return UUID.test(userId)
+    ? tx.query.organizationMembersTable.findFirst({
+        where: and(eq(organizationMembersTable.organizationId, organizationId), eq(organizationMembersTable.userId, userId)),
       })
     : undefined;
-  if (!target) {
+}
+
+async function ownerCount(tx: Tx, organizationId: string): Promise<number> {
+  const [{ owners }] = await tx
+    .select({ owners: sql<number>`count(*)::int` })
+    .from(organizationMembersTable)
+    .where(and(eq(organizationMembersTable.organizationId, organizationId), eq(organizationMembersTable.role, "OWNER")));
+  return owners;
+}
+
+router.patch("/workspace/members/:userId", async (req, res): Promise<void> => {
+  const account = accountOf(res);
+  if (!ownersOnly(account, res)) return;
+  const parsed = ChangeMemberRoleBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Choose OWNER or MEMBER." });
+    return;
+  }
+  const role = parsed.data.role;
+  const outcome = await withMembersLocked(account.organizationId, async (tx) => {
+    const target = await memberOf(tx, account.organizationId, String(req.params.userId));
+    if (!target) return { status: 404, error: "That person isn't in this workspace." } as const;
+    if (target.role === "OWNER" && role === "MEMBER" && (await ownerCount(tx, account.organizationId)) <= 1) {
+      return { status: 409, error: "A workspace needs at least one owner. Make someone else an owner first." } as const;
+    }
+    await tx.update(organizationMembersTable).set({ role }).where(eq(organizationMembersTable.id, target.id));
+    return { status: 200, userId: target.userId } as const;
+  });
+  if (outcome.status !== 200) {
+    res.status(outcome.status).json({ error: outcome.error });
+    return;
+  }
+  const member = (await workspaceInfo({ ...account, role: "MEMBER" })).members.find((m) => m.userId === outcome.userId);
+  if (!member) {
+    // Removed by someone else straight after the change.
     res.status(404).json({ error: "That person isn't in this workspace." });
     return;
   }
-  if (target.role === "OWNER") {
-    const [{ owners }] = await db
-      .select({ owners: sql<number>`count(*)::int` })
-      .from(organizationMembersTable)
-      .where(
-        and(eq(organizationMembersTable.organizationId, account.organizationId), eq(organizationMembersTable.role, "OWNER")),
-      );
-    if (owners <= 1) {
-      res.status(409).json({ error: "A workspace needs at least one owner." });
-      return;
+  res.json(ChangeMemberRoleResponse.parse(member));
+});
+
+/**
+ * Owners remove people; anyone removes themselves, which is leaving. A
+ * workspace keeps at least one owner, and nobody leaves their only one
+ * (they would have nowhere to sign in to).
+ */
+router.delete("/workspace/members/:userId", async (req, res): Promise<void> => {
+  const account = accountOf(res);
+  const userId = String(req.params.userId);
+  const leaving = userId === account.userId;
+  if (!leaving && !ownersOnly(account, res)) return;
+  const outcome = await withMembersLocked(account.organizationId, async (tx) => {
+    const target = await memberOf(tx, account.organizationId, userId);
+    if (!target) return { status: 404, error: "That person isn't in this workspace." } as const;
+    if (leaving) {
+      // Leaving two workspaces at once mustn't leave them in none.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`memberships:${account.userId}`}))`);
+      const [{ count }] = await tx
+        .select({ count: sql<number>`count(*)::int` })
+        .from(organizationMembersTable)
+        .where(eq(organizationMembersTable.userId, account.userId));
+      if (count <= 1) return { status: 409, error: "This is your only workspace, so you can't leave it." } as const;
     }
+    if (target.role === "OWNER" && (await ownerCount(tx, account.organizationId)) <= 1) {
+      return {
+        status: 409,
+        error: leaving
+          ? "You're the only owner. Make someone else an owner before you leave."
+          : "A workspace needs at least one owner.",
+      } as const;
+    }
+    await tx.delete(organizationMembersTable).where(eq(organizationMembersTable.id, target.id));
+    return { status: 204 } as const;
+  });
+  if (outcome.status !== 204) {
+    res.status(outcome.status).json({ error: outcome.error });
+    return;
   }
-  await db.delete(organizationMembersTable).where(eq(organizationMembersTable.id, target.id));
   res.status(204).end();
 });
 

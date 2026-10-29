@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { Acceptance } from './acceptance';
 import type { ChangedFile } from './changedFile';
 import type { DemoChangeOrder } from './demoChangeOrder';
 import type { ExcludedItem } from './excludedItem';
@@ -39,5 +40,9 @@ export interface PullRequestResult {
      * @nullable
      */
   scopeVersion: string | null;
+  /** The PM's standing decision to let this pull request's flagged work through without a change order, if any. */
+  acceptance: Acceptance | null;
+  /** An earlier change order on this pull request that the client already decided, when a later push added excluded work it doesn't cover. That new work is the current draft; this one is for reference. */
+  previousChangeOrder: TrackedChangeOrder | null;
   checkedAt: Date;
 }

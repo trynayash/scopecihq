@@ -1,4 +1,4 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   boolean,
   index,
@@ -168,7 +168,10 @@ export const changeOrdersTable = pgTable(
     index("co_reference_idx").on(table.reference),
     index("co_status_idx").on(table.status),
     index("co_project_idx").on(table.projectId),
-    uniqueIndex("co_pull_request_uidx").on(table.pullRequestId),
+    // Several per pull request: new excluded work after a decision gets its own.
+    index("co_pull_request_idx").on(table.pullRequestId),
+    // But at most one open (draft or sent) at a time.
+    uniqueIndex("co_pull_request_open_uidx").on(table.pullRequestId).where(sql`status in ('DRAFT', 'SENT')`),
   ]
 ).enableRLS();
 

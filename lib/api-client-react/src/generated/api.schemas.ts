@@ -366,6 +366,35 @@ export interface RepositoryLinkInput {
   repositoryId: number;
 }
 
+export interface Acceptance {
+  reason: string;
+  /** GitHub login of the PM who accepted it. */
+  acceptedBy: string;
+  acceptedAt: string;
+}
+
+export interface AcceptanceRecorded {
+  reason: string;
+  /** GitHub login of the PM who accepted it. */
+  acceptedBy: string;
+  acceptedAt: string;
+  /** Whether the pull request was checked again straight away. When false (GitHub didn't answer, or the repository is no longer connected) the decision is recorded but its GitHub check shows the old result until the next re-check or push. */
+  checkUpdated: boolean;
+}
+
+export interface AcceptanceWithdrawn {
+  /** Whether the pull request was checked again straight away (see AcceptanceRecorded). */
+  checkUpdated: boolean;
+}
+
+export interface AcceptanceInput {
+  /**
+     * @minLength 1
+     * @maxLength 500
+     */
+  reason: string;
+}
+
 export interface RecheckStarted {
   started: boolean;
 }
@@ -474,6 +503,10 @@ export interface PullRequestResult {
      * @nullable
      */
   scopeVersion: string | null;
+  /** The PM's standing decision to let this pull request's flagged work through without a change order, if any. */
+  acceptance: Acceptance | null;
+  /** An earlier change order on this pull request that the client already decided, when a later push added excluded work it doesn't cover. That new work is the current draft; this one is for reference. */
+  previousChangeOrder: TrackedChangeOrder | null;
   checkedAt: string;
 }
 
@@ -533,6 +566,18 @@ export interface WorkspaceUpdateInput {
      * @maxLength 120
      */
   name: string;
+}
+
+export type MemberRoleInputRole = typeof MemberRoleInputRole[keyof typeof MemberRoleInputRole];
+
+
+export const MemberRoleInputRole = {
+  OWNER: 'OWNER',
+  MEMBER: 'MEMBER',
+} as const;
+
+export interface MemberRoleInput {
+  role: MemberRoleInputRole;
 }
 
 export type WorkspaceMemberRole = typeof WorkspaceMemberRole[keyof typeof WorkspaceMemberRole];

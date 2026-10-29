@@ -23,6 +23,11 @@ export async function ensureSchema(pool: Pool): Promise<{ warnings: string[] }> 
       // A single batch runs as one transaction: all of it applies, or none.
       await client.query(SCHEMA_STATEMENTS.join("\n"));
 
+      // A pull request could have only one change order until 29 October
+      // 2026; now later excluded work gets its own. This is the one index
+      // the schema has ever given up, so it is dropped by name here.
+      await client.query('DROP INDEX IF EXISTS "co_pull_request_uidx"');
+
       // Until 28 October 2026 each changed file's diff text was stored with
       // its name. The check only ever read the names, so drop what was kept.
       // Runs on every start and changes nothing once it has.

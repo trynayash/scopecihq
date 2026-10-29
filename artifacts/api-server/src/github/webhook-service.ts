@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   changeOrdersTable,
@@ -17,7 +17,7 @@ import {
   webhookDeliveriesTable,
 } from "@workspace/db/schema";
 import {
-  describeEstimate,
+  applyHumanOverride,
   composeChangeOrder,
   draftChangeOrder,
   evaluateCommercialScope,
@@ -31,9 +31,11 @@ import { type IGitHubClient } from "./github-client.js";
 import { type IssueProvider } from "./issue-provider.js";
 import { extractIssueReferences } from "./extractor.js";
 import { normalizePullRequestDiff } from "./diff-collector.js";
-import { VERDICT_LABELS, formatScopeCIComment } from "./comment-formatter.js";
+import { VERDICT_LABELS, formatScopeCIComment, projectEstimate } from "./comment-formatter.js";
 import { logger } from "../lib/logger.js";
 import { loadActiveBaseline, toDomainBaseline } from "../lib/scope-store.js";
+import { acceptanceFor, covers } from "../lib/acceptance.js";
+import { changeOrderPlan, itemsOf } from "../lib/change-orders.js";
 
 export interface GitHubWebhookHeaders {
   deliveryId: string;
@@ -275,6 +277,11 @@ export class WebhookService {
     if (!pr || !project?.githubInstallationId || !project.repositoryFullName || !project.repositoryExternalId || !latest?.headSha) {
       return { deliveryId, status: "ignored" };
     }
+    // A pull request from a repository the project was connected to before
+    // can't be checked through the one connected now.
+    if (!pr.url.toLowerCase().includes(`/${project.repositoryFullName.toLowerCase()}/pull/`)) {
+      return { deliveryId, status: "ignored" };
+    }
 
     const [owner, name] = project.repositoryFullName.split("/");
     return this.processPullRequestEvent(deliveryId, {
@@ -338,6 +345,95 @@ export class WebhookService {
     return { checked };
   }
 
+  /** Commits the sweep has already tried, and how often, so one that keeps failing isn't retried forever. */
+  private sweepTries = new Map<string, number>();
+  private sweeping = false;
+
+  /**
+   * Catches what GitHub never delivered. A webhook can be lost (the server
+   * was waking up, a deploy was in flight, processing failed); GitHub
+   * doesn't send it again. So every few minutes this looks at the open pull
+   * requests on each connected repository and checks any commit that has no
+   * result yet. One list request per project; a full pull request is
+   * fetched only for commits that need checking, and each commit is tried
+   * at most three times.
+   */
+  async sweepMissedPullRequests(): Promise<{ checked: number }> {
+    if (this.sweeping || !this.gitHubClient.listOpenPullRequestHeads || !this.gitHubClient.getPullRequest) return { checked: 0 };
+    this.sweeping = true;
+    let checked = 0;
+    try {
+      const projects = await db
+        .select()
+        .from(projectsTable)
+        .where(
+          and(
+            isNull(projectsTable.archivedAt),
+            isNotNull(projectsTable.githubInstallationId),
+            isNotNull(projectsTable.repositoryFullName),
+            isNotNull(projectsTable.contractId),
+          ),
+        );
+      for (const project of projects) {
+        const [owner, name] = project.repositoryFullName!.split("/");
+        let heads: Array<{ number: number; headSha: string }>;
+        try {
+          heads = await this.gitHubClient.listOpenPullRequestHeads(project.githubInstallationId!, owner, name, 30);
+        } catch (err: any) {
+          logger.warn({ projectId: project.id, err: err.message }, "Sweep couldn't list open pull requests");
+          continue;
+        }
+        for (const { number, headSha } of heads) {
+          const key = `${project.repositoryFullName}#${number}@${headSha}`;
+          if ((this.sweepTries.get(key) ?? 0) >= 3) continue;
+          const checkedAlready = async () =>
+            (
+              await db
+                .select({ id: commercialEvaluationsTable.id })
+                .from(commercialEvaluationsTable)
+                .innerJoin(pullRequestsTable, eq(pullRequestsTable.id, commercialEvaluationsTable.pullRequestId))
+                .where(
+                  and(
+                    eq(pullRequestsTable.projectId, project.id),
+                    eq(pullRequestsTable.number, number),
+                    eq(commercialEvaluationsTable.headSha, headSha),
+                  ),
+                )
+                .limit(1)
+            ).length > 0;
+          if (await checkedAlready()) continue;
+          try {
+            // In the pull request's queue, and asked again there: a webhook
+            // for the same commit may have arrived since, and then it's done.
+            const result = await this.inPullRequestQueue(`${project.repositoryFullName}#${number}`, async () => {
+              if (await checkedAlready()) return null;
+              this.sweepTries.set(key, (this.sweepTries.get(key) ?? 0) + 1);
+              const pullRequest = await this.gitHubClient.getPullRequest!(project.githubInstallationId!, owner, name, number);
+              return this.handlePullRequestEvent(`sweep_${crypto.randomUUID()}`, {
+                action: "rechecked",
+                installation: { id: Number(project.githubInstallationId) },
+                repository: { id: Number(project.repositoryExternalId), name, full_name: project.repositoryFullName, owner: { login: owner } },
+                pull_request: pullRequest,
+              });
+            });
+            if (result?.status === "processed") {
+              checked++;
+              this.sweepTries.delete(key);
+            }
+          } catch (err: any) {
+            logger.warn({ projectId: project.id, number, err: err.message }, "Sweep couldn't check a pull request");
+          }
+        }
+      }
+      if (checked > 0) logger.info({ checked }, "Sweep checked pull requests GitHub hadn't delivered");
+      // Keep the memory of tries bounded.
+      if (this.sweepTries.size > 5000) this.sweepTries.clear();
+      return { checked };
+    } finally {
+      this.sweeping = false;
+    }
+  }
+
   /** The last piece of work queued for each pull request, keyed by repository and number. */
   private pullRequestQueues = new Map<string, Promise<unknown>>();
 
@@ -348,9 +444,15 @@ export class WebhookService {
    * together would each post their own comment and check run.
    */
   async processPullRequestEvent(deliveryId: string, payload: any): Promise<WebhookProcessResult> {
-    const key = `${payload?.repository?.full_name}#${payload?.pull_request?.number}`;
+    return this.inPullRequestQueue(`${payload?.repository?.full_name}#${payload?.pull_request?.number}`, () =>
+      this.handlePullRequestEvent(deliveryId, payload),
+    );
+  }
+
+  /** Runs `work` after everything already queued for the pull request `key` (repository#number). */
+  private async inPullRequestQueue<T>(key: string, work: () => Promise<T>): Promise<T> {
     const previous = this.pullRequestQueues.get(key) ?? Promise.resolve();
-    const run = previous.catch(() => undefined).then(() => this.handlePullRequestEvent(deliveryId, payload));
+    const run = previous.catch(() => undefined).then(work);
     this.pullRequestQueues.set(key, run);
     try {
       return await run;
@@ -468,6 +570,15 @@ export class WebhookService {
           .where(eq(webhookDeliveriesTable.deliveryId, deliveryId));
         return { deliveryId, status: "unmapped", action, prNumber };
       }
+
+      // Where results go, worked out as soon as the project is known, so a
+      // failure in any later step can still be reported on the pull request.
+      const owner = repoData.owner?.login || repositoryFullName.split("/")[0];
+      const repo = repoData.name || repositoryFullName.split("/")[1];
+      const detailsUrl = project && process.env.APP_BASE_URL
+        ? `${process.env.APP_BASE_URL.replace(/\/+$/, "")}/app/projects/${project.id}`
+        : undefined;
+      if (project && installationId && headSha && action !== "closed") failureCheck = { installationId, owner, repo, detailsUrl };
 
       // 2. Persist / Upsert Pull Request into Provenance Graph
       const externalPrId = `gh_pr_${prData.id}`;
@@ -624,12 +735,6 @@ export class WebhookService {
       // 5. The scope to check against: the project's confirmed baseline, or
       // for older setups the organization's contract. Never another
       // organization's, and never a guess when there is none.
-      const owner = repoData.owner?.login || repositoryFullName.split("/")[0];
-      const repo = repoData.name || repositoryFullName.split("/")[1];
-      const detailsUrl = project && process.env.APP_BASE_URL
-        ? `${process.env.APP_BASE_URL.replace(/\/+$/, "")}/app/projects/${project.id}`
-        : undefined;
-      if (project && installationId && headSha) failureCheck = { installationId, owner, repo, detailsUrl };
 
       let baselineRecord: Awaited<ReturnType<typeof loadActiveBaseline>>;
       if (project) {
@@ -693,7 +798,7 @@ export class WebhookService {
         : [];
 
       // 6. Invoke Commercial Engine (OBSERVE mode, HeadSha Invariant Enforced)
-      const evaluation = evaluateCommercialScope({
+      const checked = evaluateCommercialScope({
         baseline: domainBaseline,
         pullRequest: {
           id: prRecord.id,
@@ -731,14 +836,37 @@ export class WebhookService {
       });
 
       const projectName = project?.name ?? projectLink?.externalProjectName ?? repositoryFullName;
-      const changeOrder = draftChangeOrder({
-        evaluation,
+      const drafted = draftChangeOrder({
+        evaluation: checked,
         pullRequestTitle: prRecord.title,
         // The client reads this: name the contract they signed, as the demo does.
         projectName: domainBaseline.title || projectName,
         clientName: project?.clientName ?? undefined,
         hourlyRate: project?.hourlyRate ?? undefined,
       });
+
+      // 6b. A PM who accepted this pull request's flagged work keeps it
+      // accepted on later pushes, as long as nothing new is excluded.
+      let evaluation = checked;
+      let changeOrder = drafted;
+      const accepted = project ? await acceptanceFor(prRecord.id) : null;
+      if (
+        accepted &&
+        (checked.state === "CHANGE_REQUIRED" || checked.state === "REVIEW_REQUIRED") &&
+        covers(accepted, (drafted?.items ?? []).map((i) => i.item))
+      ) {
+        const { updatedEvaluation } = applyHumanOverride({ evaluation: checked, events: [] }, { actor: accepted.acceptedBy, reason: accepted.reason });
+        const why = `Accepted without a change order by @${accepted.acceptedBy}: ${accepted.reason}`;
+        evaluation = {
+          ...updatedEvaluation,
+          detectedDelta: [why],
+          evidenceBundle: updatedEvaluation.evidenceBundle && {
+            ...updatedEvaluation.evidenceBundle,
+            decisionExplanation: { ...updatedEvaluation.evidenceBundle.decisionExplanation, reason: why },
+          },
+        } as CommercialEvaluation;
+        changeOrder = undefined;
+      }
 
       // 7. Persist Evaluation with exact headSha
       const [evalRecord] = await db
@@ -774,7 +902,7 @@ export class WebhookService {
           estimatedValueMax: evaluation.commercialValue.max,
           currency: evaluation.commercialValue.currency,
           reason: evaluation.detectedDelta.join("; ") || "Commercial evaluation completed",
-          estimateSummary: describeEstimate(evaluation) ?? null,
+          estimateSummary: projectEstimate(evaluation) ?? null,
           changeOrderDraftJson: changeOrder
             ? { subject: changeOrder.subject, body: changeOrder.body, items: changeOrder.items }
             : null,
@@ -783,15 +911,20 @@ export class WebhookService {
         .returning();
 
       // 7b. A change order still in draft follows the pull request: new
-      // excluded work on a later push joins its items. The letter is redrawn
-      // only if nobody edited it; an edited letter is the PM's to change.
+      // excluded work on a later push joins its items, except work a decided
+      // change order already listed (approved or declined, it isn't raised
+      // again). The letter is redrawn only if nobody edited it; an edited
+      // letter is the PM's to change.
       if (project && changeOrder && changeOrder.items.length > 0) {
-        const draft = await db.query.changeOrdersTable.findFirst({
-          where: and(eq(changeOrdersTable.pullRequestId, prRecord.id), eq(changeOrdersTable.status, "DRAFT")),
+        const orders = await db.query.changeOrdersTable.findMany({
+          where: eq(changeOrdersTable.pullRequestId, prRecord.id),
+          orderBy: [changeOrdersTable.createdAt],
         });
-        const oldItems = (draft?.itemsJson as ChangeOrderItem[] | null) ?? [];
+        const plan = changeOrderPlan(orders, changeOrder.items);
+        const draft = plan.current?.status === "DRAFT" ? plan.current : undefined;
+        const oldItems = draft ? itemsOf(draft) : [];
         const key = (items: ChangeOrderItem[]) => items.map((i) => `${i.item}|${i.clauseRef ?? ""}`).sort().join("\n");
-        if (draft && key(oldItems) !== key(changeOrder.items)) {
+        if (draft && plan.fresh.length > 0 && key(oldItems) !== key(plan.fresh)) {
           const letterFor = (items: ChangeOrderItem[]) =>
             composeChangeOrder({
               items,
@@ -803,16 +936,17 @@ export class WebhookService {
             });
           const before = letterFor(oldItems);
           const untouched = draft.messageSubject === before.subject && draft.messageBody === before.body;
-          const after = untouched ? letterFor(changeOrder.items) : null;
+          const after = untouched ? letterFor(plan.fresh) : null;
           await db
             .update(changeOrdersTable)
             .set({
-              itemsJson: changeOrder.items,
-              title: changeOrder.items.map((i) => i.item).join(", ").slice(0, 255),
+              itemsJson: plan.fresh,
+              title: plan.fresh.map((i) => i.item).join(", ").slice(0, 255),
               ...(after ? { messageSubject: after.subject, messageBody: after.body } : {}),
               updatedAt: new Date(),
             })
-            .where(eq(changeOrdersTable.id, draft.id));
+            // Still a draft: a letter marked as sent meanwhile is kept as sent.
+            .where(and(eq(changeOrdersTable.id, draft.id), eq(changeOrdersTable.status, "DRAFT")));
         }
       }
 
@@ -820,7 +954,7 @@ export class WebhookService {
       // was created on, so a new push gets a new run and a redelivery for the
       // same commit updates the existing one.
       const checkTitle = `ScopeCI: ${VERDICT_LABELS[evaluation.state] ?? evaluation.state}`;
-      const estimateLine = describeEstimate(evaluation);
+      const estimateLine = projectEstimate(evaluation);
       const checkSummary = [
         evaluation.evidenceBundle?.decisionExplanation?.reason ?? evaluation.detectedDelta.join("; "),
         partialNote ?? "",

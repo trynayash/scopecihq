@@ -15,17 +15,30 @@ export const VERDICT: Record<string, { label: string; tone: 'alert' | 'warn' | '
   IN_SCOPE: { label: 'In scope', tone: 'ok' },
   APPROVED_CHANGE: { label: 'Covered by an approved change', tone: 'ok' },
   BLOCKED: { label: 'Excluded work', tone: 'alert' },
-  OVERRIDDEN: { label: 'Overridden', tone: 'ok' },
+  OVERRIDDEN: { label: 'Accepted without a change order', tone: 'ok' },
 };
 
 export const verdictOf = (state: string) => VERDICT[state] ?? { label: state, tone: 'warn' as const };
 
+/**
+ * Puts a failed request into words. The server's own sentence wins when it
+ * sent one; otherwise the failure is named by what the person can do about
+ * it: check their connection, sign in again, or wait a minute.
+ */
 export function errorMessage(error: unknown, fallback: string): string {
   const data = (error as { data?: { error?: string; message?: string } } | null)?.data;
   const status = (error as { status?: number } | null)?.status;
-  if (status === 429) return data?.message ?? 'Too many tries at once. Wait a minute.';
-  if (status === undefined) return "We couldn't reach ScopeCI. Check your connection and try again.";
-  return data?.error ?? fallback;
+  if (status === 429) return data?.message ?? data?.error ?? 'Too many tries at once. Wait a minute.';
+  if (status === undefined) {
+    return typeof navigator !== 'undefined' && navigator.onLine === false
+      ? "You're offline. Reconnect and try again."
+      : "We couldn't reach ScopeCI. Check your connection and try again.";
+  }
+  if (data?.error) return data.error;
+  if (status === 401) return 'Your session ended. Sign in again.';
+  // A 5xx with no message of ours came from in front of the server (a deploy, a restart).
+  if (status >= 500) return 'ScopeCI is having trouble right now. Try again in a minute.';
+  return fallback;
 }
 
 /* ------------------------------------------------------------------ */

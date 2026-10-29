@@ -275,17 +275,58 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
   /workspace/members/{userId}:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          maxLength: 36
+    patch:
+      operationId: changeMemberRole
+      tags: [workspace]
+      summary: Make someone an owner or a member (owners only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemberRoleInput"
+      responses:
+        "200":
+          description: Their membership now
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceMember"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Only owners change roles
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The workspace would be left without an owner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       operationId: removeMember
       tags: [workspace]
-      summary: Remove someone from the workspace (owners only)
-      parameters:
-        - name: userId
-          in: path
-          required: true
-          schema:
-            type: string
-            maxLength: 36
+      summary: Remove someone from the workspace (owners), or leave it (anyone, with their own id)
       responses:
         "204":
           description: Removed
@@ -295,8 +336,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Only owners remove other people
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: The workspace would be left without an owner
+          description: The workspace would be left without an owner, or it is the person's only workspace
           content:
             application/json:
               schema:
@@ -337,6 +384,38 @@ paths:
                 $ref: "#/components/schemas/SessionOrganization"
         "404":
           description: The link is wrong, used, cancelled or expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /projects/archived:
+    get:
+      operationId: listArchivedProjects
+      tags: [projects]
+      summary: The organization's archived projects, most recently archived first
+      responses:
+        "200":
+          description: Archived projects
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectList"
+  /projects/{projectId}/restore:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      operationId: restoreProject
+      tags: [projects]
+      summary: Bring an archived project back; its repository has to be connected again
+      responses:
+        "200":
+          description: The project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "404":
+          description: No such archived project in this organization
           content:
             application/json:
               schema:
@@ -575,6 +654,69 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: The result has nothing to change-order, or the change order was already decided
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /projects/{projectId}/pull-requests/{number}/acceptance:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - name: number
+        in: path
+        required: true
+        schema:
+          type: integer
+    put:
+      operationId: acceptPullRequest
+      tags: [projects]
+      summary: Let a flagged pull request through without a change order
+      description: >-
+        Records why, and checks the pull request again so GitHub's check passes. It stays accepted on later pushes
+        unless they add excluded work the acceptance didn't cover.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptanceInput"
+      responses:
+        "200":
+          description: The acceptance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcceptanceRecorded"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such project or pull request in this organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The pull request's latest result isn't flagged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: withdrawPullRequestAcceptance
+      tags: [projects]
+      summary: Withdraw an acceptance, so the pull request is judged on its own again
+      responses:
+        "200":
+          description: Withdrawn
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcceptanceWithdrawn"
+        "404":
+          description: No such project, pull request or acceptance
           content:
             application/json:
               schema:
@@ -1152,6 +1294,60 @@ components:
       required:
         - installationId
         - repositoryId
+    Acceptance:
+      type: object
+      properties:
+        reason:
+          type: string
+        acceptedBy:
+          type: string
+          description: GitHub login of the PM who accepted it.
+        acceptedAt:
+          type: string
+          format: date-time
+      required:
+        - reason
+        - acceptedBy
+        - acceptedAt
+    AcceptanceRecorded:
+      type: object
+      properties:
+        reason:
+          type: string
+        acceptedBy:
+          type: string
+          description: GitHub login of the PM who accepted it.
+        acceptedAt:
+          type: string
+          format: date-time
+        checkUpdated:
+          type: boolean
+          description: >-
+            Whether the pull request was checked again straight away. When false (GitHub didn't answer, or the
+            repository is no longer connected) the decision is recorded but its GitHub check shows the old result until
+            the next re-check or push.
+      required:
+        - reason
+        - acceptedBy
+        - acceptedAt
+        - checkUpdated
+    AcceptanceWithdrawn:
+      type: object
+      properties:
+        checkUpdated:
+          type: boolean
+          description: Whether the pull request was checked again straight away (see AcceptanceRecorded).
+      required:
+        - checkUpdated
+    AcceptanceInput:
+      type: object
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+      required:
+        - reason
     RecheckStarted:
       type: object
       properties:
@@ -1208,11 +1404,25 @@ components:
         scopeVersion:
           type: ["string", "null"]
           description: The scope version this result was checked against, like "v3". Null for results from before versions were recorded.
+        acceptance:
+          description: The PM's standing decision to let this pull request's flagged work through without a change order, if any.
+          oneOf:
+            - $ref: "#/components/schemas/Acceptance"
+            - type: "null"
+        previousChangeOrder:
+          description: >-
+            An earlier change order on this pull request that the client already decided, when a later push added
+            excluded work it doesn't cover. That new work is the current draft; this one is for reference.
+          oneOf:
+            - $ref: "#/components/schemas/TrackedChangeOrder"
+            - type: "null"
         checkedAt:
           type: string
           format: date-time
       required:
         - scopeVersion
+        - acceptance
+        - previousChangeOrder
         - trackedChangeOrder
         - evaluationId
         - number
@@ -1386,6 +1596,14 @@ components:
           maxLength: 120
       required:
         - name
+    MemberRoleInput:
+      type: object
+      properties:
+        role:
+          type: string
+          enum: [OWNER, MEMBER]
+      required:
+        - role
     WorkspaceMember:
       type: object
       properties:

@@ -6,6 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './acceptance';
+export * from './acceptanceInput';
+export * from './acceptanceRecorded';
+export * from './acceptanceWithdrawn';
 export * from './changedFile';
 export * from './changedFileStatus';
 export * from './changeOrderUpdateInput';
@@ -33,6 +37,8 @@ export * from './healthStatus';
 export * from './inviteCreated';
 export * from './invitePreview';
 export * from './linkedRepository';
+export * from './memberRoleInput';
+export * from './memberRoleInputRole';
 export * from './policyMode';
 export * from './project';
 export * from './projectCounts';

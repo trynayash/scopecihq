@@ -4,6 +4,7 @@ import http from "node:http";
 import { and, eq } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
+  changeOrdersTable,
   commercialEvaluationsTable,
   githubInstallationsTable,
   organizationInvitesTable,
@@ -180,7 +181,7 @@ async function fakeGitHub(url: string, init: RequestInit): Promise<Response> {
   }
 
   const openList = path.match(/^\/repos\/([^/]+\/[^/]+)\/pulls\?state=open/);
-  if (openList) return json((fake.open[openList[1]] ?? []).map((p) => ({ number: p.number })));
+  if (openList) return json((fake.open[openList[1]] ?? []).map((p) => ({ number: p.number, head: p.head })));
   const single = path.match(/^\/repos\/([^/]+\/[^/]+)\/pulls\/(\d+)$/);
   if (single) {
     const pr = (fake.open[single[1]] ?? []).find((p) => p.number === Number(single[2]));
@@ -813,6 +814,144 @@ async function run() {
       assert.strictEqual(foreign.status, 404);
     });
 
+    await scenario("The sweep checks a pull request whose webhook never arrived, and only once", async () => {
+      fake.files["harbor-agency/storefront#19"] = [[{ filename: "src/giftcards/apply.ts", status: "added", additions: 22, deletions: 0 }]];
+      const lost = prPayload(storefront, 19, "5".repeat(40)).pull_request;
+      fake.open["harbor-agency/storefront"] = [
+        ...(fake.open["harbor-agency/storefront"] ?? []),
+        { ...lost, title: "Apply gift cards at checkout", head: { ref: "feat/gift-card-apply", sha: "5".repeat(40) } },
+      ];
+      const first = await service.sweepMissedPullRequests();
+      assert.strictEqual(first.checked, 1, "only the commit without a result");
+      const list = await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana });
+      assert.strictEqual(list.body.pullRequests.find((p: any) => p.number === 19)?.verdict, "CHANGE_REQUIRED");
+      const again = await service.sweepMissedPullRequests();
+      assert.strictEqual(again.checked, 0, "nothing left to check");
+    });
+
+    await scenario("A PM accepts a pull request that needs a decision; it stays accepted on a push; withdrawing it brings the flag back", async () => {
+      const sha = "2".repeat(40);
+      const empty = await call(server, `/api/projects/${projectId}/pull-requests/18/acceptance`, {
+        method: "PUT",
+        body: { reason: "  " },
+        cookie: dana,
+      });
+      assert.strictEqual(empty.status, 400);
+      const accepted = await call(server, `/api/projects/${projectId}/pull-requests/18/acceptance`, {
+        method: "PUT",
+        body: { reason: "The client asked for the gift cards link on our call; no extra work." },
+        cookie: dana,
+      });
+      assert.strictEqual(accepted.status, 200, JSON.stringify(accepted.body));
+      assert.strictEqual(accepted.body.acceptedBy, "dana");
+      assert.strictEqual(accepted.body.checkUpdated, true);
+      const run = fake.checkRuns.filter((r) => r.body.head_sha === sha);
+      assert.strictEqual(run.length, 1, "the same commit's check run is updated");
+      assert.strictEqual(run[0].body.output.title, "ScopeCI: Accepted without a change order");
+      assert.strictEqual(run[0].body.conclusion, "neutral", "report-only projects never pass or fail a check");
+      let pr18 = (await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana })).body.pullRequests.find((p: any) => p.number === 18);
+      assert.strictEqual(pr18.verdict, "OVERRIDDEN");
+      assert.strictEqual(pr18.acceptance.acceptedBy, "dana");
+      assert.match(pr18.reason, /Accepted without a change order by @dana/);
+
+      const pushed = prPayload(storefront, 18, "6".repeat(40), "synchronize");
+      pushed.pull_request.title = "Footer tweaks";
+      pushed.pull_request.body = "Adds a gift cards page and links it from the footer.";
+      const again: any = await deliver(pushed);
+      assert.strictEqual(again.evaluationState, "OVERRIDDEN", "a new push stays accepted");
+
+      const foreign = await call(server, `/api/projects/${projectId}/pull-requests/18/acceptance`, { method: "DELETE", cookie: eve });
+      assert.strictEqual(foreign.status, 404);
+      const withdrawn = await call(server, `/api/projects/${projectId}/pull-requests/18/acceptance`, { method: "DELETE", cookie: dana });
+      assert.strictEqual(withdrawn.status, 200);
+      assert.strictEqual(withdrawn.body.checkUpdated, true);
+      pr18 = (await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana })).body.pullRequests.find((p: any) => p.number === 18);
+      assert.strictEqual(pr18.verdict, "REVIEW_REQUIRED");
+      assert.strictEqual(pr18.acceptance, null);
+      const notFlagged = await call(server, `/api/projects/${projectId}/pull-requests/17/acceptance`, {
+        method: "PUT",
+        body: { reason: "fine" },
+        cookie: dana,
+      });
+      assert.strictEqual(notFlagged.status, 409, "an in-scope pull request has nothing to accept");
+    });
+
+    await scenario("New excluded work after an approved change order gets a change order of its own", async () => {
+      fake.files["harbor-agency/storefront#12"] = [
+        [
+          { filename: "src/loyalty/points.ts", status: "modified", additions: 4, deletions: 1 },
+          { filename: "src/giftcards/redeem.ts", status: "added", additions: 50, deletions: 0 },
+        ],
+      ];
+      const pushed = prPayload(storefront, 12, "7".repeat(40), "synchronize");
+      pushed.pull_request.title = "Add loyalty points and gift cards at checkout";
+      const result: any = await deliver(pushed);
+      assert.strictEqual(result.evaluationState, "CHANGE_REQUIRED");
+      const pr12 = (await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana })).body.pullRequests.find((p: any) => p.number === 12);
+      assert.strictEqual(pr12.trackedChangeOrder, null, "the new work has no change order yet");
+      assert.strictEqual(pr12.previousChangeOrder.reference, "CO-1");
+      assert.strictEqual(pr12.previousChangeOrder.status, "APPROVED");
+      const second = await call(server, `/api/projects/${projectId}/change-order`, {
+        method: "PUT",
+        body: { evaluationId: pr12.evaluationId, hours: 6 },
+        cookie: dana,
+      });
+      assert.strictEqual(second.status, 200, JSON.stringify(second.body));
+      assert.strictEqual(second.body.reference, "CO-2");
+      assert.deepStrictEqual(second.body.items, ["Gift cards"]);
+    });
+
+    await scenario("Declined work is never raised again, and two people pricing at once get one change order", async () => {
+      let pr12 = (await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana })).body.pullRequests.find((p: any) => p.number === 12);
+      for (const status of ["SENT", "DECLINED"]) {
+        const decided = await call(server, `/api/projects/${projectId}/change-order`, {
+          method: "PUT",
+          body: { evaluationId: pr12.evaluationId, status },
+          cookie: dana,
+        });
+        assert.strictEqual(decided.status, 200, JSON.stringify(decided.body));
+      }
+
+      fake.files["harbor-agency/storefront#12"] = [
+        [
+          { filename: "src/loyalty/points.ts", status: "modified", additions: 4, deletions: 1 },
+          { filename: "src/giftcards/redeem.ts", status: "added", additions: 50, deletions: 0 },
+          { filename: "src/wishlist/list.tsx", status: "added", additions: 30, deletions: 0 },
+        ],
+      ];
+      const pushed = prPayload(storefront, 12, "8".repeat(40), "synchronize");
+      pushed.pull_request.title = "Add loyalty points, gift cards and a wishlist";
+      const result: any = await deliver(pushed);
+      assert.strictEqual(result.evaluationState, "CHANGE_REQUIRED");
+      pr12 = (await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana })).body.pullRequests.find((p: any) => p.number === 12);
+      assert.strictEqual(pr12.trackedChangeOrder, null);
+      assert.strictEqual(pr12.previousChangeOrder.reference, "CO-2");
+      assert.strictEqual(pr12.previousChangeOrder.status, "DECLINED");
+      // The letter quotes the pull request's title; what it asks for is the subject and the list.
+      assert.match(pr12.changeOrder.subject, /^Change request: wishlist \(/);
+      assert.match(pr12.changeOrder.body, /^- Wishlist/m);
+      assert.doesNotMatch(pr12.changeOrder.body, /^- Gift cards/m, "the suggested letter leaves out what the client declined");
+
+      const price = () =>
+        call(server, `/api/projects/${projectId}/change-order`, { method: "PUT", body: { evaluationId: pr12.evaluationId, hours: 3 }, cookie: dana });
+      const [a, b] = await Promise.all([price(), price()]);
+      assert.strictEqual(a.status, 200, JSON.stringify(a.body));
+      assert.strictEqual(b.status, 200, JSON.stringify(b.body));
+      assert.strictEqual(a.body.id, b.body.id, "one change order, not two");
+      assert.strictEqual(a.body.reference, "CO-3");
+      assert.deepStrictEqual(a.body.items, ["Wishlist"]);
+
+      const again = prPayload(storefront, 12, "9".repeat(40), "synchronize");
+      again.pull_request.title = "Add loyalty points, gift cards and a wishlist";
+      await deliver(again);
+      const orders = await db.select().from(changeOrdersTable).where(eq(changeOrdersTable.id, a.body.id));
+      assert.deepStrictEqual(
+        (orders[0].itemsJson as Array<{ item: string }>).map((i) => i.item),
+        ["Wishlist"],
+        "a later push doesn't add declined work to the draft",
+      );
+    });
+
     let eveWorkspace = "";
     let danaWorkspace = "";
     await scenario("An owner renames the workspace and invites someone with a single-use link", async () => {
@@ -884,6 +1023,36 @@ async function run() {
       assert.strictEqual(session.body.organization.id, danaWorkspace);
     });
 
+    await scenario("Owners change roles; the last owner can't step down", async () => {
+      const team = await call(server, "/api/workspace", { cookie: dana });
+      const eveId = team.body.members.find((m: any) => m.login === "eve").userId;
+      const danaId = team.body.members.find((m: any) => m.login === "dana").userId;
+      assert.strictEqual((await call(server, `/api/workspace/members/${danaId}`, { method: "PATCH", body: { role: "MEMBER" }, cookie: dana })).status, 409);
+      assert.strictEqual((await call(server, `/api/workspace/members/${danaId}`, { method: "PATCH", body: { role: "MEMBER" }, cookie: eve })).status, 403);
+      const promoted = await call(server, `/api/workspace/members/${eveId}`, { method: "PATCH", body: { role: "OWNER" }, cookie: dana });
+      assert.strictEqual(promoted.status, 200, JSON.stringify(promoted.body));
+      assert.strictEqual(promoted.body.role, "OWNER");
+      assert.strictEqual((await call(server, "/api/workspace/invites", { method: "POST", cookie: eve })).status, 201, "a new owner can invite");
+      assert.strictEqual((await call(server, `/api/workspace/members/${eveId}`, { method: "PATCH", body: { role: "BOSS" }, cookie: dana })).status, 400);
+      const back = await call(server, `/api/workspace/members/${eveId}`, { method: "PATCH", body: { role: "MEMBER" }, cookie: dana });
+      assert.strictEqual(back.body.role, "MEMBER");
+
+      // Two owners demoting each other at once: one wins, the other is told
+      // the workspace needs an owner.
+      await call(server, `/api/workspace/members/${eveId}`, { method: "PATCH", body: { role: "OWNER" }, cookie: dana });
+      const [first, second] = await Promise.all([
+        call(server, `/api/workspace/members/${eveId}`, { method: "PATCH", body: { role: "MEMBER" }, cookie: dana }),
+        call(server, `/api/workspace/members/${danaId}`, { method: "PATCH", body: { role: "MEMBER" }, cookie: eve }),
+      ]);
+      assert.deepStrictEqual([first.status, second.status].sort(), [200, 409]);
+      const owners = (await call(server, "/api/workspace", { cookie: dana })).body.members.filter((m: any) => m.role === "OWNER");
+      assert.strictEqual(owners.length, 1, "exactly one owner is left");
+      if (second.status === 200) {
+        await call(server, `/api/workspace/members/${danaId}`, { method: "PATCH", body: { role: "OWNER" }, cookie: eve });
+        await call(server, `/api/workspace/members/${eveId}`, { method: "PATCH", body: { role: "MEMBER" }, cookie: dana });
+      }
+    });
+
     await scenario("Removing a member cuts their access; the last owner can't be removed", async () => {
       const team = await call(server, "/api/workspace", { cookie: dana });
       const eveId = team.body.members.find((m: any) => m.login === "eve").userId;
@@ -894,6 +1063,21 @@ async function run() {
       assert.strictEqual((await call(server, `/api/projects/${projectId}`, { cookie: eve })).status, 404);
       const session = await call(server, "/api/session", { cookie: eve });
       assert.strictEqual(session.body.organization.id, eveWorkspace, "falls back to their own workspace");
+    });
+
+    await scenario("Anyone can leave a workspace, but not their only one", async () => {
+      const invite = await call(server, "/api/workspace/invites", { method: "POST", cookie: dana });
+      const token = invite.body.url.split("/").pop();
+      assert.strictEqual((await call(server, `/api/invites/${token}/accept`, { method: "POST", cookie: eve })).status, 200);
+      const me = (await call(server, "/api/session", { cookie: eve })).body.user;
+      const eveId = (await call(server, "/api/workspace", { cookie: eve })).body.members.find((m: any) => m.you).userId;
+      assert.ok(me);
+      const left = await call(server, `/api/workspace/members/${eveId}`, { method: "DELETE", cookie: eve });
+      assert.strictEqual(left.status, 204, "a member leaves without an owner's help");
+      const now = await call(server, "/api/session", { cookie: eve });
+      assert.strictEqual(now.body.organization.id, eveWorkspace);
+      const only = await call(server, `/api/workspace/members/${eveId}`, { method: "DELETE", cookie: eve });
+      assert.strictEqual(only.status, 409, "their own, only workspace stays");
     });
 
     await scenario("Cancelled and expired invites can't be used", async () => {
@@ -988,6 +1172,19 @@ async function run() {
       assert.strictEqual((await call(server, `/api/projects/${projectId}`, { cookie: dana })).status, 404);
       const row = await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) });
       assert.strictEqual(row?.repositoryExternalId, null);
+    });
+
+    await scenario("An archived project is listed and can be restored, with its results", async () => {
+      const archived = await call(server, "/api/projects/archived", { cookie: dana });
+      assert.ok(archived.body.projects.some((p: any) => p.id === projectId));
+      assert.strictEqual((await call(server, `/api/projects/${projectId}/restore`, { method: "POST", cookie: eve })).status, 404);
+      const restored = await call(server, `/api/projects/${projectId}/restore`, { method: "POST", cookie: dana });
+      assert.strictEqual(restored.status, 200, JSON.stringify(restored.body));
+      assert.strictEqual(restored.body.repository, null, "the repository is connected again by hand");
+      assert.ok((await call(server, "/api/projects", { cookie: dana })).body.projects.some((p: any) => p.id === projectId));
+      const results = await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana });
+      assert.ok(results.body.pullRequests.length > 0, "its results are still there");
+      assert.strictEqual((await call(server, `/api/projects/${projectId}/restore`, { method: "POST", cookie: dana })).status, 404, "not archived any more");
     });
 
     await scenario("A GitHub account its workspace no longer uses can be connected from another", async () => {

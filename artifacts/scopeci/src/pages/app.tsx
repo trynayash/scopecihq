@@ -28,6 +28,12 @@ import {
   useListGitHubRepositories,
   useListProjectPullRequests,
   useRecheckProject,
+  useChangeMemberRole,
+  useListArchivedProjects,
+  useRestoreProject,
+  getListArchivedProjectsQueryKey,
+  useAcceptPullRequest,
+  useWithdrawPullRequestAcceptance,
   useListProjects,
   useParseDemoSow,
   useSaveProjectScope,
@@ -47,6 +53,7 @@ import {
 import { BASE, ICON_MARK, Logo, TRY_PATH, ThemeToggle, usePageMeta } from '../site';
 import { useConfirm } from '../components/confirm-dialog';
 import { Loading } from '../components/loading';
+import { LoadError } from '../components/load-error';
 import { CopyButton } from '../components/copy-button';
 import { useIndicator } from '../motion';
 import { ChangeOrderBox, ScopeEditor, changeOrderText, errorMessage, itemCount, verdictOf } from '../scope-ui';
@@ -330,9 +337,12 @@ export default function AppPage() {
   if (session.isError || !session.data) {
     return (
       <Frame>
-        <p className="form-error" role="alert">
-          {errorMessage(session.error, "We couldn't load your account.")}
-        </p>
+        <LoadError
+          error={session.error}
+          fallback="We couldn't load your account."
+          onRetry={() => session.refetch()}
+          retrying={session.isFetching}
+        />
       </Frame>
     );
   }
@@ -440,9 +450,12 @@ function ProjectsHome() {
 
       {projects.isPending && <Loading>Loading projects…</Loading>}
       {projects.isError && (
-        <p className="form-error" role="alert">
-          {errorMessage(projects.error, "We couldn't load your projects.")}
-        </p>
+        <LoadError
+          error={projects.error}
+          fallback="We couldn't load your projects."
+          onRetry={() => projects.refetch()}
+          retrying={projects.isFetching}
+        />
       )}
       {projects.data && projects.data.projects.length === 0 && (
         <section className="panel app-onboarding">
@@ -471,7 +484,77 @@ function ProjectsHome() {
           ))}
         </ul>
       )}
+      {projects.data && <ArchivedProjects />}
     </>
+  );
+}
+
+/**
+ * Archived projects, folded away under the list until asked for. Restoring
+ * brings back the scope, results and change orders; the repository has to be
+ * connected again, since archiving released it.
+ */
+function ArchivedProjects() {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const archived = useListArchivedProjects({ query: { queryKey: getListArchivedProjectsQueryKey(), enabled: open } });
+  const restore = useRestoreProject();
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
+
+  return (
+    <div className="archived">
+      <button type="button" className="text-link" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        {open ? 'Hide archived projects' : 'Archived projects'}
+      </button>
+      {open && archived.isPending && <Loading>Loading archived projects…</Loading>}
+      {open && archived.isError && (
+        <LoadError error={archived.error} fallback="We couldn't load the archived projects." onRetry={() => archived.refetch()} retrying={archived.isFetching} />
+      )}
+      {open && archived.data && archived.data.projects.length === 0 && <p className="help">Nothing archived.</p>}
+      {open && archived.data && archived.data.projects.length > 0 && (
+        <ul className="archived-list">
+          {archived.data.projects.map((project) => (
+            <li key={project.id}>
+              <span>
+                <strong>{project.name}</strong>
+                {project.clientName && <span className="archived-client"> · {project.clientName}</span>}
+              </span>
+              <button
+                type="button"
+                className="button button-quiet button-sm"
+                disabled={restore.isPending}
+                aria-label={`Restore ${project.name}`}
+                onClick={() =>
+                  restore.mutate(
+                    { projectId: project.id },
+                    {
+                      onSuccess: () => {
+                        setError('');
+                        setStatus(`${project.name} is back. Connect its repository again to check pull requests.`);
+                        queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
+                        queryClient.invalidateQueries({ queryKey: getListArchivedProjectsQueryKey() });
+                      },
+                      onError: (err) => setError(errorMessage(err, "We couldn't restore it.")),
+                    },
+                  )
+                }
+              >
+                Restore
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+      <p className="app-status" role="status">
+        {status}
+      </p>
+    </div>
   );
 }
 
@@ -568,13 +651,22 @@ function ProjectPage() {
 
   if (detail.isPending) return <Loading>Loading project…</Loading>;
   if (detail.isError || !detail.data) {
+    // Not found is an answer; anything else may pass, so it can be asked again.
+    if ((detail.error as { status?: number } | null)?.status === 404) {
+      return (
+        <p className="app-empty">
+          No such project in this workspace. It may have been archived, or it belongs to another workspace.{' '}
+          <Link href="/">Back to your projects</Link>
+        </p>
+      );
+    }
     return (
-      <p className="app-empty">
-        {(detail.error as { status?: number } | null)?.status === 404
-          ? 'No such project in your workspace.'
-          : errorMessage(detail.error, "We couldn't load this project.")}{' '}
-        <Link href="/">Back to your projects</Link>
-      </p>
+      <LoadError
+        error={detail.error}
+        fallback="We couldn't load this project."
+        onRetry={() => detail.refetch()}
+        retrying={detail.isFetching}
+      />
     );
   }
 
@@ -1102,9 +1194,19 @@ function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestRe
 
   const decided = tracked?.status === 'APPROVED' || tracked?.status === 'DECLINED';
   const sent = tracked?.status === 'SENT';
+  const approveRef = useRef<HTMLButtonElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // The button just pressed may go away (Mark as sent, Save draft); focus
+  // moves to what comes next rather than falling to the page.
+  const focusNext = (to: 'approve' | 'letter' | undefined) =>
+    requestAnimationFrame(() => {
+      if (to === 'approve') approveRef.current?.focus();
+      if (to === 'letter') bodyRef.current?.querySelector('textarea')?.focus();
+    });
   const save = (
     data: { hours?: number | null; status?: 'SENT' | 'APPROVED' | 'DECLINED'; subject?: string; body?: string },
     done: string,
+    then?: 'approve' | 'letter',
   ) =>
     update.mutate(
       { projectId: project.id, data: { evaluationId: pr.evaluationId, ...data } },
@@ -1112,6 +1214,7 @@ function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestRe
         onSuccess: () => {
           setError('');
           setStatus(done);
+          focusNext(then);
           queryClient.invalidateQueries({ queryKey: getListProjectPullRequestsQueryKey(project.id) });
           queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(project.id) });
           queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
@@ -1172,9 +1275,15 @@ function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestRe
         </Dialog.Close>
       </header>
 
-      <div className="drawer-body">
+      <div className="drawer-body" ref={bodyRef}>
         <ChangeOrderSteps pr={pr} />
         <WhyLine pr={pr} tone={verdictOf(pr.verdict).tone} />
+        {pr.previousChangeOrder && (
+          <p className="notice">
+            {pr.previousChangeOrder.reference} was {pr.previousChangeOrder.status === 'APPROVED' ? 'approved' : 'declined'} for{' '}
+            {pr.previousChangeOrder.items.join(', ')}. This one is for the work added since.
+          </p>
+        )}
         {!decided && pr.verdict !== 'CHANGE_REQUIRED' && (
           <p className="notice">The latest commit no longer builds the excluded work, so this change order may not be needed.</p>
         )}
@@ -1223,7 +1332,7 @@ function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestRe
             />
             {!sent && edited && (
               <div className="app-actions">
-                <button type="button" className="button button-quiet" disabled={update.isPending} onClick={() => save(splitMessage(text), 'Draft saved.')}>
+                <button type="button" className="button button-quiet" disabled={update.isPending} onClick={() => save(splitMessage(text), 'Draft saved.', 'letter')}>
                   Save draft
                 </button>
                 <button type="button" className="text-link" onClick={() => setText(original)}>
@@ -1250,12 +1359,12 @@ function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestRe
               type="button"
               className="button button-primary"
               disabled={update.isPending}
-              onClick={() => save({ status: 'SENT', ...splitMessage(text) }, 'Marked as sent. The letter is kept as sent.')}
+              onClick={() => save({ status: 'SENT', ...splitMessage(text) }, 'Marked as sent. The letter is kept as sent.', 'approve')}
             >
               Mark as sent
             </button>
           )}
-          <button type="button" className="button button-quiet" disabled={update.isPending} onClick={approve}>
+          <button type="button" className="button button-quiet" disabled={update.isPending} onClick={approve} ref={approveRef}>
             Client approved
           </button>
           <button type="button" className="button button-quiet button-danger" disabled={update.isPending} onClick={decline}>
@@ -1303,8 +1412,11 @@ function ChangeOrderDrawer({
           }}
         >
           {/* Keyed by pull request, not result: a new push or an approval
-              makes a new result, and the open panel keeps its state. */}
-          {shown && <ChangeOrderPanel key={shown.number} project={project} pr={shown} />}
+              makes a new result, and the open panel keeps its state. A
+              follow-up change order (new work after a decision) starts afresh. */}
+          {shown && (
+            <ChangeOrderPanel key={`${shown.number}:${shown.previousChangeOrder?.id ?? ''}`} project={project} pr={shown} />
+          )}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
@@ -1352,21 +1464,115 @@ function ChangedFiles({ pr }: { pr: PullRequestResult }) {
   );
 }
 
+/**
+ * Letting a flagged pull request through without a change order: the PM says
+ * why, and the reason is kept with their name. Later pushes stay accepted
+ * unless they add excluded work this didn't cover.
+ */
+function AcceptDialog({ project, pr, onClose }: { project: Project; pr: PullRequestResult | null; onClose: (done?: string) => void }) {
+  const queryClient = useQueryClient();
+  const accept = useAcceptPullRequest();
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState('');
+  // Keep the last pull request while the dialog animates closed.
+  const last = useRef(pr);
+  if (pr) last.current = pr;
+  const shown = pr ?? last.current;
+  const flaggedWork = shown?.excluded.map((e) => e.item).join(', ');
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!shown) return;
+    if (!reason.trim()) {
+      setError('Say why; the reason is kept with the decision.');
+      return;
+    }
+    setError('');
+    accept.mutate(
+      { projectId: project.id, number: shown.number, data: { reason: reason.trim().slice(0, 500) } },
+      {
+        onSuccess: (result) => {
+          queryClient.invalidateQueries({ queryKey: getListProjectPullRequestsQueryKey(project.id) });
+          queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(project.id) });
+          queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
+          setReason('');
+          onClose(
+            result.checkUpdated
+              ? `#${shown.number} accepted. Its GitHub check is updated.`
+              : `#${shown.number} accepted, but its GitHub check couldn't be updated just now. Re-check open pull requests to update it.`,
+          );
+        },
+        onError: (err) => setError(errorMessage(err, "We couldn't record the acceptance.")),
+      },
+    );
+  };
+
+  return (
+    <Dialog.Root open={pr !== null} onOpenChange={(open) => !open && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="dialog-overlay" />
+        <Dialog.Content className="dialog dialog-wide" data-testid="accept-dialog">
+          <Dialog.Title className="dialog-title">Accept #{shown?.number} without a change order?</Dialog.Title>
+          <Dialog.Description className="dialog-description">
+            {flaggedWork
+              ? `The work it builds that the scope excludes (${flaggedWork}) goes ahead unbilled. `
+              : 'It goes ahead as in scope. '}
+            Later pushes stay accepted unless they add other excluded work. You can withdraw this.
+          </Dialog.Description>
+          <form onSubmit={submit} className="accept-form">
+            <div className="field">
+              <label htmlFor="accept-reason">Why</label>
+              <textarea
+                id="accept-reason"
+                className="textarea"
+                rows={3}
+                maxLength={500}
+                value={reason}
+                placeholder="For example: the client agreed on our call that this is part of checkout."
+                onChange={(e) => setReason(e.target.value)}
+              />
+            </div>
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="dialog-actions">
+              <Dialog.Close className="button button-quiet" type="button">
+                Cancel
+              </Dialog.Close>
+              <button type="submit" className="button button-primary" disabled={accept.isPending}>
+                {accept.isPending ? 'Accepting…' : 'Accept'}
+              </button>
+            </div>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
 function PullRequestRow({
   pr,
   currentScope,
   onOpen,
+  onAccept,
+  onWithdraw,
 }: {
   pr: PullRequestResult;
   currentScope: string | null;
   onOpen: (button: HTMLButtonElement) => void;
+  onAccept: () => void;
+  onWithdraw: () => void;
 }) {
   const verdict = verdictOf(pr.verdict);
   const tracked = pr.trackedChangeOrder;
   // With excluded items the why line already says it; the full reason
   // follows as detail. Otherwise the why line is the reason itself.
-  const reasonBelow = pr.excluded.length > 0 || verdict.tone === 'ok';
+  // An accepted result says who accepted it and why just below, so its reason isn't repeated.
+  const reasonBelow = (pr.excluded.length > 0 || verdict.tone === 'ok') && !(pr.acceptance && pr.verdict === 'OVERRIDDEN');
   const stale = Boolean(pr.scopeVersion && currentScope && pr.scopeVersion !== currentScope);
+  const flagged = pr.verdict === 'CHANGE_REQUIRED' || pr.verdict === 'REVIEW_REQUIRED';
 
   return (
     <li className={`verdict-card is-${verdict.tone} pr-row`} data-testid="pr-result">
@@ -1395,6 +1601,30 @@ function PullRequestRow({
       {reasonBelow && <p className={pr.excluded.length > 0 ? 'pr-row-detail' : 'verdict-card-reason'}>{pr.reason}</p>}
       {pr.estimate && <p className="verdict-card-estimate">Estimated impact: {pr.estimate}</p>}
       <ChangedFiles pr={pr} />
+      {pr.acceptance && (
+        <p className="pr-row-accepted">
+          Accepted by @{pr.acceptance.acceptedBy} on {shortDate(pr.acceptance.acceptedAt)}: {pr.acceptance.reason}
+          {flagged && ' A later push added work this doesn\'t cover.'}{' '}
+          <button type="button" className="text-link" onClick={onWithdraw} aria-label={`Withdraw the acceptance of #${pr.number}`}>
+            Withdraw
+          </button>
+        </p>
+      )}
+      {pr.previousChangeOrder && (
+        <p className="pr-row-previous">
+          {pr.previousChangeOrder.reference} ({pr.previousChangeOrder.status === 'APPROVED' ? 'approved' : 'declined'}) covers{' '}
+          {pr.previousChangeOrder.items.join(', ')}. A later push added work it doesn't, so that needs its own change order.
+        </p>
+      )}
+      {/* Flagged despite an acceptance means a later push added work it
+          doesn't cover: that can be accepted too. */}
+      {flagged && (
+        <div className="pr-row-actions">
+          <button type="button" className="text-link" onClick={onAccept} aria-label={`Accept #${pr.number} without a change order`}>
+            {pr.verdict === 'REVIEW_REQUIRED' ? 'Accept as in scope…' : 'Accept without a change order…'}
+          </button>
+        </div>
+      )}
       {(pr.changeOrder || tracked) && (
         <div className="pr-row-co">
           <span className={`chip ${tracked ? CHANGE_ORDER_TONE[tracked.status] : ''}`}>{changeOrderSummary(tracked)}</span>
@@ -1421,7 +1651,37 @@ function PullRequestsSection({ project }: { project: Project }) {
     query: { queryKey: getListProjectPullRequestsQueryKey(project.id), refetchInterval: 30_000 },
   });
   const recheck = useRecheckProject();
+  const withdraw = useWithdrawPullRequestAcceptance();
+  const [confirm, confirmDialog] = useConfirm();
   const [recheckStatus, setRecheckStatus] = useState('');
+  const [accepting, setAccepting] = useState<PullRequestResult | null>(null);
+  const refreshResults = () => {
+    queryClient.invalidateQueries({ queryKey: getListProjectPullRequestsQueryKey(project.id) });
+    queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(project.id) });
+    queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
+  };
+  const withdrawAcceptance = async (pr: PullRequestResult) => {
+    const ok = await confirm({
+      title: `Withdraw the acceptance of #${pr.number}?`,
+      description: 'It is checked again and judged on its own; GitHub shows the result.',
+      confirmLabel: 'Withdraw',
+    });
+    if (!ok) return;
+    withdraw.mutate(
+      { projectId: project.id, number: pr.number },
+      {
+        onSuccess: (result) => {
+          setRecheckStatus(
+            result.checkUpdated
+              ? `Acceptance of #${pr.number} withdrawn; it's judged on its own again.`
+              : `Acceptance of #${pr.number} withdrawn, but its GitHub check couldn't be updated just now. Re-check open pull requests to update it.`,
+          );
+          refreshResults();
+        },
+        onError: (err) => setRecheckStatus(errorMessage(err, "We couldn't withdraw it.")),
+      },
+    );
+  };
   // The open panel follows the pull request, so a new result for it (a push,
   // an approval) doesn't close it.
   const [openNumber, setOpenNumber] = useState<number | null>(null);
@@ -1459,9 +1719,12 @@ function PullRequestsSection({ project }: { project: Project }) {
       </p>
       {results.isPending && <Loading>Loading the checked pull requests…</Loading>}
       {results.isError && (
-        <p className="form-error" role="alert">
-          {errorMessage(results.error, "We couldn't load the results.")}
-        </p>
+        <LoadError
+          error={results.error}
+          fallback="We couldn't load the results."
+          onRetry={() => results.refetch()}
+          retrying={results.isFetching}
+        />
       )}
       {results.data && results.data.pullRequests.length === 0 && (
         <p className="help">
@@ -1481,6 +1744,8 @@ function PullRequestsSection({ project }: { project: Project }) {
                 opener.current = button;
                 setOpenNumber(pr.number);
               }}
+              onAccept={() => setAccepting(pr)}
+              onWithdraw={() => withdrawAcceptance(pr)}
             />
           ))}
         </ul>
@@ -1491,6 +1756,15 @@ function PullRequestsSection({ project }: { project: Project }) {
         onClose={() => setOpenNumber(null)}
         returnFocus={() => opener.current?.focus()}
       />
+      <AcceptDialog
+        project={project}
+        pr={accepting}
+        onClose={(done) => {
+          setAccepting(null);
+          if (done) setRecheckStatus(done);
+        }}
+      />
+      {confirmDialog}
     </section>
   );
 }
@@ -1654,6 +1928,8 @@ function TeamPage() {
   const createInvite = useCreateInvite();
   const revoke = useRevokeInvite();
   const remove = useRemoveMember();
+  const changeRole = useChangeMemberRole();
+  const [, navigate] = useLocation();
   const [confirm, confirmDialog] = useConfirm();
   const [name, setName] = useState('');
   const [link, setLink] = useState('');
@@ -1675,9 +1951,12 @@ function TeamPage() {
   if (workspace.isPending) return <Loading>Loading the team…</Loading>;
   if (workspace.isError || !workspace.data) {
     return (
-      <p className="form-error" role="alert">
-        {errorMessage(workspace.error, "We couldn't load the team.")}
-      </p>
+      <LoadError
+        error={workspace.error}
+        fallback="We couldn't load the team."
+        onRetry={() => workspace.refetch()}
+        retrying={workspace.isFetching}
+      />
     );
   }
   const team = workspace.data;
@@ -1746,6 +2025,66 @@ function TeamPage() {
                   {member.you ? ' · you' : ''}
                 </span>
               </span>
+              {owner && !member.you && (
+                <button
+                  type="button"
+                  className="text-link"
+                  disabled={changeRole.isPending}
+                  aria-label={member.role === 'OWNER' ? `Make @${member.login} a member` : `Make @${member.login} an owner`}
+                  onClick={async () => {
+                    const toOwner = member.role !== 'OWNER';
+                    const confirmed = await confirm({
+                      title: toOwner ? `Make @${member.login} an owner?` : `Make @${member.login} a member?`,
+                      description: toOwner
+                        ? 'Owners rename the workspace, invite and remove people, and change roles, as you can.'
+                        : 'They keep working on every project but no longer manage the team.',
+                      confirmLabel: toOwner ? 'Make owner' : 'Make member',
+                    });
+                    if (!confirmed) return;
+                    changeRole.mutate(
+                      { userId: member.userId, data: { role: toOwner ? 'OWNER' : 'MEMBER' } },
+                      {
+                        onSuccess: () => {
+                          setStatus(toOwner ? `@${member.login} is now an owner.` : `@${member.login} is now a member.`);
+                          refresh();
+                        },
+                        onError: fail("We couldn't change their role."),
+                      },
+                    );
+                  }}
+                >
+                  {member.role === 'OWNER' ? 'Make member' : 'Make owner'}
+                </button>
+              )}
+              {member.you && (
+                <button
+                  type="button"
+                  className="text-link app-archive"
+                  disabled={remove.isPending}
+                  onClick={async () => {
+                    const confirmed = await confirm({
+                      title: `Leave ${team.name}?`,
+                      description: "You lose access to its projects. An owner can invite you back.",
+                      confirmLabel: 'Leave workspace',
+                      danger: true,
+                    });
+                    if (!confirmed) return;
+                    remove.mutate(
+                      { userId: member.userId },
+                      {
+                        onSuccess: () => {
+                          // Everything on screen belonged to the workspace just left.
+                          queryClient.invalidateQueries();
+                          navigate('/');
+                        },
+                        onError: fail("We couldn't take you out of the workspace."),
+                      },
+                    );
+                  }}
+                >
+                  Leave workspace
+                </button>
+              )}
               {owner && !member.you && (
                 <button
                   type="button"
@@ -1876,6 +2215,19 @@ function InvitePage() {
     );
 
   if (invite.isPending) return <Loading>Checking the invite…</Loading>;
+  const inviteStatus = (invite.error as { status?: number } | null)?.status;
+  if (invite.isError && (inviteStatus === undefined || inviteStatus >= 500)) {
+    return (
+      <section className="app-signin panel">
+        <LoadError
+          error={invite.error}
+          fallback="We couldn't check the invite."
+          onRetry={() => invite.refetch()}
+          retrying={invite.isFetching}
+        />
+      </section>
+    );
+  }
   if (invite.isError || !invite.data) {
     return (
       <section className="app-signin panel">
