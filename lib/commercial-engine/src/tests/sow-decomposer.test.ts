@@ -51,6 +51,20 @@ const PATHOLOGICAL: Record<string, string> = {
   "2,400 scope headings": "## 1.1 A\n" + "## Out of Scope\n".repeat(2400),
   "2,400 exceptions in one list": "## Scope\nExcluded: " + "a other than b, ".repeat(2400),
   "2,000 bracketed exceptions in one list": "## Scope\nExcluded: " + "x (other than y), ".repeat(2000),
+  "'will' and 39,000 spaces before 'not include'": "## 1.1 A\nwill" + " ".repeat(39_000) + "not include x",
+  "'as' and 39,000 spaces before 'well'": "Excluding: as" + " ".repeat(39_000) + "well",
+  "a comma and 39,000 spaces before 'other than'": "Excluding: a," + " ".repeat(39_000) + "other than b",
+  "a comma and 39,000 spaces before 'save for'": "Excluding: a," + " ".repeat(39_000) + "save for X",
+  "2,000 unclosed brackets with exceptions": "## 1. Scope\nOut of scope: " + "ab (other than cd, ".repeat(2090),
+  "4,990 'x, e.g.' in one list": "## 1.1 Scope\nOut of scope: " + "x, e.g. ".repeat(4990),
+  "'e.g.' after 39,000 spaces": "## 1.1 Scope\nOut of scope: x," + " ".repeat(39_000) + "e.g. y",
+  "'etc.' before 39,000 spaces": "## 1.1 Scope\nOut of scope: etc." + " ".repeat(39_000) + "x",
+  "'Excludes x' and 13,000 '. x'": "## 1.1 Scope\nExcludes x" + ". x".repeat(13_000),
+  "'excluded for' and 39,000 spaces": "## Scope\nexcluded for a" + " ".repeat(39_000) + "b",
+  "'Out of scope (' and 39,000 letters": "## Scope\nout of scope (" + "x".repeat(39_000),
+  "3,000 numbered lines under '4. Exclusions'": ("## 1.1 A\nIncludes a cart.\n4. Exclusions\n" + Array.from({ length: 3000 }, (_, i) => `4.${i + 1} Gift card item ${i}.`).join("\n")).slice(0, 40_000),
+  "a numbered title of 39,000 spaces": "4. Exclusions\n4.1" + " ".repeat(39_000) + "x.",
+  "a bullet of 2,480 exceptions": ("## 1.1 S\nExclusions:\n- " + "a other than b, ".repeat(2480)).slice(0, 40_000),
 };
 
 function run() {
@@ -256,6 +270,165 @@ function run() {
       scope("## Scope\nThird-party integrations (other than Stripe) and gift cards are out of scope.").excluded,
       ["third-party integrations (other than stripe)", "gift cards"],
     );
+  });
+
+  /* Contract wording read the way it is written: one scenario per confirmed wrong parse. */
+
+  scenario("1. 'will not include', 'shall not include', 'won't' and 'doesn’t include' are exclusions, never inclusions", () => {
+    assert.deepStrictEqual(extractScopeBoundaries("Phase 1 will not include gift cards or loyalty points."), {
+      inclusions: [],
+      exclusions: ["gift cards or loyalty points"],
+    });
+    assert.deepStrictEqual(extractScopeBoundaries("This SOW won’t include gift cards.").exclusions, ["gift cards"]);
+    assert.deepStrictEqual(extractScopeBoundaries("This SOW doesn't include gift cards.").exclusions, ["gift cards"]);
+    assert.deepStrictEqual(extractScopeBoundaries("The Services shall not include gift cards or loyalty points.").inclusions, []);
+    // Requirements, not scope: neither included nor excluded.
+    assert.deepStrictEqual(extractScopeBoundaries("Error pages should not include stack traces."), { inclusions: [], exclusions: [] });
+    assert.deepStrictEqual(extractScopeBoundaries("Error pages must not include stack traces."), { inclusions: [], exclusions: [] });
+  });
+
+  scenario("2 and 15. 'e.g.', 'i.e.', 'etc.' and '2.1' end neither the list nor the sentence", () => {
+    assert.deepStrictEqual(extractScopeBoundaries("Out of scope: CRM integrations (e.g. Salesforce), gift cards and loyalty points.").exclusions, [
+      "crm integrations (salesforce)",
+      "gift cards",
+      "loyalty points",
+    ]);
+    assert.deepStrictEqual(extractScopeBoundaries("Gift cards, loyalty points, etc. are out of scope.").exclusions, ["gift cards", "loyalty points", "etc"]);
+    assert.deepStrictEqual(extractScopeBoundaries("Out of scope: social login, e.g. Google, Facebook, Apple.").exclusions, [
+      "social login (google, facebook, apple)",
+    ]);
+    assert.deepStrictEqual(extractScopeBoundaries("Excludes native mobile apps (i.e. iOS and Android), gift cards and loyalty points.").exclusions, [
+      "native mobile apps (ios and android)",
+      "gift cards",
+      "loyalty points",
+    ]);
+    assert.deepStrictEqual(extractScopeBoundaries("Excludes WCAG 2.1 AA compliance, gift cards and loyalty points.").exclusions, [
+      "wcag 2.1 aa compliance",
+      "gift cards",
+      "loyalty points",
+    ]);
+    assert.deepStrictEqual(extractScopeBoundaries("WCAG 2.1 AA compliance and gift cards are out of scope.").exclusions, [
+      "wcag 2.1 aa compliance",
+      "gift cards",
+    ]);
+    assert.deepStrictEqual(extractScopeBoundaries("Out of scope: v2.0 redesign, gift cards and loyalty points.").exclusions, [
+      "v2.0 redesign",
+      "gift cards",
+      "loyalty points",
+    ]);
+  });
+
+  scenario("3. ', except', ', other than', ', but not' and 'as well as' keep the list and the exception", () => {
+    assert.deepStrictEqual(extractScopeBoundaries("Payment providers, other than Stripe, are out of scope.").exclusions, [
+      "payment providers other than stripe",
+    ]);
+    assert.deepStrictEqual(extractScopeBoundaries("Excludes payment providers, except for Stripe.").exclusions, ["payment providers except for stripe"]);
+    assert.deepStrictEqual(extractScopeBoundaries("Out of scope: payment providers, except for Stripe, gift cards and loyalty points.").exclusions, [
+      "payment providers except for stripe",
+      "gift cards",
+      "loyalty points",
+    ]);
+    assert.deepStrictEqual(extractScopeBoundaries("Out of scope: native mobile apps, as well as gift cards and loyalty points.").exclusions, [
+      "native mobile apps",
+      "gift cards",
+      "loyalty points",
+    ]);
+    assert.deepStrictEqual(extractScopeBoundaries("Out of scope: hosting, as agreed with the Client.").exclusions, ["hosting"]);
+    assert.deepStrictEqual(extractScopeBoundaries("Payment providers, save for Stripe, are excluded.").exclusions, [
+      "payment providers except for stripe",
+    ]);
+    assert.deepStrictEqual(extractScopeBoundaries("Out of scope: save for later, wishlists.").exclusions, ["save for later", "wishlists"]);
+  });
+
+  scenario("6. numbered legal sub-clauses keep their text", () => {
+    assert.deepStrictEqual(
+      clauses("## 1.1 Storefront\nIncludes product catalogue, shopping cart and Stripe checkout.\n\n## 2. Exclusions\n2.1 Gift cards are out of scope.\n2.2 Loyalty points are excluded.\n").map(
+        (c) => [c.clauseRef, c.excluded],
+      ),
+      [["§1.1", []], ["§2", []], ["§2.1", ["gift cards"]], ["§2.2", ["loyalty points"]]],
+    );
+    assert.deepStrictEqual(
+      scope("Statement of Work\n\n3. Deliverables\n3.1 Storefront\nThe Agency will deliver a product catalogue, shopping cart and Stripe checkout.\n\n4. Exclusions\n4.1 Gift card functionality.\n4.2 Loyalty points programme.\n5. Fees and Payment\nFees are payable monthly.\n").excluded,
+      ["gift card functionality", "loyalty points programme"],
+    );
+    assert.deepStrictEqual(scope("## 1.1 Storefront\nIncludes a cart.\n\n## 1.2 Out of scope\n1.2.1 Gift cards.\n1.2.2 Loyalty points.\n").excluded, [
+      "gift cards",
+      "loyalty points",
+    ]);
+    assert.deepStrictEqual(scope("## 1.1 Storefront\nIncludes a cart.\n1.2 The Services do not include gift cards or loyalty points.").excluded, [
+      "gift cards or loyalty points",
+    ]);
+    assert.deepStrictEqual(scope("## 1.1 Storefront\nIncludes a cart.\nSection 1.2 Gift cards and loyalty points are out of scope.\n").excluded, [
+      "gift cards",
+      "loyalty points",
+    ]);
+  });
+
+  scenario("7. what an included item leaves out is excluded", () => {
+    assert.deepStrictEqual(extractScopeBoundaries("Includes payment by card via Stripe, excluding PayPal."), {
+      inclusions: ["payment by card via stripe excluding paypal"],
+      exclusions: ["paypal"],
+    });
+    assert.deepStrictEqual(extractScopeBoundaries("Includes email notifications, but not SMS notifications.").exclusions, ["sms notifications"]);
+    assert.deepStrictEqual(extractScopeBoundaries("Includes integration with all payment providers other than PayPal.").exclusions, ["paypal"]);
+    assert.deepStrictEqual(extractScopeBoundaries("Includes hosting setup, except as agreed in writing.").exclusions, []);
+  });
+
+  scenario("12. common exclusion headings and predicates are read", () => {
+    assert.deepStrictEqual(scope("## 2.1 Exclusions\nThe following items are excluded from this SOW:\n- Gift cards").excluded, ["gift cards"]);
+    assert.deepStrictEqual(
+      clauses("## 2.1 Storefront\nIncludes a cart.\n## 3. Scope Exclusions\n- Gift cards").map((c) => [c.clauseRef, c.excluded]),
+      [["§2.1", []], ["§3", ["gift cards"]]],
+    );
+    assert.deepStrictEqual(extractScopeBoundaries("Out of scope for Phase 1 (may be quoted separately): gift cards, loyalty points.").exclusions, [
+      "gift cards",
+      "loyalty points",
+    ]);
+    for (const heading of ["## Out-of-Scope Items", "**Out of Scope (Phase 2):**", "Out of scope -", "## What's not included", "## Excluded Services", "Not included in this SOW:"]) {
+      assert.deepStrictEqual(scope(`${heading}\n- Gift cards`).excluded, ["gift cards"], heading);
+    }
+    for (const sentence of [
+      "Gift cards are outside the scope of this SOW.",
+      "Gift cards will not be included.",
+      "Gift cards shall be excluded.",
+      "Gift cards fall outside the scope of this engagement.",
+    ]) {
+      assert.deepStrictEqual(extractScopeBoundaries(sentence).exclusions, ["gift cards"], sentence);
+    }
+    // Product behaviour and assumptions are not exclusions.
+    assert.deepStrictEqual(extractScopeBoundaries("Out-of-stock products will not be included in search results.").exclusions, []);
+    assert.deepStrictEqual(extractScopeBoundaries("Draft orders shall be excluded from the sales report.").exclusions, []);
+    assert.deepStrictEqual(scope("## Assumptions and Exclusions\n- The Client will supply Stripe API credentials").excluded, []);
+  });
+
+  scenario("16. ', including, but not limited to,' keeps its examples", () => {
+    assert.deepStrictEqual(extractScopeBoundaries("Excludes CRM integrations, including, but not limited to, Salesforce and HubSpot.").exclusions, [
+      "crm integrations",
+      "salesforce",
+      "hubspot",
+    ]);
+    assert.deepStrictEqual(extractScopeBoundaries("Excludes CRM integrations, e.g. Salesforce and HubSpot.").exclusions, [
+      "crm integrations (salesforce and hubspot)",
+    ]);
+  });
+
+  scenario("18. a bracket that never closes reads as if it were not there", () => {
+    assert.deepStrictEqual(extractScopeBoundaries("Out of scope: payment providers (other than Stripe, gift cards and loyalty points.").exclusions, [
+      "payment providers other than stripe",
+      "gift cards",
+      "loyalty points",
+    ]);
+    assert.deepStrictEqual(extractScopeBoundaries("Excluded: integrations (other than Stripe, SendGrid), gift cards.").exclusions, [
+      "integrations (other than stripe, sendgrid)",
+      "gift cards",
+    ]);
+  });
+
+  scenario("19. a typographic hyphen in a pasted item is saved as '-'", () => {
+    assert.deepStrictEqual(scope("**Explicit Exclusions**:\n- Multi\u2011currency pricing\n- Two\u2010factor authentication").excluded, [
+      "multi-currency pricing",
+      "two-factor authentication",
+    ]);
   });
 
   console.log(`\nSOW parser: ${passed} passed, ${failures.length} failed`);
