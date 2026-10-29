@@ -32,6 +32,7 @@ import {
   UpdateChangeOrderResponse,
   UpdateProjectBody,
   UpdateProjectResponse,
+  WithdrawPullRequestAcceptanceQueryParams,
 } from "@workspace/api-zod";
 import { composeChangeOrder, type ChangeOrderItem, type EvidenceBundle } from "@workspace/commercial-engine";
 import { currentWebhookService } from "./github.js";
@@ -41,8 +42,8 @@ import { checklistFromRecord, loadActiveBaseline, saveChecklist } from "../lib/s
 import { GitHubReauthRequired, userGitHubToken } from "../lib/github-token.js";
 import { installUrl, listInstallationRepositories, listUserInstallations } from "../github/user-api.js";
 import { GitHubApiError } from "../github/github-http.js";
-import { ACCEPTED, WITHDRAWN, acceptanceFor, acceptancesFor } from "../lib/acceptance.js";
-import { changeOrderPlan } from "../lib/change-orders.js";
+import { ACCEPTED, WITHDRAWN, acceptanceFor, acceptancesFor, itemKey } from "../lib/acceptance.js";
+import { changeOrderPlan, isDecided, itemsOf, letterHash, letterUntouched } from "../lib/change-orders.js";
 
 /**
  * The signed-in app: projects, their confirmed scope, the repository each
@@ -92,6 +93,11 @@ const noCounts = (): Counts => ({
 function badRequest(res: Response, error: { issues: Array<{ path: PropertyKey[]; message: string }> }): void {
   const [issue] = error.issues;
   res.status(400).json({ error: `Check ${issue?.path.join(".") || "the request"}: ${issue?.message ?? "invalid"}.` });
+}
+
+/** "A", "A and B", "A, B and C". */
+function names(list: string[]): string {
+  return list.length > 1 ? `${list.slice(0, -1).join(", ")} and ${list.at(-1)}` : (list[0] ?? "");
 }
 
 async function findProject(account: Account, projectId: string): Promise<ProjectRow | null> {
@@ -657,11 +663,24 @@ router.put("/projects/:projectId/change-order", async (req, res): Promise<void> 
   const contractId = project.contractId;
   const row = await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`change-orders:${contractId ?? pr.id}`}))`);
+    // This project's change orders only: another project that once checked
+    // the same pull request keeps its own.
     const orders = await tx.query.changeOrdersTable.findMany({
-      where: eq(changeOrdersTable.pullRequestId, pr.id),
+      where: and(eq(changeOrdersTable.pullRequestId, pr.id), eq(changeOrdersTable.projectId, project.id)),
       orderBy: [changeOrdersTable.createdAt],
     });
     const plan = changeOrderPlan(orders, resultItems);
+    // An open change order stands whichever result the page showed.
+    if (plan.current && !isDecided(plan.current.status)) return plan.current;
+    // Anything else follows from this result, so it has to be the pull
+    // request's latest: one from before a push would leave the new work off
+    // the change order and its letter.
+    const latest = await tx.query.commercialEvaluationsTable.findFirst({
+      where: eq(commercialEvaluationsTable.pullRequestId, pr.id),
+      orderBy: [desc(commercialEvaluationsTable.createdAt)],
+      columns: { id: true },
+    });
+    if (latest?.id !== evaluation.id) return "stale" as const;
     if (plan.current) return plan.current;
     if (plan.fresh.length === 0 || !contractId) return null;
     const [{ count }] = await tx
@@ -689,16 +708,23 @@ router.put("/projects/:projectId/change-order", async (req, res): Promise<void> 
         itemsJson: plan.fresh,
         messageSubject: message.subject,
         messageBody: message.body,
+        letterHash: letterHash(message.subject, message.body),
       })
       .returning();
     return created;
   });
+  if (row === "stale") {
+    res.status(409).json({
+      error: "This pull request was checked again since the page loaded. Reload to see its latest result, then try again.",
+    });
+    return;
+  }
   if (!row) {
     res.status(409).json({ error: "This pull request has no out-of-scope work to raise a change order for." });
     return;
   }
 
-  const decided = row.status === "APPROVED" || row.status === "REJECTED";
+  const decided = isDecided(row.status);
   if (decided && (input.status !== undefined || input.hours !== undefined)) {
     res.status(409).json({ error: `${row.reference} was already ${row.status === "APPROVED" ? "approved" : "declined"}.` });
     return;
@@ -711,12 +737,39 @@ router.put("/projects/:projectId/change-order", async (req, res): Promise<void> 
     res.status(409).json({ error: `${row.reference} was already sent; its letter is kept as sent.` });
     return;
   }
-  const items = (row.itemsJson as ChangeOrderItem[] | null) ?? [];
+  const items = itemsOf(row);
+
+  // Nothing is sent or approved that the PM hasn't seen: a push since the
+  // page loaded may have changed the items, and the letter may not name them.
+  if ((input.status === "SENT" || input.status === "APPROVED") && input.items !== undefined) {
+    const seen = new Set(input.items.map(itemKey));
+    const listed = new Set(items.map((i) => itemKey(i.item)));
+    if (seen.size !== listed.size || [...listed].some((key) => !seen.has(key))) {
+      const added = items.filter((i) => !seen.has(itemKey(i.item))).map((i) => i.item);
+      res.status(409).json({
+        error: added.length
+          ? `${row.reference} now also lists ${names(added)}. Review the letter, then try again.`
+          : `${row.reference} now lists ${names(items.map((i) => i.item)) || "nothing"}. Review the letter, then try again.`,
+      });
+      return;
+    }
+  }
+
   const hours = input.hours !== undefined ? input.hours || null : row.hours;
   let subject = row.messageSubject ?? "";
   let body = row.messageBody ?? "";
-  if (input.hours !== undefined && !sent && input.subject === undefined && input.body === undefined) {
+  let hash = row.letterHash;
+  // New hours redraw ScopeCI's own letter with the new price. A letter the
+  // PM edited is theirs: it is kept as they wrote it.
+  if (
+    input.hours !== undefined &&
+    !sent &&
+    input.subject === undefined &&
+    input.body === undefined &&
+    letterUntouched(row, () => compose(items, row.hours))
+  ) {
     ({ subject, body } = compose(items, hours));
+    hash = letterHash(subject, body);
   }
   if (input.subject !== undefined) subject = input.subject;
   if (input.body !== undefined) body = input.body;
@@ -735,6 +788,7 @@ router.put("/projects/:projectId/change-order", async (req, res): Promise<void> 
       estimatedValueMax: value,
       messageSubject: subject,
       messageBody: body,
+      letterHash: hash,
       status: nextStatus,
       ...(nextStatus === "SENT" && !row.sentAt ? { sentAt: now } : {}),
       ...(nextStatus === "APPROVED" ? { approvedAt: now } : {}),
@@ -786,22 +840,46 @@ router.put("/projects/:projectId/change-order", async (req, res): Promise<void> 
 
 /**
  * A project's pull request by number. A project that moved to another
- * repository keeps the old one's results, so numbers can repeat: the
+ * repository keeps the old one's results, so numbers can repeat. The result
+ * the page showed (`evaluationId`) names the exact one; without it, the
  * connected repository's pull request wins, then the most recent.
  */
-async function projectPullRequest(req: Request, res: Response, project: ProjectRow) {
+async function projectPullRequest(req: Request, res: Response, project: ProjectRow, evaluationId?: string) {
   const number = Number(req.params.number);
-  const rows = Number.isInteger(number) && number > 0
-    ? await db.query.pullRequestsTable.findMany({
-        where: and(eq(pullRequestsTable.projectId, project.id), eq(pullRequestsTable.number, number)),
-        orderBy: [desc(pullRequestsTable.updatedAt)],
-      })
-    : [];
-  const repo = project.repositoryFullName?.toLowerCase();
-  const pr = (repo && rows.find((r) => r.url.toLowerCase().includes(`/${repo}/pull/`))) || rows[0];
+  const valid = Number.isInteger(number) && number > 0;
+  let pr: typeof pullRequestsTable.$inferSelect | undefined;
+  if (evaluationId !== undefined) {
+    const evaluation = valid && UUID.test(evaluationId)
+      ? await db.query.commercialEvaluationsTable.findFirst({
+          where: eq(commercialEvaluationsTable.id, evaluationId),
+          columns: { pullRequestId: true },
+        })
+      : undefined;
+    pr = evaluation
+      ? await db.query.pullRequestsTable.findFirst({
+          where: and(
+            eq(pullRequestsTable.id, evaluation.pullRequestId),
+            eq(pullRequestsTable.projectId, project.id),
+            eq(pullRequestsTable.number, number),
+          ),
+        })
+      : undefined;
+  } else {
+    const rows = valid
+      ? await db.query.pullRequestsTable.findMany({
+          where: and(eq(pullRequestsTable.projectId, project.id), eq(pullRequestsTable.number, number)),
+          orderBy: [desc(pullRequestsTable.updatedAt)],
+        })
+      : [];
+    const repo = project.repositoryFullName?.toLowerCase();
+    pr = (repo && rows.find((r) => r.url.toLowerCase().includes(`/${repo}/pull/`))) || rows[0];
+  }
   if (!pr) res.status(404).json({ error: "No such pull request in this project." });
   return pr;
 }
+
+/** Where an acceptance applies: this project, in its workspace. */
+const scopeOf = (project: ProjectRow) => ({ organizationId: project.organizationId, projectId: project.id });
 
 /**
  * Checks a pull request again now, so GitHub and the results show the
@@ -829,13 +907,21 @@ router.put("/projects/:projectId/pull-requests/:number/acceptance", async (req, 
   }
   const project = await withProject(req, res);
   if (!project) return;
-  const pr = await projectPullRequest(req, res, project);
+  const { evaluationId } = parsed.data;
+  const pr = await projectPullRequest(req, res, project, evaluationId);
   if (!pr) return;
 
   const latest = await db.query.commercialEvaluationsTable.findFirst({
     where: eq(commercialEvaluationsTable.pullRequestId, pr.id),
     orderBy: [desc(commercialEvaluationsTable.createdAt)],
   });
+  // What the PM accepts is the result they saw, not one that came after.
+  if (evaluationId !== undefined && latest?.id !== evaluationId) {
+    res.status(409).json({
+      error: "The page is out of date: this pull request was checked again since it loaded. Reload to see its latest result, then try again.",
+    });
+    return;
+  }
   if (!latest || (latest.state !== "CHANGE_REQUIRED" && latest.state !== "REVIEW_REQUIRED")) {
     res.status(409).json({ error: "Its latest result isn't flagged, so there is nothing to accept." });
     return;
@@ -855,7 +941,7 @@ router.put("/projects/:projectId/pull-requests/:number/acceptance", async (req, 
       previousState: latest.state,
       newState: "OVERRIDDEN",
       reason: reason.slice(0, 500),
-      metadataJson: { reason: reason.slice(0, 500), items, headSha: latest.headSha },
+      metadataJson: { reason: reason.slice(0, 500), items, headSha: latest.headSha, projectId: project.id },
     })
     .returning();
   const checkUpdated = await recheckNow(req, pr.id);
@@ -865,11 +951,13 @@ router.put("/projects/:projectId/pull-requests/:number/acceptance", async (req, 
 });
 
 router.delete("/projects/:projectId/pull-requests/:number/acceptance", async (req, res): Promise<void> => {
+  const query = WithdrawPullRequestAcceptanceQueryParams.safeParse(req.query);
+  if (!query.success) return badRequest(res, query.error);
   const project = await withProject(req, res);
   if (!project) return;
-  const pr = await projectPullRequest(req, res, project);
+  const pr = await projectPullRequest(req, res, project, query.data.evaluationId);
   if (!pr) return;
-  if (!(await acceptanceFor(pr.id))) {
+  if (!(await acceptanceFor(pr.id, scopeOf(project)))) {
     res.status(404).json({ error: "This pull request isn't accepted." });
     return;
   }
@@ -881,7 +969,7 @@ router.delete("/projects/:projectId/pull-requests/:number/acceptance", async (re
     eventType: WITHDRAWN,
     actorType: "PM",
     actorId: account.login,
-    metadataJson: {},
+    metadataJson: { projectId: project.id },
   });
   const checkUpdated = await recheckNow(req, pr.id);
   res.json(WithdrawPullRequestAcceptanceResponse.parse({ checkUpdated }));
@@ -939,12 +1027,15 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
         ).map((b) => [b.id, b.version])
       : [],
   );
-  // Each pull request's change orders, oldest first.
+  // Each pull request's change orders in this project, oldest first.
   const tracked = prs.length
     ? await db.query.changeOrdersTable.findMany({
-        where: inArray(
-          changeOrdersTable.pullRequestId,
-          prs.map((p) => p.id),
+        where: and(
+          inArray(
+            changeOrdersTable.pullRequestId,
+            prs.map((p) => p.id),
+          ),
+          eq(changeOrdersTable.projectId, project.id),
         ),
         orderBy: [changeOrdersTable.createdAt],
       })
@@ -959,7 +1050,7 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
   const contract = tracked.length && project.contractId
     ? await db.query.contractsTable.findFirst({ where: eq(contractsTable.id, project.contractId) })
     : undefined;
-  const accepted = await acceptancesFor(prs.map((p) => p.id));
+  const accepted = await acceptancesFor(prs.map((p) => p.id), scopeOf(project));
   // The file list each latest result read, and no other.
   const diffIds = evaluations.flatMap((e) => (e.prDiffAnalysisId ? [e.prDiffAnalysisId] : []));
   const diffs = new Map(

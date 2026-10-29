@@ -36,7 +36,7 @@ import { VERDICT_LABELS, formatScopeCIComment, projectEstimate } from "./comment
 import { logger } from "../lib/logger.js";
 import { loadActiveBaseline, toDomainBaseline } from "../lib/scope-store.js";
 import { acceptanceFor, covers } from "../lib/acceptance.js";
-import { changeOrderPlan, itemsOf } from "../lib/change-orders.js";
+import { changeOrderPlan, itemsOf, letterHash, letterUntouched } from "../lib/change-orders.js";
 
 export interface GitHubWebhookHeaders {
   deliveryId: string;
@@ -610,6 +610,14 @@ export class WebhookService {
       // 2. Persist / Upsert Pull Request into Provenance Graph
       const externalPrId = `gh_pr_${prData.id}`;
       const prState = prData.merged ? "MERGED" : prData.state === "closed" ? "CLOSED" : "OPEN";
+      // GitHub stamps each pull request event with updated_at. An event older
+      // than the one stored (a failed delivery sent again, or two arriving
+      // out of order) would put back an old title, state and verdict, so it
+      // changes nothing. ScopeCI's own re-checks always go through: they read
+      // GitHub as it is now, or the row already stored.
+      const stamped = prData.updated_at ? new Date(prData.updated_at) : null;
+      const providerUpdatedAt = stamped && !Number.isNaN(stamped.getTime()) ? stamped : null;
+      const guardOrder = providerUpdatedAt !== null && action !== "rechecked";
 
       const [prRecord] = await db
         .insert(pullRequestsTable)
@@ -634,10 +642,17 @@ export class WebhookService {
           commitsCount: prData.commits || 1,
           openedAt: new Date(prData.created_at || Date.now()),
           mergedAt: prData.merged_at ? new Date(prData.merged_at) : null,
+          providerUpdatedAt,
           lastSeenAt: new Date(),
         })
         .onConflictDoUpdate({
-          target: [pullRequestsTable.externalProvider, pullRequestsTable.externalId],
+          // One row per pull request in each project, so a repository moved to
+          // another project (or workspace) starts afresh there and never takes
+          // the old project's results, change orders or acceptances with it.
+          target: project
+            ? [pullRequestsTable.externalProvider, pullRequestsTable.externalId, pullRequestsTable.projectId]
+            : [pullRequestsTable.externalProvider, pullRequestsTable.externalId],
+          targetWhere: project ? undefined : sql`project_id is null`,
           set: {
             title: prData.title || "",
             body: prData.body || "",
@@ -650,12 +665,23 @@ export class WebhookService {
             changedFiles: prData.changed_files || 0,
             commitsCount: prData.commits || 1,
             mergedAt: prData.merged_at ? new Date(prData.merged_at) : null,
-            projectId: project?.id ?? null,
+            providerUpdatedAt: sql`greatest(${pullRequestsTable.providerUpdatedAt}, excluded.provider_updated_at)`,
             lastSeenAt: new Date(),
             updatedAt: new Date(),
           },
+          setWhere: guardOrder
+            ? sql`${pullRequestsTable.providerUpdatedAt} is null or ${pullRequestsTable.providerUpdatedAt} <= ${providerUpdatedAt}`
+            : undefined,
         })
         .returning();
+
+      if (!prRecord) {
+        await db
+          .update(webhookDeliveriesTable)
+          .set({ status: "IGNORED", errorMessage: "Superseded by a newer pull request event" })
+          .where(eq(webhookDeliveriesTable.deliveryId, deliveryId));
+        return { deliveryId, status: "ignored", action, prNumber };
+      }
 
       // If PR is closed/merged and not a synchronize, record event and finish
       if (action === "closed") {
@@ -876,7 +902,10 @@ export class WebhookService {
       // accepted on later pushes, as long as nothing new is excluded.
       let evaluation = checked;
       let changeOrder = drafted;
-      const accepted = project ? await acceptanceFor(prRecord.id) : null;
+      // Only a decision made in this project counts.
+      const accepted = project
+        ? await acceptanceFor(prRecord.id, { organizationId: project.organizationId, projectId: project.id })
+        : null;
       if (
         accepted &&
         (checked.state === "CHANGE_REQUIRED" || checked.state === "REVIEW_REQUIRED") &&
@@ -941,10 +970,10 @@ export class WebhookService {
       // excluded work on a later push joins its items, except work a decided
       // change order already listed (approved or declined, it isn't raised
       // again). The letter is redrawn only if nobody edited it; an edited
-      // letter is the PM's to change.
+      // letter is the PM's to change. Only this project's change orders.
       if (project && changeOrder && changeOrder.items.length > 0) {
         const orders = await db.query.changeOrdersTable.findMany({
-          where: eq(changeOrdersTable.pullRequestId, prRecord.id),
+          where: and(eq(changeOrdersTable.pullRequestId, prRecord.id), eq(changeOrdersTable.projectId, project.id)),
           orderBy: [changeOrdersTable.createdAt],
         });
         const plan = changeOrderPlan(orders, changeOrder.items);
@@ -961,15 +990,18 @@ export class WebhookService {
               hours: draft.hours ?? undefined,
               hourlyRate: project.hourlyRate ?? undefined,
             });
-          const before = letterFor(oldItems);
-          const untouched = draft.messageSubject === before.subject && draft.messageBody === before.body;
+          // The stored hash says whether the letter is still ScopeCI's, so a
+          // renamed pull request or a new client name doesn't read as an edit.
+          const untouched = letterUntouched(draft, () => letterFor(oldItems));
           const after = untouched ? letterFor(plan.fresh) : null;
           await db
             .update(changeOrdersTable)
             .set({
               itemsJson: plan.fresh,
               title: plan.fresh.map((i) => i.item).join(", ").slice(0, 255),
-              ...(after ? { messageSubject: after.subject, messageBody: after.body } : {}),
+              ...(after
+                ? { messageSubject: after.subject, messageBody: after.body, letterHash: letterHash(after.subject, after.body) }
+                : {}),
               updatedAt: new Date(),
             })
             // Still a draft: a letter marked as sent meanwhile is kept as sent.
