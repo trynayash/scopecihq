@@ -636,7 +636,33 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
         capability.extractionMethod === "CONTRACT_PHRASE_MATCH" ? capability.evidenceText : capability.evidenceLocation;
       let deltaMsg: string;
       let reason: string;
-      if (match?.missingQualifier) {
+      if (match?.vocabulary) {
+        // "Add PayPal to checkout" against excluded "payment providers other than Stripe".
+        const { named, reason: why, qualifier, exception } = match.vocabulary;
+        const built = match.vocabulary.members.join(", ");
+        if (why === "described") {
+          deltaMsg = `Only mentioned in ${where}: ${built}, one of the ${named} that contract ${clause.clauseRef} excludes; no new code shows it`;
+          reason = `${built} is one of the ${named} excluded by ${clause.clauseRef}, but no new code shows it`;
+        } else if (why === "qualifier") {
+          deltaMsg = `Builds ${built} (${where}); contract ${clause.clauseRef} excludes ${named}, and nothing says whether this is the "${qualifier}" kind`;
+          reason = `${named} is excluded by ${clause.clauseRef}, and this builds ${built} without saying "${qualifier}"`;
+        } else if (why === "additive") {
+          deltaMsg = `Builds ${built} (${where}); contract ${clause.clauseRef} excludes ${qualifier} ${named}, and nothing says whether ${built} is one of those or the one the contract means`;
+          reason = `${qualifier} ${named} are excluded by ${clause.clauseRef}, and nothing says whether ${built} is one of them`;
+        } else if (why === "exception") {
+          deltaMsg = `Builds ${built} (${where}), one of the ${named} that contract ${clause.clauseRef} excludes apart from ${exception}; the pull request also works on ${exception}, and nothing says whether this is that allowed work`;
+          reason = `${built} is one of the ${named} excluded by ${clause.clauseRef} apart from ${exception}, and this also works on ${exception}`;
+        } else if (why === "listedAfter") {
+          deltaMsg = `Builds ${built} (${where}), one of the ${named} that contract ${clause.clauseRef} lists after its exception for ${exception ?? "other work"}; nothing says whether it is excluded or part of that exception`;
+          reason = `${named} is listed after the exception for ${exception ?? "other work"} in ${clause.clauseRef}, so ${built} may be excluded or allowed`;
+        } else if (why === "unnamed") {
+          deltaMsg = `Builds ${built} (${where}), which falls under "${named}" that contract ${clause.clauseRef} excludes; the contract doesn't name ${built} itself, so a person confirms before a change order goes out`;
+          reason = `${built} falls under "${named}", excluded by ${clause.clauseRef}, but the contract doesn't name ${built}`;
+        } else {
+          deltaMsg = `Builds ${built} (${where}), one of the ${named} that contract ${clause.clauseRef} excludes, but nothing next to it names ${named}`;
+          reason = `${built} is one of the ${named} excluded by ${clause.clauseRef}, but nothing next to it names ${named}`;
+        }
+      } else if (match?.missingQualifier) {
         // "Currency switcher" against excluded "multi-currency pricing".
         const { qualifier, plain } = match.missingQualifier;
         deltaMsg = `Builds ${plain} (${where}); contract ${clause.clauseRef} excludes ${capability.name}, and nothing says whether this is the "${qualifier}" kind`;

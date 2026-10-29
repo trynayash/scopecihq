@@ -584,12 +584,21 @@ function statesOwnExclusions(text: string): boolean {
 const OUT_HEADING =
   /^(?:\d+(?:\.\d+)*\.?\s*)?(?:(?:explicit\s+|scope\s+|project\s+)?exclusions?|excluded(?:\s+(?:items|services|work))?|(?:what['\u2019]?s\s+|items\s+)?not\s+included|not\s+in\s+scope|(?:items\s+)?out[\s-]+of[\s-]+scope(?:\s+(?:items|work|services))?|outside\s+(?:of\s+)?(?:the\s+)?scope)(?:\s*\([^)]*\))?\s*[:\-–]?$/i;
 const IN_HEADING = /^(?:\d+(?:\.\d+)*\.?\s*)?(?:(?:explicit\s+)?inclusions?|included|in\s+scope|deliverables)\s*:?$/i;
+/**
+ * "Assumptions and Exclusions", "Exclusions & Assumptions": a list that mixes
+ * the two. Only its lines that read as excluded work are exclusions (see
+ * readsAsAssumption).
+ */
+const MIXED_HEADING =
+  /^(?:\d+(?:\.\d+)*\.?\s*)?(?:(?:project\s+)?assumptions?\s*(?:,|and|&)\s*(?:scope\s+)?exclusions?|(?:scope\s+)?exclusions?\s*(?:,|and|&)\s*assumptions?)(?:\s*\([^)]*\))?\s*[:\-–]?$/i;
+const MIXED = "Assumptions and exclusions:";
 
 /** The header a scope heading stands for, once markdown ("##", "**", "§") is set aside. */
 function scopeHeading(line: string | undefined): string | undefined {
   const name = (line ?? "").replace(/[*_#§]/g, "").trim();
   if (OUT_HEADING.test(name)) return "Out of scope:";
   if (IN_HEADING.test(name)) return "Included:";
+  if (MIXED_HEADING.test(name)) return MIXED;
   return undefined;
 }
 
@@ -601,14 +610,17 @@ function withScopeHeading(title: string | undefined, body: string): string {
 
 /**
  * "Explicitly excludes X, Y and Z." / "Does not include X." / "Phase 1 will
- * not include X." / "This SOW doesn’t include X." on one line. The list
- * starts at its first non-space character, and a "." ends it only before a
- * space or the end ("WCAG 2.1" and "Next.js" don't). "Should not include" and
+ * not include X." / "This SOW doesn’t include X." / "We will not build X." /
+ * "The Agency will not deliver X." / "does not cover X" / "is not
+ * responsible for building X" on one line. What the Client will not provide
+ * is an assumption about the Client, not excluded work (see clientSubject).
+ * The list starts at its first non-space character, and a "." ends it only
+ * before a space or the end ("WCAG 2.1" and "Next.js" don't). "Should not include" and
  * "must not include" are requirements ("Error pages should not include stack
  * traces"), not scope, so they are neither excluded nor included.
  */
 const EXCLUSION_PROSE =
-  /(?:explicitly\s+excludes?|\b(?:(?:does|do|will|shall)\s+not|(?:does|do|wo|sha)n['\u2019]t)\s+include|\bexcludes?)\b(?:[ \t]*:)?[ \t]*([^.\n \t](?:[^.\n]|\.(?=\S))*)/gi;
+  /(?:explicitly\s+excludes?|\b(?:(?:does|do|will|shall)\s+not|(?:does|do|wo|sha)n['\u2019]t)\s+(?:include|build|deliver|develop|provide|implement|create|cover|supply|design|integrate(?:\s+with)?)|\bnot\s+(?:be\s+)?responsible\s+for\s+(?:the\s+)?(?:building|developing|delivering|implementing|providing|creating|designing|supplying|integrating(?:\s+with)?)|\bexcludes?)\b(?:[ \t]*:)?[ \t]*([^.\n \t](?:[^.\n]|\.(?=\S))*)/gi;
 /**
  * " are explicitly out of scope": the end of "X, Y and Z are explicitly out of
  * scope." Also "are outside the scope of", "fall outside the scope" and "will
@@ -618,7 +630,7 @@ const EXCLUSION_PROSE =
  * how the product behaves, not what the contract leaves out.
  */
 const EXCLUSION_PREDICATE =
-  /\s+(?:(?:is|are)\s+(?:explicitly\s+|expressly\s+|strictly\s+)?(?:out\s+of\s+scope|excluded|not\s+included|not\s+in\s+scope|outside\s+(?:of\s+)?(?:the\s+)?scope)|falls?\s+outside\s+(?:of\s+)?(?:the\s+)?scope|(?:will|shall)\s+(?:be\s+(?:out\s+of|outside\s+(?:of\s+)?(?:the\s+)?)scope|(?:not\s+be\s+included|be\s+excluded)(?=[.;]?$|\s+(?:in|from|under)\s+(?:this|the)\s+(?:sow|scope|engagement|project|agreement|contract|statement|proposal|quote|estimate|phase)\b)))/gi;
+  /\s+(?:(?:is|are)\s+(?:explicitly\s+|expressly\s+|strictly\s+)?(?:out\s+of\s+scope|excluded|not\s+included|not\s+in\s+scope|outside\s+(?:of\s+)?(?:the\s+)?scope)|falls?\s+outside\s+(?:of\s+)?(?:the\s+)?scope|(?:(?:is|are)\s+not|(?:will|shall)\s+not\s+be|(?:does|do)\s+not\s+form)\s+(?:a\s+)?part\s+of\s+(?:(?:this|the|our)\s+)?(?:engagement|scope|project|sow|agreement|contract|statement\s+of\s+work|proposal|quote|estimate|phase|deliverables?|work|build|release|mvp)\b|(?:will|shall)\s+(?:be\s+(?:out\s+of|outside\s+(?:of\s+)?(?:the\s+)?)scope|(?:not\s+be\s+(?:included|built|developed|delivered|implemented|created)|be\s+excluded)(?=[.;]?$|\s+(?:in|from|under|during|within|for|as\s+part\s+of)\s+(?:(?:this|the)\s+(?:sow|scope|engagement|project|agreement|contract|statement|proposal|quote|estimate|phase|release|mvp)|phase\s+\d)\b)))/gi;
 /**
  * "Includes X and Y." / "shall deliver X." / "is authorized to deliver X." on
  * one line. A negated "include" ("will not include", "doesn’t include") is
@@ -626,6 +638,103 @@ const EXCLUSION_PREDICATE =
  */
 const INCLUSION_PROSE =
   /(?:(?<!\bnot\s|n['\u2019]t\s|\bcannot\s|\bnot\sto\s)\bincludes?|(?:shall|will|(?:is|are)\s+authori[sz]ed\s+to)\s+(?:deliver|implement|build|provide)|\bfeatures?)\b[ \t]+([^.\n: \t](?:[^.\n:]|\.(?=\S))*)/gi;
+
+/**
+ * Whether the words before `at` in a sentence make the Client the subject:
+ * "The Client will not provide copy" says who supplies the copy, not that the
+ * copy is out of scope, and "The Client will provide hosting" includes no
+ * hosting work. Looks back at most 60 characters, to the last comma.
+ */
+function clientSubject(sentence: string, at: number): boolean {
+  const before = sentence.slice(Math.max(0, at - 60), at);
+  return /\b(?:client|customer|you)(?:s|['\u2019]s)?\b[^,;:]*$/i.test(before);
+}
+
+/** "Phase 1 will not build X" and the like: exclusion prose that is not about the Client. */
+function excludedByProse(sentence: string): string[] {
+  const items: string[] = [];
+  for (const match of sentence.matchAll(EXCLUSION_PROSE)) {
+    if (!/^(?:explicitly|exclude)/i.test(match[0]) && !/\binclude\b/i.test(match[0]) && clientSubject(sentence, match.index ?? 0)) continue;
+    items.push(...splitList(match[1]));
+  }
+  return items;
+}
+
+/** "No native mobile apps will be built." / "No gift cards are included." */
+const NO_PREDICATE =
+  /\s+(?:(?:will|shall)\s+be\s+(?:built|developed|delivered|implemented|created|included)|(?:is|are)\s+(?:included|in\s+scope))(?=[.;]?$|\s+(?:in|from|under|during|within|for|as\s+part\s+of)\s+(?:(?:this|the)\s+(?:sow|scope|engagement|project|agreement|contract|statement|proposal|quote|estimate|phase|release|mvp)|phase\s+\d)\b)/i;
+
+function excludedByNo(sentence: string): string[] {
+  if (!/^no\s/i.test(sentence)) return [];
+  const match = NO_PREDICATE.exec(sentence);
+  return match ? splitList(sentence.slice(3, match.index)) : [];
+}
+
+/** "Neither gift cards nor loyalty points are included." */
+const NOR_PREDICATE =
+  /\s+(?:(?:is|are)\s+(?:(?:explicitly|currently)\s+)?(?:included|in\s+scope|covered|provided|part\s+of)|(?:will|shall)\s+be\s+(?:built|developed|delivered|implemented|created|included|provided|covered)|forms?\s+part\s+of)\b/i;
+
+/** The items of "neither X nor Y": each side, as a list. */
+function neitherNorItems(text: string): string[] {
+  return text.split(/\s+nor\s+/i).flatMap(splitList);
+}
+
+function excludedByNeither(sentence: string): string[] {
+  const neither = /\bneither\s+/i.exec(sentence);
+  if (!neither) return [];
+  const from = neither.index + neither[0].length;
+  const rest = sentence.slice(from);
+  if (!/\snor\s/i.test(rest)) return [];
+  const predicate = NOR_PREDICATE.exec(rest);
+  return predicate ? neitherNorItems(rest.slice(0, predicate.index)) : [];
+}
+
+/**
+ * Under an "Assumptions and Exclusions" heading, a line that reads as a
+ * sentence (it has a verb, or names the Client) is an assumption: "Client
+ * will provide copy", "Hosting to be arranged by the Client". A line that
+ * only names work ("Gift cards", "Native mobile apps") is excluded.
+ */
+function readsAsAssumption(line: string): boolean {
+  const text = line.replace(BULLET, "").replace(/\*\*|__/g, "");
+  return /\b(?:client|customer|you|we|our|agency|supplier|contractor|will|shall|must|should|can|could|may|might|would|is|are|was|were|be|been|being|has|have|had|does|do|did|assumes?|assumed|expects?|expected|requires?|required|needs?|provides?|provided|supplies|supplied|agrees?|owns?|retains?|grants?|responsible|available|assumption)\b/i.test(
+    text,
+  );
+}
+
+/**
+ * The lines of a clause with scope headings read as list headers. Under an
+ * "Assumptions and Exclusions" heading, the bullets that name work become an
+ * "Out of scope" list and the assumptions plain lines, still read for
+ * sentences such as "Hosting is out of scope".
+ */
+function withScopeHeaders(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const heading = scopeHeading(lines[i]);
+    if (heading !== MIXED) {
+      out.push(heading ?? lines[i]);
+      continue;
+    }
+    const excluded: string[] = [];
+    const assumed: string[] = [];
+    let next = i + 1;
+    for (; next < lines.length; next++) {
+      const line = lines[next];
+      if (!line.trim()) {
+        if (excluded.length + assumed.length > 0) break;
+        continue;
+      }
+      if (!BULLET.test(line)) break;
+      if (readsAsAssumption(line)) assumed.push(line.replace(BULLET, ""));
+      else excluded.push(line);
+    }
+    out.push("Out of scope:", ...excluded, "", ...assumed);
+    i = next - 1;
+  }
+  return out.join("\n");
+}
 
 /**
  * What comes before each "is out of scope" in a sentence: the words since the
@@ -661,27 +770,33 @@ function excludedSubjects(sentence: string): string[] {
 export function extractScopeBoundaries(legalText: string): { inclusions: string[]; exclusions: string[] } {
   // A line that only names a list ("## Out of Scope", "**Not included**")
   // becomes that list's header, so the bullets under it are read.
-  const text = readAbbreviations(legalText)
-    .split("\n")
-    .map((line) => scopeHeading(line) ?? line)
-    .join("\n");
+  const text = withScopeHeaders(readAbbreviations(legalText));
 
   // Sentence patterns run one sentence at a time, with runs of spaces made
   // one and each sentence capped. No pattern needs to see past a sentence end.
   const sentences = text
     .split(/(?<=[.!?])\s+|\n/)
-    .map((sentence) => sentence.replace(/\s+/g, " ").slice(0, 1000));
-  const inSentences = (pattern: RegExp) => sentences.flatMap((sentence) => [...sentence.matchAll(pattern)]);
+    .map((sentence) => sentence.replace(/\s+/g, " ").trim().slice(0, 1000));
 
   const exclusions = [
     ...listsAfter(text, EXCLUSION_HEADER),
-    ...inSentences(EXCLUSION_PROSE).flatMap((m) => splitList(m[1])),
+    ...sentences.flatMap(excludedByProse),
     ...sentences.flatMap(excludedSubjects).flatMap(splitList),
+    ...sentences.flatMap(excludedByNo),
+    ...sentences.flatMap(excludedByNeither),
   ];
-  const inclusions = [
-    ...listsAfter(text, INCLUSION_HEADER),
-    ...inSentences(INCLUSION_PROSE).flatMap((m) => splitList(m[1])),
-  ];
+  const inclusions: string[] = [...listsAfter(text, INCLUSION_HEADER)];
+  for (const sentence of sentences) {
+    for (const match of sentence.matchAll(INCLUSION_PROSE)) {
+      // "The Client will provide hosting": who supplies it, not work included.
+      if (/^(?:shall|will|is|are)\b/i.test(match[0]) && clientSubject(sentence, match.index ?? 0)) continue;
+      for (const item of splitList(match[1])) {
+        // "Includes neither gift cards nor loyalty points."
+        if (/^neither\s/.test(item)) exclusions.push(...neitherNorItems(item.slice(8)));
+        else inclusions.push(item);
+      }
+    }
+  }
 
   // "Includes card payments via Stripe, excluding PayPal" or "email
   // notifications, but not SMS": what an included item leaves out is
