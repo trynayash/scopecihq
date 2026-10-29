@@ -220,6 +220,27 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
     res.status(503).json({ error: "ScopeCI can't reach its database right now. Try again in a minute." });
     return;
   }
+  // Express couldn't decode a path parameter: a mangled link such as /api/invites/abc%zz.
+  if (err instanceof URIError) {
+    (req.log ?? logger).warn({ err }, "Malformed request path");
+    res.status(400).json({ error: "That link isn't valid. Check it and try again." });
+    return;
+  }
+  // The client's own mistake, as Express and body-parser report it: an unsupported
+  // charset or encoding (415), an aborted or short body (400). Only errors marked
+  // `expose`, so a status some library put on its own error is never passed on.
+  const status = err?.status ?? err?.statusCode;
+  if (err?.expose === true && Number.isInteger(status) && status >= 400 && status < 500) {
+    (req.log ?? logger).warn({ err }, "Rejected request");
+    const message =
+      status === 415
+        ? "Send the request as JSON in UTF-8."
+        : status === 404
+          ? "Not found."
+          : "The request couldn't be read. Check it and try again.";
+    res.status(status).json({ error: message });
+    return;
+  }
   (req.log ?? logger).error({ err }, "Unhandled request error");
   res.status(500).json({ error: "Something went wrong on our side. Try again in a moment." });
 });

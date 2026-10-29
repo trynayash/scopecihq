@@ -23,7 +23,8 @@ import { MockGitHubClient } from "../github/github-client.js";
 import { MockIssueProvider } from "../github/issue-provider.js";
 import { timingSafeCompare, requireTenantAccess } from "../middlewares/auth.js";
 import { sanitizeMarkdown } from "../github/comment-formatter.js";
-import { rateLimiter } from "../middlewares/rate-limit.js";
+import { failureLimiter, rateLimiter } from "../middlewares/rate-limit.js";
+import { csvCell } from "../routes/admin.js";
 
 interface TestStats {
   scenariosRun: number;
@@ -342,17 +343,8 @@ async function main() {
        Scenario 9: CSV Formula Injection Sanitization
        ------------------------------------------------------------- */
     await runScenario("Data Export Security: CSV formula injection characters are escaped with single quotes", async () => {
-      const escape = (val: unknown): string => {
-        if (val === null || val === undefined) return "";
-        let str = String(val);
-        if (/^[=+\-@\t\r]/.test(str)) {
-          str = `'${str}`;
-        }
-        if (str.includes(",") || str.includes('"') || str.includes("\n")) {
-          return `"${str.replace(/"/g, '""')}"`;
-        }
-        return str;
-      };
+      // The export's own function, not a copy of it.
+      const escape = csvCell;
 
       // Formula injection attacks
       assert(escape("=cmd|' /C calc'!A0") === "'=cmd|' /C calc'!A0", "Equals sign formula must be prefixed with '");
@@ -363,6 +355,16 @@ async function main() {
       // Safe inputs
       assert(escape("standard_user@domain.com") === "standard_user@domain.com", "Normal email must not be altered");
       assert(escape("Acme, Inc.") === '"Acme, Inc."', "Comma must be enclosed in quotes");
+
+      // A bare carriage return ends a row in spreadsheets, so the text after it
+      // would start a cell of its own, past the formula check.
+      assert(escape("Acme\r=cmd|' /C calc'!A0") === `"Acme\r=cmd|' /C calc'!A0"`, "Bare CR must be enclosed in quotes");
+      assert(escape("\r=1+2") === `"'\r=1+2"`, "Leading CR is prefixed and quoted");
+      assert(escape("line\nbreak") === `"line\nbreak"`, "LF must be enclosed in quotes");
+      assert(
+        escape(new Date("2026-10-29T06:58:54.123Z")) === "2026-10-29 06:58:54",
+        "Dates are written in UTC in a form spreadsheets read as a date",
+      );
     });
 
     /* -------------------------------------------------------------
@@ -516,6 +518,23 @@ async function main() {
       assert(results[2] === 200, "Request 3 must be allowed (200)");
       assert(results[3] === 429, `Request 4 must be rate-limited (429), got ${results[3]}`);
       assert(results[4] === 429, `Request 5 must be rate-limited (429), got ${results[4]}`);
+    });
+
+    /* -------------------------------------------------------------
+       Scenario 15: Guessing a secret is capped on failures only
+       ------------------------------------------------------------- */
+    await runScenario("Brute Force Defense: failed secret attempts are capped per client; the right key is never slowed", async () => {
+      const guesses = failureLimiter({ windowMs: 60_000, max: 3 });
+      const attacker: any = { ip: "198.51.100.200", socket: {} };
+      const script: any = { ip: "198.51.100.201", socket: {} };
+
+      for (let i = 0; i < 50; i++) assert(!guesses.blocked(script), "Requests that don't fail never count");
+      for (let i = 0; i < 3; i++) {
+        assert(!guesses.blocked(attacker), `Guess ${i + 1} is allowed`);
+        guesses.record(attacker);
+      }
+      assert(guesses.blocked(attacker), "The fourth guess is refused");
+      assert(!guesses.blocked(script), "Another client is not affected");
     });
   } finally {
     // Clean up test tenants

@@ -1,14 +1,15 @@
 import crypto from "node:crypto";
-import { Router, type IRouter } from "express";
-import { eq } from "drizzle-orm";
+import { Router, type IRouter, type Request } from "express";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
-import { organizationMembersTable, organizationsTable, usersTable } from "@workspace/db/schema";
+import { organizationMembersTable, usersTable } from "@workspace/db/schema";
 import { GetSessionResponse } from "@workspace/api-zod";
 import { timingSafeCompare } from "../middlewares/auth.js";
 import { rateLimiter } from "../middlewares/rate-limit.js";
 import { encryptedTokenColumns } from "../lib/github-token.js";
 import {
   appOrigin,
+  createPersonalWorkspace,
   createSession,
   destroySession,
   listWorkspaces,
@@ -27,7 +28,6 @@ const router: IRouter = Router();
 
 const STATE_COOKIE = "scopeci_oauth";
 const STATE_TTL_SECONDS = 10 * 60;
-const signInLimiter = rateLimiter({ windowMs: 60_000, max: 20, message: "Too many sign-in attempts. Wait a minute." });
 
 async function signInAvailable(): Promise<boolean> {
   if (!(await oauthConfig())) return false;
@@ -42,7 +42,37 @@ function safeNext(value: unknown): string {
     : "/app";
 }
 
-router.get("/auth/github", signInLimiter, async (req, res): Promise<void> => {
+/** Back to the page they started from (an invite link, say), saying what went wrong. */
+function backWith(next: unknown, reason: string): string {
+  return `${safeNext(next).replace(/[?#].*$/, "")}?signin=${reason}`;
+}
+
+function savedState(req: Request): { state?: string; next?: string } {
+  try {
+    const saved = JSON.parse(Buffer.from(readCookie(req, STATE_COOKIE) ?? "", "base64url").toString("utf8"));
+    return {
+      state: typeof saved?.state === "string" ? saved.state : undefined,
+      next: typeof saved?.next === "string" ? saved.next : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+// Both are page loads, not fetches, so a limited one goes back to the app with
+// a notice rather than showing raw JSON. Separate budgets, so one sign-in uses
+// one from each and a burst of people (an office on one IP) gets twenty.
+const LIMIT = { windowMs: 60_000, max: 20 };
+const startLimiter = rateLimiter({
+  ...LIMIT,
+  onLimit: (req, res) => res.redirect(302, backWith(req.query.next, "busy")),
+});
+const callbackLimiter = rateLimiter({
+  ...LIMIT,
+  onLimit: (req, res) => res.redirect(302, backWith(savedState(req).next, "busy")),
+});
+
+router.get("/auth/github", startLimiter, async (req, res): Promise<void> => {
   const config = await oauthConfig();
   if (!config || !(await signInAvailable())) {
     res.redirect(302, "/app?signin=unavailable");
@@ -57,20 +87,13 @@ router.get("/auth/github", signInLimiter, async (req, res): Promise<void> => {
   res.redirect(302, authorizeUrl(config.clientId, state, `${appOrigin(req)}/api/auth/github/callback`));
 });
 
-router.get("/auth/github/callback", signInLimiter, async (req, res): Promise<void> => {
+router.get("/auth/github/callback", callbackLimiter, async (req, res): Promise<void> => {
   const clearState = serializeCookie(STATE_COOKIE, "", { maxAgeSeconds: 0, path: "/api/auth" });
-  let saved: { state?: string; next?: string } = {};
-  try {
-    saved = JSON.parse(Buffer.from(readCookie(req, STATE_COOKIE) ?? "", "base64url").toString("utf8"));
-  } catch {
-    saved = {};
-  }
+  const saved = savedState(req);
 
-  // Back to where they started (an invite link, say), saying what went wrong.
   const fail = (reason: string) => {
     res.setHeader("Set-Cookie", clearState);
-    const back = safeNext(saved.next).replace(/[?#].*$/, "");
-    res.redirect(302, `${back}?signin=${reason}`);
+    res.redirect(302, backWith(saved.next, reason));
   };
 
   if (req.query.error) return fail("cancelled");
@@ -97,21 +120,20 @@ router.get("/auth/github/callback", signInLimiter, async (req, res): Promise<voi
         .onConflictDoUpdate({ target: usersTable.githubUserId, set: profile })
         .returning({ id: usersTable.id });
 
+      // The same lock leaving and removal take, so two first sign-ins at once
+      // make one workspace, and a sign-in can't race someone removing them.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`memberships:${user.id}`}))`);
       const membership = await tx.query.organizationMembersTable.findFirst({
         where: eq(organizationMembersTable.userId, user.id),
       });
       if (!membership) {
-        // Everyone starts with their own workspace, named after them.
-        const slug = `gh-${gitHubUser.id}`;
-        await tx
-          .insert(organizationsTable)
-          .values({ name: (gitHubUser.name || gitHubUser.login).slice(0, 255), slug })
-          .onConflictDoNothing({ target: organizationsTable.slug });
-        const org = await tx.query.organizationsTable.findFirst({ where: eq(organizationsTable.slug, slug) });
-        await tx
-          .insert(organizationMembersTable)
-          .values({ organizationId: org!.id, userId: user.id, role: "OWNER" })
-          .onConflictDoNothing();
+        // Everyone starts with their own workspace, named after them. Never one
+        // that already exists: that would put someone an owner removed back in.
+        await createPersonalWorkspace(tx, {
+          userId: user.id,
+          githubUserId: String(gitHubUser.id),
+          name: gitHubUser.name || gitHubUser.login,
+        });
       }
       return user.id;
     });
