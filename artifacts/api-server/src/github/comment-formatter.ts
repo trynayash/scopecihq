@@ -2,6 +2,16 @@ import { type CommercialEvaluation, describeEstimate } from "@workspace/commerci
 
 export const COMMENT_MARKER = "<!-- scopeci-commercial-review -->";
 
+/**
+ * The estimate line for a project's pull request, or nothing. Without a
+ * linked issue there is nothing to estimate from: the PM prices the work on
+ * the change order, so "not estimated" would only be noise.
+ */
+export function projectEstimate(evaluation: CommercialEvaluation): string | undefined {
+  const line = describeEstimate(evaluation);
+  return line?.startsWith("not estimated (no linked issue") ? undefined : line;
+}
+
 export interface CommentFormatInput {
   projectName: string;
   issueIdentifier?: string;
@@ -55,7 +65,7 @@ const MERGE_NOTE: Record<CommercialEvaluation["checkConclusion"], string> = {
 export function formatScopeCIComment(input: CommentFormatInput): string {
   const { projectName, issueIdentifier, prNumber, headSha, evaluation, detailsUrl, scopeVersion, note } = input;
   const reason = evaluation.evidenceBundle?.decisionExplanation?.reason;
-  const estimate = describeEstimate(evaluation);
+  const estimate = projectEstimate(evaluation);
 
   const facts = [
     `| Project | ${sanitizeMarkdown(projectName)} |`,

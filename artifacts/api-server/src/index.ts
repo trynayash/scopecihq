@@ -51,5 +51,17 @@ function shutdown(signal: string) {
   });
 }
 
+// Background work (a re-check, a webhook) runs outside any request, so a
+// failure there must be logged, not lost. A rejection is logged and the
+// server carries on; an exception leaves the process in an unknown state,
+// so it is logged and the server restarts cleanly.
+process.on("unhandledRejection", (reason) => {
+  logger.error({ err: reason }, "Unhandled promise rejection");
+});
+process.on("uncaughtException", (err) => {
+  logger.fatal({ err }, "Uncaught exception; restarting");
+  shutdown("uncaughtException");
+});
+
 process.once("SIGTERM", () => shutdown("SIGTERM"));
 process.once("SIGINT", () => shutdown("SIGINT"));

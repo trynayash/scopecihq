@@ -47,6 +47,7 @@ import {
 import { BASE, ICON_MARK, Logo, TRY_PATH, ThemeToggle, usePageMeta } from '../site';
 import { useConfirm } from '../components/confirm-dialog';
 import { Loading } from '../components/loading';
+import { LoadError } from '../components/load-error';
 import { CopyButton } from '../components/copy-button';
 import { useIndicator } from '../motion';
 import { ChangeOrderBox, ScopeEditor, changeOrderText, errorMessage, itemCount, verdictOf } from '../scope-ui';
@@ -330,9 +331,12 @@ export default function AppPage() {
   if (session.isError || !session.data) {
     return (
       <Frame>
-        <p className="form-error" role="alert">
-          {errorMessage(session.error, "We couldn't load your account.")}
-        </p>
+        <LoadError
+          error={session.error}
+          fallback="We couldn't load your account."
+          onRetry={() => session.refetch()}
+          retrying={session.isFetching}
+        />
       </Frame>
     );
   }
@@ -440,9 +444,12 @@ function ProjectsHome() {
 
       {projects.isPending && <Loading>Loading projects…</Loading>}
       {projects.isError && (
-        <p className="form-error" role="alert">
-          {errorMessage(projects.error, "We couldn't load your projects.")}
-        </p>
+        <LoadError
+          error={projects.error}
+          fallback="We couldn't load your projects."
+          onRetry={() => projects.refetch()}
+          retrying={projects.isFetching}
+        />
       )}
       {projects.data && projects.data.projects.length === 0 && (
         <section className="panel app-onboarding">
@@ -568,13 +575,22 @@ function ProjectPage() {
 
   if (detail.isPending) return <Loading>Loading project…</Loading>;
   if (detail.isError || !detail.data) {
+    // Not found is an answer; anything else may pass, so it can be asked again.
+    if ((detail.error as { status?: number } | null)?.status === 404) {
+      return (
+        <p className="app-empty">
+          No such project in this workspace. It may have been archived, or it belongs to another workspace.{' '}
+          <Link href="/">Back to your projects</Link>
+        </p>
+      );
+    }
     return (
-      <p className="app-empty">
-        {(detail.error as { status?: number } | null)?.status === 404
-          ? 'No such project in your workspace.'
-          : errorMessage(detail.error, "We couldn't load this project.")}{' '}
-        <Link href="/">Back to your projects</Link>
-      </p>
+      <LoadError
+        error={detail.error}
+        fallback="We couldn't load this project."
+        onRetry={() => detail.refetch()}
+        retrying={detail.isFetching}
+      />
     );
   }
 
@@ -1102,9 +1118,19 @@ function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestRe
 
   const decided = tracked?.status === 'APPROVED' || tracked?.status === 'DECLINED';
   const sent = tracked?.status === 'SENT';
+  const approveRef = useRef<HTMLButtonElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // The button just pressed may go away (Mark as sent, Save draft); focus
+  // moves to what comes next rather than falling to the page.
+  const focusNext = (to: 'approve' | 'letter' | undefined) =>
+    requestAnimationFrame(() => {
+      if (to === 'approve') approveRef.current?.focus();
+      if (to === 'letter') bodyRef.current?.querySelector('textarea')?.focus();
+    });
   const save = (
     data: { hours?: number | null; status?: 'SENT' | 'APPROVED' | 'DECLINED'; subject?: string; body?: string },
     done: string,
+    then?: 'approve' | 'letter',
   ) =>
     update.mutate(
       { projectId: project.id, data: { evaluationId: pr.evaluationId, ...data } },
@@ -1112,6 +1138,7 @@ function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestRe
         onSuccess: () => {
           setError('');
           setStatus(done);
+          focusNext(then);
           queryClient.invalidateQueries({ queryKey: getListProjectPullRequestsQueryKey(project.id) });
           queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(project.id) });
           queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
@@ -1172,7 +1199,7 @@ function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestRe
         </Dialog.Close>
       </header>
 
-      <div className="drawer-body">
+      <div className="drawer-body" ref={bodyRef}>
         <ChangeOrderSteps pr={pr} />
         <WhyLine pr={pr} tone={verdictOf(pr.verdict).tone} />
         {!decided && pr.verdict !== 'CHANGE_REQUIRED' && (
@@ -1223,7 +1250,7 @@ function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestRe
             />
             {!sent && edited && (
               <div className="app-actions">
-                <button type="button" className="button button-quiet" disabled={update.isPending} onClick={() => save(splitMessage(text), 'Draft saved.')}>
+                <button type="button" className="button button-quiet" disabled={update.isPending} onClick={() => save(splitMessage(text), 'Draft saved.', 'letter')}>
                   Save draft
                 </button>
                 <button type="button" className="text-link" onClick={() => setText(original)}>
@@ -1250,12 +1277,12 @@ function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestRe
               type="button"
               className="button button-primary"
               disabled={update.isPending}
-              onClick={() => save({ status: 'SENT', ...splitMessage(text) }, 'Marked as sent. The letter is kept as sent.')}
+              onClick={() => save({ status: 'SENT', ...splitMessage(text) }, 'Marked as sent. The letter is kept as sent.', 'approve')}
             >
               Mark as sent
             </button>
           )}
-          <button type="button" className="button button-quiet" disabled={update.isPending} onClick={approve}>
+          <button type="button" className="button button-quiet" disabled={update.isPending} onClick={approve} ref={approveRef}>
             Client approved
           </button>
           <button type="button" className="button button-quiet button-danger" disabled={update.isPending} onClick={decline}>
@@ -1459,9 +1486,12 @@ function PullRequestsSection({ project }: { project: Project }) {
       </p>
       {results.isPending && <Loading>Loading the checked pull requests…</Loading>}
       {results.isError && (
-        <p className="form-error" role="alert">
-          {errorMessage(results.error, "We couldn't load the results.")}
-        </p>
+        <LoadError
+          error={results.error}
+          fallback="We couldn't load the results."
+          onRetry={() => results.refetch()}
+          retrying={results.isFetching}
+        />
       )}
       {results.data && results.data.pullRequests.length === 0 && (
         <p className="help">
@@ -1675,9 +1705,12 @@ function TeamPage() {
   if (workspace.isPending) return <Loading>Loading the team…</Loading>;
   if (workspace.isError || !workspace.data) {
     return (
-      <p className="form-error" role="alert">
-        {errorMessage(workspace.error, "We couldn't load the team.")}
-      </p>
+      <LoadError
+        error={workspace.error}
+        fallback="We couldn't load the team."
+        onRetry={() => workspace.refetch()}
+        retrying={workspace.isFetching}
+      />
     );
   }
   const team = workspace.data;
@@ -1876,6 +1909,19 @@ function InvitePage() {
     );
 
   if (invite.isPending) return <Loading>Checking the invite…</Loading>;
+  const inviteStatus = (invite.error as { status?: number } | null)?.status;
+  if (invite.isError && (inviteStatus === undefined || inviteStatus >= 500)) {
+    return (
+      <section className="app-signin panel">
+        <LoadError
+          error={invite.error}
+          fallback="We couldn't check the invite."
+          onRetry={() => invite.refetch()}
+          retrying={invite.isFetching}
+        />
+      </section>
+    );
+  }
   if (invite.isError || !invite.data) {
     return (
       <section className="app-signin panel">

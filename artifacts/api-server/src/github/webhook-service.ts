@@ -17,7 +17,6 @@ import {
   webhookDeliveriesTable,
 } from "@workspace/db/schema";
 import {
-  describeEstimate,
   composeChangeOrder,
   draftChangeOrder,
   evaluateCommercialScope,
@@ -31,7 +30,7 @@ import { type IGitHubClient } from "./github-client.js";
 import { type IssueProvider } from "./issue-provider.js";
 import { extractIssueReferences } from "./extractor.js";
 import { normalizePullRequestDiff } from "./diff-collector.js";
-import { VERDICT_LABELS, formatScopeCIComment } from "./comment-formatter.js";
+import { VERDICT_LABELS, formatScopeCIComment, projectEstimate } from "./comment-formatter.js";
 import { logger } from "../lib/logger.js";
 import { loadActiveBaseline, toDomainBaseline } from "../lib/scope-store.js";
 
@@ -469,6 +468,15 @@ export class WebhookService {
         return { deliveryId, status: "unmapped", action, prNumber };
       }
 
+      // Where results go, worked out as soon as the project is known, so a
+      // failure in any later step can still be reported on the pull request.
+      const owner = repoData.owner?.login || repositoryFullName.split("/")[0];
+      const repo = repoData.name || repositoryFullName.split("/")[1];
+      const detailsUrl = project && process.env.APP_BASE_URL
+        ? `${process.env.APP_BASE_URL.replace(/\/+$/, "")}/app/projects/${project.id}`
+        : undefined;
+      if (project && installationId && headSha && action !== "closed") failureCheck = { installationId, owner, repo, detailsUrl };
+
       // 2. Persist / Upsert Pull Request into Provenance Graph
       const externalPrId = `gh_pr_${prData.id}`;
       const prState = prData.merged ? "MERGED" : prData.state === "closed" ? "CLOSED" : "OPEN";
@@ -624,12 +632,6 @@ export class WebhookService {
       // 5. The scope to check against: the project's confirmed baseline, or
       // for older setups the organization's contract. Never another
       // organization's, and never a guess when there is none.
-      const owner = repoData.owner?.login || repositoryFullName.split("/")[0];
-      const repo = repoData.name || repositoryFullName.split("/")[1];
-      const detailsUrl = project && process.env.APP_BASE_URL
-        ? `${process.env.APP_BASE_URL.replace(/\/+$/, "")}/app/projects/${project.id}`
-        : undefined;
-      if (project && installationId && headSha) failureCheck = { installationId, owner, repo, detailsUrl };
 
       let baselineRecord: Awaited<ReturnType<typeof loadActiveBaseline>>;
       if (project) {
@@ -774,7 +776,7 @@ export class WebhookService {
           estimatedValueMax: evaluation.commercialValue.max,
           currency: evaluation.commercialValue.currency,
           reason: evaluation.detectedDelta.join("; ") || "Commercial evaluation completed",
-          estimateSummary: describeEstimate(evaluation) ?? null,
+          estimateSummary: projectEstimate(evaluation) ?? null,
           changeOrderDraftJson: changeOrder
             ? { subject: changeOrder.subject, body: changeOrder.body, items: changeOrder.items }
             : null,
@@ -820,7 +822,7 @@ export class WebhookService {
       // was created on, so a new push gets a new run and a redelivery for the
       // same commit updates the existing one.
       const checkTitle = `ScopeCI: ${VERDICT_LABELS[evaluation.state] ?? evaluation.state}`;
-      const estimateLine = describeEstimate(evaluation);
+      const estimateLine = projectEstimate(evaluation);
       const checkSummary = [
         evaluation.evidenceBundle?.decisionExplanation?.reason ?? evaluation.detectedDelta.join("; "),
         partialNote ?? "",

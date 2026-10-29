@@ -25,6 +25,23 @@
 .panel-head-row + .app-status:not(:empty) { margin: calc(var(--space-2) * -1) 0 var(--space-4); }
 
 /* A failed switch or sign-out, said next to the control in the header. */
+/* Something couldn't load: the reason, and a way to ask again. */
+.load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--error-line);
+  border-radius: var(--radius);
+  background: var(--error-wash);
+  color: var(--error);
+  font-size: var(--t-ui);
+}
+.load-error p { flex: 1 1 260px; }
+
 .app-header-error {
   max-width: 260px;
   color: var(--error);
