@@ -829,6 +829,171 @@ async function run() {
       assert.strictEqual(again.checked, 0, "nothing left to check");
     });
 
+    // GitHub failing part-way through a check, and a repository renamed on
+    // GitHub. Faults are injected on the way to the fake GitHub.
+    {
+      const { githubCheckRunsTable, pullRequestsTable, linearWebhookDeliveriesTable } = await import("@workspace/db/schema");
+      const { purgeExpiredDeliveries } = await import("../github/webhook-service.js");
+      let fault: ((method: string, path: string, body: any) => Response | undefined) | null = null;
+      setGitHubFetch(async (url, init) => {
+        const body = init.body ? JSON.parse(String(init.body)) : undefined;
+        return fault?.((init.method ?? "GET").toUpperCase(), url.replace(API, ""), body) ?? fakeGitHub(url, init);
+      });
+      const openBefore = [...(fake.open["harbor-agency/storefront"] ?? [])];
+      const runsOn = (sha: string) => fake.checkRuns.filter((r) => r.body.head_sha === sha);
+      const recordedOn = (sha: string) => db.select().from(githubCheckRunsTable).where(eq(githubCheckRunsTable.headSha, sha));
+      const projectPr = async (number: number) =>
+        (await db.query.pullRequestsTable.findFirst({
+          where: and(eq(pullRequestsTable.projectId, projectId), eq(pullRequestsTable.number, number)),
+        }))!;
+      const openOnGitHub = (number: number, sha: string) =>
+        fake.open["harbor-agency/storefront"].push({ ...prPayload(storefront, number, sha).pull_request });
+      const giftCards = (file: string) => [[{ filename: file, status: "added", additions: 20, deletions: 0 }]];
+
+      await scenario("A comment GitHub refuses after the verdict leaves the verdict showing, not a 'couldn't check' run", async () => {
+        fake.files["harbor-agency/storefront#20"] = giftCards("src/giftcards/card-list.tsx");
+        const sha = "a1".repeat(20);
+        fault = (_method, path) =>
+          path.startsWith("/repos/harbor-agency/storefront/issues/20/comments") ? json({ message: "Server Error" }, 502) : undefined;
+        try {
+          const result: any = await deliver(prPayload(storefront, 20, sha));
+          assert.strictEqual(result.status, "error", JSON.stringify(result));
+        } finally {
+          fault = null;
+        }
+        const runs = runsOn(sha);
+        assert.strictEqual(runs.length, 1, "no second run over the verdict");
+        assert.strictEqual(runs[0].body.output.title, "ScopeCI: Change order needed");
+        const [row] = await recordedOn(sha);
+        assert.ok(row?.latestEvaluationId, "the verdict's run is recorded with its result");
+      });
+
+      await scenario("A commit that couldn't be checked gets one recorded run, which the sweep turns into the verdict", async () => {
+        fake.files["harbor-agency/storefront#21"] = giftCards("src/giftcards/balance.ts");
+        const sha = "b2".repeat(20);
+        fault = (_method, path) => (path.startsWith("/repos/harbor-agency/storefront/pulls/21/files") ? json({ message: "Server Error" }, 500) : undefined);
+        try {
+          const result: any = await deliver(prPayload(storefront, 21, sha));
+          assert.strictEqual(result.status, "error", JSON.stringify(result));
+        } finally {
+          fault = null;
+        }
+        let runs = runsOn(sha);
+        assert.strictEqual(runs.length, 1);
+        assert.strictEqual(runs[0].body.output.title, "ScopeCI couldn't check this commit");
+        assert.strictEqual(runs[0].body.conclusion, "neutral");
+        let [row] = await recordedOn(sha);
+        assert.strictEqual(row?.githubCheckRunId, String(runs[0].id), "the 'couldn't check' run is recorded");
+        assert.strictEqual(row?.latestEvaluationId, null, "with no result behind it");
+
+        openOnGitHub(20, "a1".repeat(20));
+        openOnGitHub(21, sha);
+        const swept = await service.sweepMissedPullRequests();
+        assert.strictEqual(swept.checked, 1, "only the commit without a verdict; #20's verdict is on GitHub");
+        runs = runsOn(sha);
+        assert.strictEqual(runs.length, 1, "the same run now shows the verdict");
+        assert.strictEqual(runs[0].body.output.title, "ScopeCI: Change order needed");
+        [row] = await recordedOn(sha);
+        assert.ok(row?.latestEvaluationId);
+      });
+
+      await scenario("The sweep checks again a commit whose result was saved but whose check run never reached GitHub", async () => {
+        fake.files["harbor-agency/storefront#22"] = giftCards("src/giftcards/gift-wrap.ts");
+        const sha = "c2".repeat(20);
+        // Creating any check run on this commit fails, the "couldn't check" one too.
+        fault = (method, path, body) =>
+          method === "POST" && path === "/repos/harbor-agency/storefront/check-runs" && body?.head_sha === sha
+            ? json({ message: "Server Error" }, 502)
+            : undefined;
+        try {
+          const result: any = await deliver(prPayload(storefront, 22, sha));
+          assert.strictEqual(result.status, "error", JSON.stringify(result));
+        } finally {
+          fault = null;
+        }
+        const saved = await db.query.commercialEvaluationsTable.findFirst({ where: eq(commercialEvaluationsTable.headSha, sha) });
+        assert.strictEqual(saved?.state, "CHANGE_REQUIRED", "the result was saved");
+        assert.strictEqual(runsOn(sha).length, 0, "GitHub has nothing for the commit");
+
+        openOnGitHub(22, sha);
+        assert.strictEqual((await service.sweepMissedPullRequests()).checked, 1);
+        const runs = runsOn(sha);
+        assert.strictEqual(runs.length, 1);
+        assert.strictEqual(runs[0].body.output.title, "ScopeCI: Change order needed");
+        assert.strictEqual((await service.sweepMissedPullRequests()).checked, 0, "and only once");
+      });
+
+      await scenario("A check run this App can no longer edit is replaced by a new one, which later checks edit", async () => {
+        const sha = "a1".repeat(20);
+        const [before] = await recordedOn(sha);
+        fault = (method, path) =>
+          method === "PATCH" && path === `/repos/harbor-agency/storefront/check-runs/${before.githubCheckRunId}` ? json({ message: "Not Found" }, 404) : undefined;
+        const pr20 = await projectPr(20);
+        try {
+          const result = await service.reevaluatePullRequest(pr20.id);
+          assert.strictEqual(result.status, "processed", JSON.stringify(result));
+        } finally {
+          fault = null;
+        }
+        let runs = runsOn(sha);
+        assert.strictEqual(runs.length, 2);
+        assert.strictEqual(runs[1].body.output.title, "ScopeCI: Change order needed");
+        const [after] = await recordedOn(sha);
+        assert.strictEqual(after.githubCheckRunId, String(runs[1].id), "the new run is the one recorded");
+        await service.reevaluatePullRequest(pr20.id);
+        runs = runsOn(sha);
+        assert.strictEqual(runs.length, 2, "the next check edits the new run");
+      });
+
+      await scenario("After the repository is renamed on GitHub, re-checks still reach its pull requests, old and new", async () => {
+        const renamed = { id: 7001, full_name: "harbor-agency/shopfront" };
+        fake.files["harbor-agency/shopfront#23"] = [[{ filename: "src/cart/coupon.ts", status: "added", additions: 12, deletions: 0 }]];
+        fake.files["harbor-agency/shopfront#20"] = fake.files["harbor-agency/storefront#20"];
+        const opened: any = await deliver(prPayload(renamed, 23, "c3".repeat(20)));
+        assert.strictEqual(opened.status, "processed", JSON.stringify(opened));
+        let project = await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) });
+        assert.strictEqual(project?.repositoryFullName, "harbor-agency/shopfront", "the project follows the new name");
+        assert.strictEqual((await projectPr(12)).url, "https://github.com/harbor-agency/shopfront/pull/12", "older links follow it too");
+
+        const pr23 = await projectPr(23);
+        assert.strictEqual((await service.reevaluatePullRequest(pr23.id)).status, "processed", "a pull request opened after the rename");
+        assert.strictEqual((await service.reevaluatePullRequest((await projectPr(20)).id)).status, "processed", "and one checked before it");
+
+        // And back, so the scenarios after these find the repository as they left it.
+        fake.files["harbor-agency/storefront#23"] = fake.files["harbor-agency/shopfront#23"];
+        const back: any = await deliver(prPayload(storefront, 23, "c4".repeat(20), "synchronize"));
+        assert.strictEqual(back.status, "processed", JSON.stringify(back));
+        project = await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) });
+        assert.strictEqual(project?.repositoryFullName, "harbor-agency/storefront");
+        assert.strictEqual((await projectPr(12)).url, "https://github.com/harbor-agency/storefront/pull/12");
+        assert.strictEqual((await projectPr(23)).url, "https://github.com/harbor-agency/storefront/pull/23");
+      });
+
+      await scenario("Webhook deliveries past their 30 days are deleted, a batch at a time", async () => {
+        const past = new Date(Date.now() - 24 * 3600_000);
+        const future = new Date(Date.now() + 24 * 3600_000);
+        const tag = crypto.randomUUID();
+        await db.insert(webhookDeliveriesTable).values([
+          ...[1, 2, 3].map((i) => ({ deliveryId: `old_${i}_${tag}`, eventType: "pull_request", status: "PROCESSED", expiresAt: past })),
+          { deliveryId: `new_${tag}`, eventType: "pull_request", status: "PROCESSED", expiresAt: future },
+        ]);
+        await db.insert(linearWebhookDeliveriesTable).values([
+          { deliveryId: `old_${tag}`, eventType: "Issue", status: "PROCESSED", expiresAt: past },
+          { deliveryId: `new_${tag}`, eventType: "Issue", status: "PROCESSED", expiresAt: future },
+        ]);
+        const deleted = await purgeExpiredDeliveries(2);
+        assert.ok(deleted >= 4, `deleted ${deleted}`);
+        const github = await db.select({ id: webhookDeliveriesTable.deliveryId }).from(webhookDeliveriesTable);
+        const linear = await db.select({ id: linearWebhookDeliveriesTable.deliveryId }).from(linearWebhookDeliveriesTable);
+        assert.ok(!github.some((d) => d.id.startsWith("old_")) && github.some((d) => d.id === `new_${tag}`));
+        assert.ok(!linear.some((d) => d.id.startsWith("old_")) && linear.some((d) => d.id === `new_${tag}`));
+        assert.ok(github.length > 1, "the product's own deliveries, still within 30 days, are kept");
+      });
+
+      fake.open["harbor-agency/storefront"] = openBefore;
+      setGitHubFetch(fakeGitHub);
+    }
+
     await scenario("A PM accepts a pull request that needs a decision; it stays accepted on a push; withdrawing it brings the flag back", async () => {
       const sha = "2".repeat(40);
       const empty = await call(server, `/api/projects/${projectId}/pull-requests/18/acceptance`, {

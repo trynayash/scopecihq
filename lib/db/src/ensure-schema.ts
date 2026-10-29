@@ -20,6 +20,12 @@ export async function ensureSchema(pool: Pool): Promise<{ warnings: string[] }> 
     // One start at a time: two instances booting together wait for each other.
     await client.query("SELECT pg_advisory_lock(hashtext('scopeci_schema'))");
     try {
+      // The batch locks every table it touches. Behind a long transaction on
+      // the instance being replaced it gives up after 5 seconds, releasing
+      // what it holds, rather than stall that instance's traffic; the server
+      // tries the sync again.
+      await client.query("SET lock_timeout = '5s'");
+
       // A single batch runs as one transaction: all of it applies, or none.
       await client.query(SCHEMA_STATEMENTS.join("\n"));
 
@@ -66,6 +72,8 @@ export async function ensureSchema(pool: Pool): Promise<{ warnings: string[] }> 
         }
       }
     } finally {
+      // The connection goes back to the pool: queries there wait as long as they need.
+      await client.query("RESET lock_timeout").catch(() => undefined);
       await client.query("SELECT pg_advisory_unlock(hashtext('scopeci_schema'))");
     }
   } finally {
