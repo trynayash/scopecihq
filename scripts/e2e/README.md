@@ -39,6 +39,7 @@ E2E_DB_STOP="service postgresql stop" E2E_DB_START="service postgresql start" \
 node scripts/e2e/run.mjs
 ```
 
-Needs Playwright with Chromium (`npx playwright install chromium`). The run
+Needs Playwright with Chromium (`npx playwright install chromium`); CI installs
+it outside the workspace and points `NODE_PATH` at it. The run
 drops and recreates the `scopeci_e2e` database. Screenshots go to `$E2E_OUT`,
 or a temporary directory it prints.

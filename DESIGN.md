@@ -502,6 +502,8 @@ Shared rules for all components:
 - **Admin table:** the header row uses `--bg-sunken` and 13px `--fg-muted` 500. Rows are separated by `--line`. Emails use mono. Long referrers truncate with a `title`.
 - **Definition lists** (spec sheet, PR facts): term and value on one row, separated by a hairline. Terms in 600, values in `--fg-muted`.
 - **Member and repository lists:** hairline-separated rows with avatar or radio, name, mono metadata and a trailing action.
+  - **[Existing]** Owners see *Make owner* / *Make member* and *Remove* on other members; everyone sees *Leave workspace* on their own row. The last owner can't be demoted or leave, and nobody can leave their only workspace; the server refuses with a sentence that says why.
+- **[Existing] Archived projects:** under the project list, the *Archived projects* text link opens a hairline list of archived projects with their client and a *Restore* button. Restoring brings the project, its scope and its results back; archiving released the repository, so the status line says to connect it again.
 - **Rules:** numbers are tabular and right-aligned; no zebra stripes; hover uses `--bg-hover`.
 
 ### Pull request summary: the result row [Existing]
@@ -517,6 +519,8 @@ The row is built in this order, top to bottom:
 7. **Estimate**, only when one exists: "Estimated impact: 14 hours; $2,100 at $150 an hour".
 8. **Changed files:** see "Files and diffs" below.
 9. **Change order row:** a status chip ("CO-007 sent 3 h ago, waiting on the client") and the *Open change order* button, above a hairline.
+10. **[Existing] Earlier change order**, when new work arrived after one was decided: "CO-1 (approved) covers Gift cards. A later push added work it doesn't, so that needs its own change order." (muted), above the change order row.
+11. **[Existing] Acceptance**, when someone accepted the work without a change order: "Accepted by @dana-pm on Oct 29: Agreed on the call to include it" (14px, the reason in `--fg`), with a *Withdraw* text link. A flagged row without one carries an *Accept without a change order…* text link (*Accept as in scope…* for needs a decision) above its change order row.
 
 ### Files and diffs
 
@@ -554,7 +558,7 @@ ScopeCI reads **changed file names and per-file line counts, not code**, so it n
   - In scope
   - Covered by an approved change
   - Excluded work
-  - Overridden
+  - Accepted without a change order
 
 ### Status indicators [Existing]
 
@@ -578,6 +582,8 @@ ScopeCI reads **changed file names and per-file line counts, not code**, so it n
 | Empty | One sentence that says what will appear and what makes it appear ("Nothing checked yet. The next pull request opened or updated on northstar/portal shows up here.") | Always name the trigger. No illustrations of empty boxes. |
 | Loading | `Loading` (`src/components/loading.tsx`): "Loading the checked pull requests…", "Asking GitHub which repositories you can connect…" | Say what is loading. **[Existing]** For the first 300ms it holds an empty line (`role="status"`), so a fast load shows nothing and nothing jumps. No shimmering skeletons with invented shapes. |
 | Error | `form-error` box (`role="alert"`) with one actionable sentence ("We couldn't reach ScopeCI. Check your connection and try again.") | Say what failed and what to do. Never show a raw status code alone. An error that can pass offers the way out beside it: "Try again" and "Cancel", never a dead end. |
+| Failed load | **[Existing]** `LoadError` (`src/components/load-error.tsx`): the sentence from `errorMessage` and a *Try again* button that refetches. Used for the session, project list, project, results, team and invite. | Words come from `errorMessage` only: offline ("You're offline…"), session ended (back to sign-in, never an error page), server trouble ("ScopeCI is having trouble right now. Try again in a minute."), database away ("ScopeCI can't reach its database right now…"), GitHub not answering. A project that isn't there says so and links back to the list. |
+| Offline | **[Existing]** `OfflineNotice`: a solid bar pinned to the bottom, "You're offline. Nothing can be saved until you reconnect." It leaves when the browser is back online. | Saves attempted while offline fail with the offline sentence, never a spinner. |
 | Success | Inline status line (`.app-status`, `role="status"`): "Saved as v3. Open pull requests are being checked against it now." The waitlist success panel uses a square tick. | Confirm what changed and what happens next. No toast pop-ups. **[Existing]** The status line stays in the page, empty, so a screen reader hears it when its text changes; it takes no space while empty. |
 | Notice | `.notice` (info wash and line, `--fg` text); `.notice.is-warning` when the user must fix something first ("GitHub access expired") | Use `--info` for neutral system notices, `--warning` only when the user should act, and `--success` only for completion. |
 
@@ -586,6 +592,8 @@ ScopeCI reads **changed file names and per-file line counts, not code**, so it n
 - **Recording what a client decided asks first.** *Client approved* and *Client declined* open the confirm dialog, which names the change order and says the decision can't be changed afterwards. Approving updates the GitHub checks straight away.
 - **A sent letter is read-only.** Once marked as sent, the change order letter is what the client received: it can be copied, not edited; hours can still be recorded.
 - **Edits are never overwritten.** A draft the PM edited gets *Save draft* and *Discard edits*; a newer draft from the server replaces the letter only when it hasn't been edited.
+- **[Existing] Accepting work without a change order** opens a dialog that asks for the reason, which is required, kept in the project history and shown on the row and in the GitHub check ("Accepted without a change order by @dana-pm: …"). *Withdraw* asks first and puts the check back to what the scope says.
+- **[Existing] New work after a decision gets its own change order.** Once a change order is approved or declined, excluded work pushed later starts a new one (CO-2) listing only the new items; the decided one is never reopened.
 - **Leaving unsaved scope edits** (closing or reloading the tab) asks first. Text typed into an add field but not added is pointed out ("Press Enter to add it to the list.").
 
 ### Dialogs, menus and tooltips
@@ -596,7 +604,7 @@ ScopeCI reads **changed file names and per-file line counts, not code**, so it n
   - Behaviour: the overlay dims the page, focus stays inside the panel, Escape closes it, and focus returns to the button that opened it.
   - Use a side panel for work that relates to one row of a list.
 - **Confirmations**
-  - **[Existing]** `useConfirm()` from `src/components/confirm-dialog.tsx`: a centred Radix AlertDialog, 440px wide, on the panel's tokens. Used for archive project, remove member, forget the App and remove a signup; there is no `window.confirm` left.
+  - **[Existing]** `useConfirm()` from `src/components/confirm-dialog.tsx`: a centred Radix AlertDialog, 440px wide, on the panel's tokens. Used for archive project, remove member, make owner or member, leave workspace, withdraw an acceptance, forget the App and remove a signup; there is no `window.confirm` left.
   - Its title states the consequence ("Archive Northstar patient portal?"), its body says what stops, and the destructive button (`button-quiet button-danger`) is labelled with the action, never "OK".
   - Cancel, Escape and the overlay all cancel. Focus returns to the button that asked.
 - **Menus:** none exist; the workspace switcher is a native select. Keep native controls until a real need appears.
