@@ -85,8 +85,9 @@ export interface Account {
  * The signed-in person and the workspace they are working in, or null. The
  * session remembers a chosen workspace; if they are no longer a member of
  * it (or never chose one), it falls back to the one they joined most
- * recently. Everyone gets a personal workspace at first sign-in, so a PM
- * invited to their agency lands in the agency's, not their own empty one.
+ * recently. Everyone gets a personal workspace at first sign-in (and a new
+ * one if they are removed from their last), so a PM invited to their agency
+ * lands in the agency's, not their own empty one.
  */
 export async function loadAccount(req: Request): Promise<Account | null> {
   const token = readCookie(req, SESSION_COOKIE);
@@ -132,6 +133,34 @@ export async function loadAccount(req: Request): Promise<Account | null> {
     avatarUrl: session.avatarUrl,
     ...membership,
   };
+}
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Gives someone a new, empty workspace of their own, as its owner. The slug is
+ * gh-<their GitHub id> the first time. If that slug is taken, it belongs to a
+ * workspace they made earlier and then left or were removed from, so they get
+ * a fresh slug: nobody is ever put back into a workspace they were taken out of.
+ */
+export async function createPersonalWorkspace(
+  tx: Tx,
+  person: { userId: string; githubUserId: string; name: string },
+): Promise<string> {
+  const name = person.name.slice(0, 255);
+  const [created] = await tx
+    .insert(organizationsTable)
+    .values({ name, slug: `gh-${person.githubUserId}` })
+    .onConflictDoNothing({ target: organizationsTable.slug })
+    .returning({ id: organizationsTable.id });
+  const [org] = created
+    ? [created]
+    : await tx
+        .insert(organizationsTable)
+        .values({ name, slug: `gh-${person.githubUserId}-${crypto.randomBytes(4).toString("hex")}` })
+        .returning({ id: organizationsTable.id });
+  await tx.insert(organizationMembersTable).values({ organizationId: org.id, userId: person.userId, role: "OWNER" });
+  return org.id;
 }
 
 /** Every workspace the person belongs to, oldest membership first. */

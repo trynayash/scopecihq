@@ -3,6 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import { db } from "@workspace/db";
 import { organizationsTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
+import { failureLimiter } from "./rate-limit.js";
 
 /**
  * Constant-time comparison to prevent timing attacks.
@@ -17,6 +18,22 @@ export function timingSafeCompare(a: string, b: string): boolean {
     return false;
   }
   return crypto.timingSafeEqual(bufA, bufB);
+}
+
+/**
+ * Wrong guesses at ADMIN_SECRET or SCOPECI_API_KEY, counted together for every
+ * route that takes one, so no route is an unlimited way to guess them: 10 per
+ * IP per 15 minutes. The right key is never slowed down.
+ */
+export const secretGuesses = failureLimiter({ windowMs: 15 * 60 * 1000, max: 10 });
+
+export function refuseGuessing(res: Response): void {
+  res.setHeader("Retry-After", String(secretGuesses.retryAfterSeconds));
+  res.status(429).json({
+    error: "Too Many Requests",
+    message: "Too many wrong keys from this address. Wait 15 minutes and try again.",
+    retryAfterSeconds: secretGuesses.retryAfterSeconds,
+  });
 }
 
 export interface AuthenticatedRequest extends Request {
@@ -50,7 +67,13 @@ export function requireApiKeyOrSession(options: { allowAnonymousInDev?: boolean 
 
     // In production, token is strictly required
     if (process.env.NODE_ENV === "production" || configuredSecret) {
+      const guessing = Boolean(providedToken && configuredSecret);
+      if (guessing && secretGuesses.blocked(req)) {
+        refuseGuessing(res);
+        return;
+      }
       if (!providedToken || !configuredSecret || !timingSafeCompare(providedToken, configuredSecret)) {
+        if (guessing) secretGuesses.record(req);
         res.status(401).json({
           error: "Unauthorized",
           message: "A valid ScopeCI API key or Bearer token is required.",

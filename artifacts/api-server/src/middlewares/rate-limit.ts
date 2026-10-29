@@ -5,6 +5,11 @@ interface RateLimitOptions {
   max: number;
   message?: string;
   keyGenerator?: (req: Request) => string;
+  /**
+   * Answers a limited request instead of the JSON 429. For routes the browser
+   * navigates to (sign-in), where raw JSON would be the whole page.
+   */
+  onLimit?: (req: Request, res: Response) => void;
 }
 
 interface RequestRecord {
@@ -21,6 +26,7 @@ export function rateLimiter(options: RateLimitOptions) {
     windowMs,
     max,
     message = "Too many requests, please try again later.",
+    onLimit,
     // `req.ip` honours the app's "trust proxy" setting. Reading the first
     // X-Forwarded-For entry directly would trust a value the client wrote.
     keyGenerator = (req) => req.ip || req.socket.remoteAddress || "unknown",
@@ -64,6 +70,11 @@ export function rateLimiter(options: RateLimitOptions) {
     res.setHeader("X-RateLimit-Reset", Math.ceil((now + windowMs) / 1000).toString());
 
     if (count >= max) {
+      if (onLimit) {
+        res.setHeader("Retry-After", String(Math.ceil(windowMs / 1000)));
+        onLimit(req, res);
+        return;
+      }
       res.status(429).json({
         error: "Too Many Requests",
         message,
@@ -74,5 +85,40 @@ export function rateLimiter(options: RateLimitOptions) {
 
     record.timestamps.push(now);
     next();
+  };
+}
+
+/**
+ * Counts only failed attempts, per client, for a secret that scripts also
+ * send: once `max` have failed within the window, `blocked` is true until the
+ * oldest falls out of it. A plain limiter would also slow the right key down.
+ */
+export function failureLimiter(options: { windowMs: number; max: number }) {
+  const { windowMs, max } = options;
+  const failures = new Map<string, number[]>();
+  const keyOf = (req: Request) => req.ip || req.socket.remoteAddress || "unknown";
+
+  const live = (key: string, now: number) => (failures.get(key) ?? []).filter((ts) => now - ts < windowMs);
+
+  const cleanupInterval = setInterval(() => {
+    const now = Date.now();
+    for (const key of failures.keys()) {
+      const kept = live(key, now);
+      if (kept.length === 0) failures.delete(key);
+      else failures.set(key, kept);
+    }
+  }, Math.max(windowMs, 30_000));
+  if (cleanupInterval.unref) cleanupInterval.unref();
+
+  return {
+    retryAfterSeconds: Math.ceil(windowMs / 1000),
+    blocked(req: Request): boolean {
+      return live(keyOf(req), Date.now()).length >= max;
+    },
+    record(req: Request): void {
+      const key = keyOf(req);
+      const now = Date.now();
+      failures.set(key, [...live(key, now), now]);
+    },
   };
 }

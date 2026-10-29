@@ -1080,6 +1080,313 @@ async function run() {
       assert.strictEqual(only.status, 409, "their own, only workspace stays");
     });
 
+    /* Accounts: removal, sign-in, stale pages, limits and failures (audit fixes). */
+
+    // Two more people, signing in from their own address so the shared sign-in
+    // limit the earlier scenarios use is left alone.
+    fake.users["frank-token"] = { id: 7003, login: "frank", name: "Frank Founder", email: null, avatar_url: null };
+    fake.codes["frank-code"] = "frank-token";
+    fake.users["gus-token"] = { id: 7004, login: "gus", name: null, email: null, avatar_url: null };
+    fake.codes["gus-code"] = "gus-token";
+    const accountsIp = { "x-forwarded-for": "203.0.113.90" };
+    // Every call here comes from that address too, so these scenarios don't use
+    // up the invite and project limits the scenarios around them rely on.
+    const at = (path: string, options: Parameters<typeof call>[2] = {}) =>
+      call(server, path, { ...options, headers: { ...accountsIp, ...options.headers } });
+    const signInAs = async (code: string) => {
+      const start = await at("/api/auth/github?next=/app");
+      const state = new URL(String(start.headers.location)).searchParams.get("state");
+      const done = await at(`/api/auth/github/callback?code=${code}&state=${state}`, {
+        cookie: cookieFrom(start, "scopeci_oauth"),
+      });
+      const session = cookieFrom(done, "scopeci_session");
+      assert.ok(session, `${code} signs in (went to ${done.headers.location})`);
+      return session!;
+    };
+    let frank = "";
+    let gus = "";
+    let studio = "";
+    let gusHome = "";
+    let frankId = "";
+    let gusId = "";
+
+    await scenario("Someone removed from their only workspace gets a new one, and signing in again never puts them back", async () => {
+      frank = await signInAs("frank-code");
+      const home = (await at("/api/session", { cookie: frank })).body.organization;
+      assert.deepStrictEqual([home.name, home.role], ["Frank Founder", "OWNER"]);
+      studio = home.id;
+      await at("/api/workspace", { method: "PATCH", body: { name: "Frank Studio" }, cookie: frank });
+      const clientProject = await at("/api/projects", { body: { name: "Frank's client" }, cookie: frank });
+      assert.strictEqual(clientProject.status, 201);
+
+      gus = await signInAs("gus-code");
+      gusHome = (await at("/api/session", { cookie: gus })).body.organization.id;
+      const invite = await at("/api/workspace/invites", { method: "POST", cookie: frank });
+      assert.strictEqual((await at(`/api/invites/${invite.body.url.split("/").pop()}/accept`, { method: "POST", cookie: gus })).status, 200);
+      const team = (await at("/api/workspace", { cookie: frank })).body.members;
+      frankId = team.find((m: any) => m.login === "frank").userId;
+      gusId = team.find((m: any) => m.login === "gus").userId;
+      const member = (id: string, role: string, cookie: string) =>
+        at(`/api/workspace/members/${id}`, { method: "PATCH", body: { role }, cookie });
+      assert.strictEqual((await member(gusId, "OWNER", frank)).status, 200);
+      // The creator is made a member, then removed by the owner who is left.
+      assert.strictEqual((await member(frankId, "MEMBER", gus)).status, 200);
+      assert.strictEqual((await at(`/api/workspace/members/${frankId}`, { method: "DELETE", cookie: gus })).status, 204);
+
+      const after = (await at("/api/session", { cookie: frank })).body;
+      assert.ok(after.user, "still signed in, not shown as signed out");
+      assert.notStrictEqual(after.organization.id, studio);
+      assert.deepStrictEqual([after.organization.name, after.organization.role], ["Frank Founder", "OWNER"]);
+      assert.deepStrictEqual(after.workspaces.map((w: any) => w.id), [after.organization.id]);
+      const projects = (await at("/api/projects", { cookie: frank })).body.projects;
+      assert.ok(!projects.some((p: any) => p.id === clientProject.body.id), "the studio's projects are out of reach");
+
+      const again = (await at("/api/session", { cookie: await signInAs("frank-code") })).body;
+      assert.strictEqual(again.organization.id, after.organization.id);
+      assert.ok(!again.workspaces.some((w: any) => w.id === studio), "signing in again doesn't rejoin the studio");
+
+      // Someone an earlier removal left with no workspace at all gets a new one,
+      // never the workspace that still has their gh-<id> slug.
+      await db.delete(organizationMembersTable).where(eq(organizationMembersTable.userId, frankId));
+      frank = await signInAs("frank-code");
+      const fresh = (await at("/api/session", { cookie: frank })).body;
+      assert.strictEqual(fresh.organization.role, "OWNER");
+      assert.ok(![studio, after.organization.id].includes(fresh.organization.id), "a new workspace");
+      assert.strictEqual(fresh.workspaces.length, 1);
+      const studioTeam = (await at("/api/workspace", { cookie: gus })).body.members;
+      assert.deepStrictEqual(studioTeam.map((m: any) => `${m.login}:${m.role}`), ["gus:OWNER"]);
+    });
+
+    await scenario("Removing an owner, or making them a member, cancels the invite links they made", async () => {
+      const rejoin = await at("/api/workspace/invites", { method: "POST", cookie: gus });
+      assert.strictEqual((await at(`/api/invites/${rejoin.body.url.split("/").pop()}/accept`, { method: "POST", cookie: frank })).status, 200);
+      const role = (r: string) => at(`/api/workspace/members/${frankId}`, { method: "PATCH", body: { role: r }, cookie: gus });
+      const tokenOf = (reply: Reply) => reply.body.url.split("/").pop();
+      assert.strictEqual((await role("OWNER")).status, 200);
+
+      const kept = tokenOf(await at("/api/workspace/invites", { method: "POST", cookie: frank }));
+      const gusLink = await at("/api/workspace/invites", { method: "POST", cookie: gus });
+      assert.strictEqual((await role("MEMBER")).status, 200);
+      assert.strictEqual((await at(`/api/invites/${kept}`, { cookie: frank })).status, 404, "stepping down cancels their links");
+      assert.strictEqual((await at(`/api/invites/${tokenOf(gusLink)}`, { cookie: frank })).status, 200, "other owners' links stay");
+
+      assert.strictEqual((await role("OWNER")).status, 200);
+      assert.strictEqual((await at(`/api/invites/${kept}`, { cookie: frank })).status, 404, "promoting again doesn't revive them");
+      const saved = tokenOf(await at("/api/workspace/invites", { method: "POST", cookie: frank }));
+      assert.strictEqual((await at(`/api/workspace/members/${frankId}`, { method: "DELETE", cookie: gus })).status, 204);
+      assert.strictEqual((await at(`/api/invites/${saved}/accept`, { method: "POST", cookie: frank })).status, 404);
+      const open = (await at("/api/workspace", { cookie: gus })).body.invites;
+      assert.deepStrictEqual(open.map((i: any) => i.id), [gusLink.body.id], "only the remaining owner's link is open");
+      assert.ok(!(await at("/api/session", { cookie: frank })).body.workspaces.some((w: any) => w.id === studio));
+    });
+
+    await scenario("Team changes from a page showing another workspace are refused", async () => {
+      const shows = (id: string) => ({ "x-scopeci-workspace": id });
+      const stale = await at("/api/workspace", { method: "PATCH", body: { name: "Wrong team" }, cookie: gus, headers: shows(gusHome) });
+      assert.strictEqual(stale.status, 409);
+      assert.strictEqual(stale.body.error, "You switched workspace in another window. Reload this page to continue.");
+      for (const [path, method] of [
+        ["/api/workspace/invites", "POST"],
+        [`/api/workspace/members/${gusId}`, "DELETE"],
+        [`/api/workspace/members/${gusId}`, "PATCH"],
+      ]) {
+        const reply = await at(path, { method, body: method === "PATCH" ? { role: "MEMBER" } : undefined, cookie: gus, headers: shows(gusHome) });
+        assert.strictEqual(reply.status, 409, `${method} ${path}`);
+      }
+      const team = await at("/api/workspace", { cookie: gus, headers: shows(gusHome) });
+      assert.strictEqual(team.body.name, "Frank Studio", "reading is never refused, and nothing changed");
+      assert.deepStrictEqual(team.body.members.map((m: any) => `${m.login}:${m.role}`), ["gus:OWNER"]);
+
+      const matching = await at("/api/workspace", { method: "PATCH", body: { name: "Studio" }, cookie: gus, headers: shows(studio.toUpperCase()) });
+      assert.strictEqual(matching.status, 200);
+      const noHeader = await at("/api/workspace", { method: "PATCH", body: { name: "Frank Studio" }, cookie: gus });
+      assert.strictEqual(noHeader.status, 200, "callers that don't send it work as before");
+    });
+
+    await scenario("Too many sign-ins from one network go back to the app with a notice, not raw JSON", async () => {
+      const startIp = { "x-forwarded-for": "203.0.113.91" };
+      let start: Reply | undefined;
+      for (let i = 0; i < 21; i++) start = await call(server, "/api/auth/github?next=/app/invite/abc123", { headers: startIp });
+      assert.strictEqual(start!.status, 302);
+      assert.strictEqual(start!.headers.location, "/app/invite/abc123?signin=busy");
+      assert.ok(start!.headers["retry-after"]);
+
+      const fromInvite = await call(server, "/api/auth/github?next=/app/invite/xyz789", { headers: { "x-forwarded-for": "203.0.113.93" } });
+      const callbackIp = { "x-forwarded-for": "203.0.113.92" };
+      for (let i = 0; i < 20; i++) {
+        const used = await call(server, "/api/auth/github/callback?code=x&state=y", { headers: callbackIp });
+        assert.strictEqual(used.headers.location, "/app?signin=expired");
+      }
+      const limited = await call(server, "/api/auth/github/callback?code=x&state=y", {
+        cookie: cookieFrom(fromInvite, "scopeci_oauth"),
+        headers: callbackIp,
+      });
+      assert.strictEqual(limited.status, 302);
+      assert.strictEqual(limited.headers.location, "/app/invite/xyz789?signin=busy", "back to the invite they started from");
+    });
+
+    await scenario("A GitHub outage while refreshing says try again; a token that no longer decrypts asks for a sign-in", async () => {
+      const githubIp = { "x-forwarded-for": "203.0.113.94" };
+      const repos = () => call(server, "/api/github/repositories", { cookie: dana, headers: githubIp });
+      const danaRow = eq(usersTable.githubUserId, "5001");
+      const [saved] = await db
+        .select({
+          githubTokenJson: usersTable.githubTokenJson,
+          githubRefreshTokenJson: usersTable.githubRefreshTokenJson,
+          githubTokenExpiresAt: usersTable.githubTokenExpiresAt,
+        })
+        .from(usersTable)
+        .where(danaRow);
+      const expire = () => db.update(usersTable).set({ githubTokenExpiresAt: new Date(Date.now() - 1000) }).where(danaRow);
+      let refreshes = 0;
+      const tokenEndpoint = (answer: () => Promise<Response>) =>
+        setGitHubFetch(async (url, init) => {
+          if (url !== `${WEB}/login/oauth/access_token`) return fakeGitHub(url, init);
+          refreshes++;
+          return answer();
+        });
+      try {
+        await expire();
+        tokenEndpoint(async () => json({ message: "Server Error" }, 502));
+        const down = await repos();
+        assert.strictEqual(down.status, 502, JSON.stringify(down.body));
+        assert.match(down.body.error, /Try again/);
+
+        tokenEndpoint(async () => {
+          throw new TypeError("fetch failed");
+        });
+        assert.strictEqual((await repos()).status, 502, "GitHub unreachable");
+        tokenEndpoint(async () => json({ message: "Slow down" }, 429, { "retry-after": "1" }));
+        assert.strictEqual((await repos()).status, 503, "GitHub limiting requests");
+
+        // Two requests that both find the token expired share one refresh:
+        // GitHub's refresh tokens work once.
+        refreshes = 0;
+        tokenEndpoint(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          return json({ access_token: "user-token-2", refresh_token: "refresh-1", expires_in: 28800 });
+        });
+        const [first, second] = await Promise.all([repos(), repos()]);
+        assert.deepStrictEqual([first.status, second.status], [200, 200]);
+        assert.strictEqual(refreshes, 1);
+
+        // Encrypted under a key the server no longer has.
+        const unreadable = { ...(saved.githubTokenJson as object), authTag: "0".repeat(32) };
+        await db
+          .update(usersTable)
+          .set({ githubTokenJson: unreadable, githubTokenExpiresAt: new Date(Date.now() + 3600_000) })
+          .where(danaRow);
+        const garbled = await repos();
+        assert.strictEqual(garbled.status, 401);
+        assert.match(garbled.body.error, /Sign in again/);
+      } finally {
+        setGitHubFetch(fakeGitHub);
+        await db.update(usersTable).set(saved).where(danaRow);
+      }
+    });
+
+    await scenario("A mangled link or an unreadable body is answered as the client's mistake", async () => {
+      const mangled = await at("/api/invites/abc%zz", { cookie: dana });
+      assert.strictEqual(mangled.status, 400);
+      assert.strictEqual(mangled.body.error, "That link isn't valid. Check it and try again.");
+      const address = server.address() as { port: number };
+      const latin1 = await fetch(`http://127.0.0.1:${address.port}/api/waitlist`, {
+        method: "POST",
+        headers: { "content-type": "application/json; charset=latin1", "x-forwarded-for": "203.0.113.95" },
+        body: JSON.stringify({ email: "charset-check@studio.test" }),
+      });
+      assert.strictEqual(latin1.status, 415);
+      assert.strictEqual(((await latin1.json()) as { error: string }).error, "Send the request as JSON in UTF-8.");
+    });
+
+    await scenario("Wrong admin keys are limited on every route, not just the sign-in form", async () => {
+      process.env.ADMIN_SECRET = "product-admin-secret";
+      const guesser = { "x-forwarded-for": "203.0.113.96" };
+      try {
+        for (let i = 0; i < 10; i++) {
+          const wrong = await call(server, "/api/admin/session", { headers: { ...guesser, "x-admin-key": `guess-${i}` } });
+          assert.strictEqual(wrong.status, 401);
+        }
+        const blocked = await call(server, "/api/admin/session", { headers: { ...guesser, authorization: "Bearer product-admin-secret" } });
+        assert.strictEqual(blocked.status, 429, "even the right key, once the address has guessed too often");
+        const form = await call(server, "/api/admin/session", { body: { key: "product-admin-secret" }, headers: guesser });
+        assert.strictEqual(form.status, 429, "the sign-in form shares the count");
+        const apiKey = await call(server, "/api/integrations/linear/connect", { headers: { ...guesser, authorization: "Bearer guess" } });
+        assert.strictEqual(apiKey.status, 429, "so does the API key");
+        assert.strictEqual((await call(server, "/api/admin/session", { headers: guesser })).status, 401, "no key is not a guess");
+
+        const script = { "x-forwarded-for": "203.0.113.97", "x-admin-key": "product-admin-secret" };
+        for (let i = 0; i < 12; i++) assert.strictEqual((await call(server, "/api/admin/session", { headers: script })).status, 204);
+      } finally {
+        delete process.env.ADMIN_SECRET;
+      }
+    });
+
+    await scenario("The waitlist export keeps every value in its own cell, with dates a spreadsheet reads", async () => {
+      process.env.ADMIN_SECRET = "product-admin-secret";
+      const email = `export-check-${Date.now()}@studio.test`;
+      const { waitlistSignupsTable } = await import("@workspace/db/schema");
+      try {
+        const signup = await call(server, "/api/waitlist", {
+          body: { email, agency: "Acme\r=IMAGE(B3)", utmSource: "\r=1+2" },
+          headers: { "x-forwarded-for": "203.0.113.98" },
+        });
+        assert.strictEqual(signup.status, 201, JSON.stringify(signup.body));
+        const csv = await call(server, "/api/admin/waitlist/csv", { headers: { "x-admin-key": "product-admin-secret" } });
+        assert.strictEqual(csv.status, 200);
+        const text = String(csv.body);
+        // With quoted cells taken out, no line break is left to start a row inside a value.
+        assert.ok(!/\r/.test(text.replace(/"(?:[^"]|"")*"/g, "")), "no bare carriage return outside a quoted cell");
+        const line = text.split("\n").find((l) => l.includes(email))!;
+        assert.ok(line.includes(`,"Acme\r=IMAGE(B3)","'\r=1+2",`), line);
+        assert.match(line, /,\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+      } finally {
+        await db.delete(waitlistSignupsTable).where(eq(waitlistSignupsTable.email, email));
+        delete process.env.ADMIN_SECRET;
+      }
+    });
+
+    await scenario("A saved GitHub App that no longer decrypts is reported, and isn't replaced by accident", async () => {
+      process.env.ADMIN_SECRET = "product-admin-secret";
+      const admin = { "x-admin-key": "product-admin-secret", "x-forwarded-for": "203.0.113.99" };
+      const names = ["GITHUB_APP_ID", "GITHUB_APP_SLUG", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"];
+      const fromEnv = names.map((name) => [name, process.env[name]] as const);
+      const { encryptToken } = await import("../linear/crypto.js");
+      const garbled = { ...encryptToken("secret", "v1", "GITHUB_TOKEN_ENCRYPTION_KEY"), authTag: "0".repeat(32) };
+      try {
+        for (const name of names) delete process.env[name];
+        await db.insert(appSettingsTable).values({
+          key: "github_app",
+          valueJson: {
+            appId: "888",
+            slug: "scopeci-old",
+            name: "ScopeCI Old",
+            owner: "harbor-agency",
+            htmlUrl: "https://github.com/organizations/harbor-agency/settings/apps/scopeci-old",
+            clientId: "Iv1.old",
+            clientSecret: garbled,
+            privateKey: garbled,
+            webhookSecret: garbled,
+            createdAt: new Date().toISOString(),
+          },
+        });
+        forgetGitHubAppSettings();
+        const status = await call(server, "/api/admin/github-app", { headers: admin });
+        assert.strictEqual(status.body.configured, false);
+        assert.strictEqual(status.body.storedUnreadable?.slug, "scopeci-old");
+        const replace = await call(server, "/api/admin/github-app/manifest", { body: { name: "ScopeCI" }, headers: admin });
+        assert.strictEqual(replace.status, 409);
+        assert.match(replace.body.error, /scopeci-old.*GITHUB_TOKEN_ENCRYPTION_KEY/);
+        assert.strictEqual((await call(server, "/api/admin/github-app", { method: "DELETE", headers: admin })).status, 204);
+        assert.strictEqual((await call(server, "/api/admin/github-app", { headers: admin })).body.storedUnreadable, null);
+      } finally {
+        for (const [name, value] of fromEnv) process.env[name] = value;
+        await db.delete(appSettingsTable);
+        forgetGitHubAppSettings();
+        delete process.env.ADMIN_SECRET;
+      }
+    });
+
     await scenario("Cancelled and expired invites can't be used", async () => {
       const cancelled = await call(server, "/api/workspace/invites", { method: "POST", cookie: dana });
       const cancelledToken = cancelled.body.url.split("/").pop();
@@ -1273,14 +1580,15 @@ async function run() {
           metadata: "read",
         });
 
-        // A code sent with someone else's state is refused, and ends the setup.
-        const forged = await call(server, `/api/setup/github-app/callback?code=manifest-code&state=forged`);
-        assert.strictEqual(forged.headers.location, "/admin/waitlist?github=expired");
+        // Starting again replaces the first setup, so its state stops working.
+        const second = await start();
         const late = await call(server, `/api/setup/github-app/callback?code=manifest-code&state=${first.state}`);
         assert.strictEqual(late.headers.location, "/admin/waitlist?github=expired");
+        // A code sent with someone else's state is refused, and leaves the admin's setup alone.
+        const forged = await call(server, `/api/setup/github-app/callback?code=manifest-code&state=forged`);
+        assert.strictEqual(forged.headers.location, "/admin/waitlist?github=expired");
         assert.strictEqual(fake.conversions, 0);
 
-        const second = await start();
         const done = await call(server, `/api/setup/github-app/callback?code=manifest-code&state=${second.state}`);
         assert.strictEqual(done.status, 302);
         assert.strictEqual(done.headers.location, "/admin/waitlist?github=created");

@@ -43,6 +43,8 @@ router.get("/admin/github-app", requireAdmin, async (req, res): Promise<void> =>
     webhooksReady: configured && Boolean(app.webhookSecret),
     encryptionReady: encryptionReady(),
     baseUrl: appOrigin(req),
+    // Saved here but not decryptable: the page must not offer to replace it as if none existed.
+    storedUnreadable: app.storedUnreadable ?? null,
   });
 });
 
@@ -54,6 +56,14 @@ router.post("/admin/github-app/manifest", requireAdmin, setupLimiter, async (req
   }
   if (!encryptionReady()) {
     res.status(409).json({ error: "Set GITHUB_TOKEN_ENCRYPTION_KEY on the server first; the App's keys are stored encrypted with it." });
+    return;
+  }
+  if (app.storedUnreadable) {
+    // A new App replaces the saved one, and every customer would have to install it again.
+    const which = app.storedUnreadable.slug ? ` (${app.storedUnreadable.slug})` : "";
+    res.status(409).json({
+      error: `A GitHub App${which} is saved but can't be decrypted with the current GITHUB_TOKEN_ENCRYPTION_KEY. Restore the key it was saved with. To replace it instead, forget the saved App first; every customer then has to install the new one.`,
+    });
     return;
   }
   const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";

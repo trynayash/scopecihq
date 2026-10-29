@@ -4,7 +4,7 @@ import { db, waitlistSignupsTable } from "@workspace/db";
 import { desc, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
-import { timingSafeCompare } from "../middlewares/auth.js";
+import { refuseGuessing, secretGuesses, timingSafeCompare } from "../middlewares/auth.js";
 import { rateLimiter } from "../middlewares/rate-limit.js";
 
 const router: IRouter = Router();
@@ -70,6 +70,8 @@ function sessionCookie(value: string, maxAgeSeconds: number): string {
  * Accepts the session cookie, or ADMIN_SECRET itself as `Authorization:
  * Bearer <key>` / `x-admin-key` for scripts. Uses constant-time comparison.
  * Returns 401 if the secret is not configured or nothing valid was sent.
+ * Wrong keys count towards the same limit as the sign-in form, so sending the
+ * key as a header is not an unlimited way to guess it.
  */
 export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
   // Everything behind this carries signup emails; keep it out of any cache.
@@ -96,7 +98,16 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
     provided = req.headers["x-admin-key"];
   }
 
-  if (!provided || !timingSafeCompare(provided, secret)) {
+  if (!provided) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  if (secretGuesses.blocked(req)) {
+    refuseGuessing(res);
+    return;
+  }
+  if (!timingSafeCompare(provided, secret)) {
+    secretGuesses.record(req);
     res.status(401).json({ error: "Unauthorized." });
     return;
   }
@@ -122,7 +133,12 @@ router.post("/admin/session", signInRateLimiter, (req, res): void => {
     res.status(401).json({ error: "Admin access is not configured." });
     return;
   }
+  if (provided && secretGuesses.blocked(req)) {
+    refuseGuessing(res);
+    return;
+  }
   if (!provided || !timingSafeCompare(provided, secret)) {
+    if (provided) secretGuesses.record(req);
     res.status(401).json({ error: "That key is not right." });
     return;
   }
@@ -187,8 +203,29 @@ router.get("/admin/waitlist/stats", async (req, res): Promise<void> => {
 });
 
 /**
- * GET /admin/waitlist/csv — downloads signups as CSV.
- * Sanitizes against CSV Formula Injection (OWASP A05).
+ * One CSV cell. Sanitizes against CSV Formula Injection (OWASP A05): a value
+ * starting with a formula character gets a ' in front, and any value with a
+ * comma, quote or line break (CR as well as LF: spreadsheets end a row at a
+ * bare CR too) is quoted, so nothing after it can start a cell of its own.
+ */
+export function csvCell(val: unknown): string {
+  if (val === null || val === undefined) return "";
+  // "2026-10-29 06:58:54" (UTC): the form spreadsheets read as a date.
+  let str = val instanceof Date ? val.toISOString().replace("T", " ").slice(0, 19) : String(val);
+
+  // Prevent CSV Formula Injection: Prefix dangerous characters with single quote
+  if (/^[=+\-@\t\r]/.test(str)) {
+    str = `'${str}`;
+  }
+
+  if (/[",\r\n]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+/**
+ * GET /admin/waitlist/csv — downloads signups as CSV, created_at in UTC.
  */
 router.get("/admin/waitlist/csv", async (req, res): Promise<void> => {
   try {
@@ -202,27 +239,12 @@ router.get("/admin/waitlist/csv", async (req, res): Promise<void> => {
       "utm_campaign", "utm_content", "utm_term", "referrer", "created_at",
     ];
 
-    const escape = (val: unknown): string => {
-      if (val === null || val === undefined) return "";
-      let str = String(val);
-
-      // Prevent CSV Formula Injection: Prefix dangerous characters with single quote
-      if (/^[=+\-@\t\r]/.test(str)) {
-        str = `'${str}`;
-      }
-
-      if (str.includes(",") || str.includes('"') || str.includes("\n")) {
-        return `"${str.replace(/"/g, '""')}"`;
-      }
-      return str;
-    };
-
     const rows = signups.map((s) =>
       [
         s.id, s.email, s.agency, s.utmSource, s.utmMedium,
         s.utmCampaign, s.utmContent, s.utmTerm, s.referrer, s.createdAt,
       ]
-        .map(escape)
+        .map(csvCell)
         .join(","),
     );
 
