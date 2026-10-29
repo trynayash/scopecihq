@@ -193,7 +193,10 @@ export class SOWDecomposer {
    * Parses structured SOW text or markdown into clauses and deliverables.
    */
   private parseDocumentStructure(text: string, defaultTitle?: string): DecomposedSOW {
-    const lines = text.split(/\r?\n/);
+    // Every line break ends a line, including a lone "\r" and the Unicode line
+    // and paragraph separators. A line then holds nothing "." can't match, so
+    // the "(.+)$" patterns below can't fail late and backtrack along it.
+    const lines = text.split(/\r\n|[\n\r\u2028\u2029]/);
     let contractTitle = defaultTitle || "Standard Statement of Work";
     let documentVersion = "sow_v1.0";
 
@@ -218,10 +221,16 @@ export class SOWDecomposer {
         documentVersion = versionMatch[1];
       }
 
-      // Look for clause header (§4.2 or Section 4.2 or ## 4.2 or Clause 4.2)
-      const clauseHeaderMatch = line.match(
-        /^(?:##+\s*)?(?:§|Section\s+|Clause\s+)?(\d+(?:\.\d+)+)\s*[:\-–]?\s*(.+)$/i
-      );
+      // Look for clause header (§4.2 or Section 4.2 or ## 4.2 or Clause 4.2).
+      // The separator before the title is stripped below rather than matched
+      // here, so no two parts of the pattern compete for the same spaces.
+      let clauseHeaderMatch = line.match(/^(?:##+\s*)?(?:§|Section\s+|Clause\s+)?(\d+(?:\.\d+)+)(.+)$/i);
+      if (!clauseHeaderMatch && currentClause) {
+        // "## 3. Out of Scope" after numbered clauses starts its own clause, so
+        // its items are cited as §3 rather than run into the clause above it.
+        const scopeSection = line.match(/^#{2,4}\s*§?(\d+)\.?\s+(\S.*)$/);
+        if (scopeSection && scopeHeading(scopeSection[2])) clauseHeaderMatch = scopeSection;
+      }
 
       if (clauseHeaderMatch) {
         // Save previous clause
@@ -301,8 +310,10 @@ export class SOWDecomposer {
     for (const raw of lines) {
       const line = raw.trim();
       if (line.startsWith("# ")) continue;
+      // Each title starts at its first non-space character ("\S"), so the
+      // spaces before it can only be matched one way.
       const heading =
-        line.match(/^#{2,4}\s+(.+)$/) ?? line.match(/^(?:section|clause)\s+\d+\s*[:.\-–]?\s*(.+)$/i);
+        line.match(/^#{2,4}\s+(\S.*)$/) ?? line.match(/^(?:section|clause)\s+\d+(?:\s*[:.\-–])?\s*(\S.*)$/i);
       if (heading) {
         current = { title: heading[1].replace(/[*_#]/g, "").trim(), body: [] };
         sections.push(current);
@@ -323,7 +334,7 @@ export class SOWDecomposer {
           clauseRef: `§${index + 1}`,
           title: section.title,
           legalText,
-          ...extractScopeBoundaries(legalText),
+          ...extractScopeBoundaries(withScopeHeading(section.title, legalText)),
           location: `Section ${index + 1}`,
         };
       });
@@ -333,7 +344,7 @@ export class SOWDecomposer {
     clause: Partial<z.infer<typeof DecomposedClauseSchema>>,
     legalText: string
   ): void {
-    const { inclusions, exclusions } = extractScopeBoundaries(legalText);
+    const { inclusions, exclusions } = extractScopeBoundaries(withScopeHeading(clause.title, legalText));
     clause.inclusions = inclusions;
     clause.exclusions = exclusions;
   }
@@ -343,17 +354,23 @@ export class SOWDecomposer {
 /* Scope boundaries                                                    */
 /* ------------------------------------------------------------------ */
 
+// Every pattern below runs on text anyone can paste into the public demo, so
+// each one takes time in proportion to the text: no two parts of a pattern
+// can match the same characters, and lists are read in one pass.
+
 const BULLET = /^\s*(?:[-*•]|\d+[.)])\s+/;
 
 /** Lowercases an item and trims list markers, markdown emphasis and trailing punctuation. */
 function cleanItem(item: string): string {
-  return item
+  const cleaned = item
     .replace(BULLET, "")
     .replace(/\*\*|__/g, "")
-    .replace(/^(?:and|or)\s+/i, "")
-    .replace(/[\s.;:,]+$/, "")
-    .trim()
-    .toLowerCase();
+    .replace(/^(?:and|or)\s+/i, "");
+  // Trailing punctuation is trimmed with a loop: the pattern /[\s.;:,]+$/
+  // restarts at every character of a long run of spaces or dots.
+  let end = cleaned.length;
+  while (end > 0 && /[\s.;:,]/.test(cleaned[end - 1])) end--;
+  return cleaned.slice(0, end).trim().toLowerCase();
 }
 
 /**
@@ -371,72 +388,150 @@ function splitList(text: string): string[] {
 /**
  * Items listed after a header such as "Explicit Exclusions:" or "including:".
  * A header at the end of its line takes the bullet lines that follow it; a
- * header with text after the colon takes that text as a comma separated list.
+ * header with text after the colon takes that text, up to the end of the
+ * sentence or the next header, as a comma separated list.
  */
 function listsAfter(text: string, header: RegExp): string[] {
   const items: string[] = [];
-  for (const match of text.matchAll(header)) {
-    const rest = text.slice((match.index ?? 0) + match[0].length);
-    const [firstLine, ...nextLines] = rest.split(/\r?\n/);
+  const lines = text.split(/\r?\n/);
+  const starts = [0];
+  for (let i = 0; i + 1 < lines.length; i++) {
+    const end = starts[i] + lines[i].length;
+    starts.push(end + (text[end] === "\r" ? 2 : 1));
+  }
 
-    if (firstLine.trim()) {
-      items.push(...splitList(firstLine.split(".")[0]));
-      continue;
+  const matches = [...text.matchAll(header)];
+  let line = 0;
+  // The last bullet line read as an item. A header inside a list already read
+  // would read the same bullets again and add nothing, and doing that for
+  // every header made a long list of headers take seconds.
+  let lastItemLine = -1;
+  matches.forEach((match, index) => {
+    const end = (match.index ?? 0) + match[0].length;
+    while (line + 1 < lines.length && starts[line + 1] <= end) line++;
+    const lineEnd = starts[line] + lines[line].length;
+
+    if (/\S/.test(text.slice(end, lineEnd))) {
+      const next = matches[index + 1]?.index ?? lineEnd;
+      items.push(...splitList(text.slice(end, Math.min(lineEnd, next)).split(".")[0]));
+      return;
     }
-    for (const line of nextLines) {
-      if (!line.trim()) {
-        if (items.length > 0) break;
+    if (line < lastItemLine) return;
+    // Blank lines are skipped until this header's own first item.
+    const found = items.length;
+    for (let next = line + 1; next < lines.length; next++) {
+      const bullet = lines[next];
+      if (!bullet.trim()) {
+        if (items.length > found) break;
         continue;
       }
-      if (!BULLET.test(line)) break;
-      const item = cleanItem(line);
-      if (item.length > 2) items.push(item);
+      if (!BULLET.test(bullet)) break;
+      const item = cleanItem(bullet);
+      if (item.length > 2) {
+        items.push(item);
+        lastItemLine = next;
+      }
     }
-  }
+  });
   return items;
 }
 
+// "Not in scope:" holds "in scope:", and "Not included:" holds "included:", so
+// the inclusion header checks for a "not" before those two. The check comes
+// after the words so it only runs where they appear.
 const EXCLUSION_HEADER =
-  /\*{0,2}(?:explicit\s+exclusions?\*{0,2}[ \t]*:?|(?:exclusions|out\s+of\s+scope|not\s+included|excluded|excluding|excludes)\*{0,2}[ \t]*:)/gi;
+  /\*{0,2}(?:explicit\s+exclusions?\*{0,2}[ \t]*:?|(?:exclusions|out[\s-]+of[\s-]+scope|not\s+in\s+scope|outside\s+(?:of\s+)?(?:the\s+)?scope|not\s+included|excluded|excluding|excludes)\*{0,2}[ \t]*:)/gi;
 const INCLUSION_HEADER =
-  /\*{0,2}(?:explicit\s+inclusions?\*{0,2}[ \t]*:?|(?:inclusions|in\s+scope|included|including|includes)\*{0,2}[ \t]*:)/gi;
+  /\*{0,2}(?:explicit\s+inclusions?\*{0,2}[ \t]*:?|(?:inclusions|in\s+scope(?<!\bnot\s+in\s+scope)|included(?<!\bnot\s+included)|including|includes)\*{0,2}[ \t]*:)/gi;
 
-/** "Explicitly excludes X, Y and Z." / "Does not include X." on one line. */
-const EXCLUSION_PROSE = /(?:explicitly\s+excludes?|does\s+not\s+include|\bexcludes?)\b[ \t]*:?[ \t]*([^.\n]+)/gi;
-/** "X, Y and Z are explicitly out of scope." */
+/** A line or title that only names a scope list: "Out of Scope", "3. Exclusions", "Not included:". */
+const OUT_HEADING =
+  /^(?:\d+(?:\.\d+)*\.?\s*)?(?:(?:explicit\s+)?exclusions?|excluded|not\s+included|not\s+in\s+scope|out[\s-]+of[\s-]+scope|outside\s+(?:of\s+)?(?:the\s+)?scope)\s*:?$/i;
+const IN_HEADING = /^(?:\d+(?:\.\d+)*\.?\s*)?(?:(?:explicit\s+)?inclusions?|included|in\s+scope|deliverables)\s*:?$/i;
+
+/** The header a scope heading stands for, once markdown ("##", "**", "§") is set aside. */
+function scopeHeading(line: string | undefined): string | undefined {
+  const name = (line ?? "").replace(/[*_#§]/g, "").trim();
+  if (OUT_HEADING.test(name)) return "Out of scope:";
+  if (IN_HEADING.test(name)) return "Included:";
+  return undefined;
+}
+
+/** A section titled "Out of Scope" or "In Scope" lists the bullets under it as that. */
+function withScopeHeading(title: string | undefined, body: string): string {
+  const header = scopeHeading(title);
+  return header ? `${header}\n${body}` : body;
+}
+
+/** "Explicitly excludes X, Y and Z." / "Does not include X." on one line. The list starts at its first non-space character. */
+const EXCLUSION_PROSE = /(?:explicitly\s+excludes?|does\s+not\s+include|\bexcludes?)\b(?:[ \t]*:)?[ \t]*([^.\n \t][^.\n]*)/gi;
+/** " are explicitly out of scope": the end of "X, Y and Z are explicitly out of scope." */
 const EXCLUSION_PREDICATE =
-  /([^.\n:]+?)\s+(?:is|are)\s+(?:explicitly\s+|expressly\s+|strictly\s+)?(?:out\s+of\s+scope|excluded|not\s+included|not\s+in\s+scope)/gi;
+  /\s+(?:is|are)\s+(?:explicitly\s+|expressly\s+|strictly\s+)?(?:out\s+of\s+scope|excluded|not\s+included|not\s+in\s+scope)/gi;
 /** "Includes X and Y." / "shall deliver X." / "is authorized to deliver X." on one line. */
 const INCLUSION_PROSE =
-  /(?:\bincludes?|(?:shall|will|(?:is|are)\s+authori[sz]ed\s+to)\s+(?:deliver|implement|build|provide)|\bfeatures?)\b[ \t]+([^.\n:]+)/gi;
+  /(?:\bincludes?|(?:shall|will|(?:is|are)\s+authori[sz]ed\s+to)\s+(?:deliver|implement|build|provide)|\bfeatures?)\b[ \t]+([^.\n: \t][^.\n:]*)/gi;
+
+/**
+ * What comes before each "is out of scope" in a sentence: the words since the
+ * last ".", ":" or earlier match. Found by looking back from the predicate,
+ * because a lazy "(.+?) is out of scope" pattern retries from every
+ * character. The sentence's spaces must already be collapsed.
+ */
+function excludedSubjects(sentence: string): string[] {
+  const subjects: string[] = [];
+  let start = 0;
+  let scanned = 0;
+  for (const match of sentence.matchAll(EXCLUSION_PREDICATE)) {
+    const at = match.index ?? 0;
+    for (; scanned < at; scanned++) {
+      if (".:\n".includes(sentence[scanned])) start = scanned + 1;
+    }
+    // A predicate with nothing before it is part of the next subject.
+    if (at <= start) continue;
+    subjects.push(sentence.slice(start, at));
+    start = scanned = at + match[0].length;
+  }
+  return subjects;
+}
 
 /**
  * Reads what a clause includes and excludes from its own wording: header
- * lists ("Explicit Exclusions:", "including:"), "excludes X" sentences and
- * "X is out of scope" sentences. Used on parsed SOW clauses and on clause rows
- * stored in the database.
+ * lists ("Explicit Exclusions:", "including:", a "## Out of Scope" heading),
+ * "excludes X" sentences and "X is out of scope" sentences. Used on parsed SOW
+ * clauses and on clause rows stored in the database.
  */
 export function extractScopeBoundaries(legalText: string): { inclusions: string[]; exclusions: string[] } {
-  // Sentence patterns run one sentence at a time, each capped, so a pasted
-  // document with a very long unbroken line can't make them backtrack for
-  // seconds. No pattern needs to see past a sentence end anyway.
-  const sentences = legalText.split(/(?<=[.!?])\s+|\n/).map((sentence) => sentence.slice(0, 1000));
+  // A line that only names a list ("## Out of Scope", "**Not included**")
+  // becomes that list's header, so the bullets under it are read.
+  const text = legalText
+    .split("\n")
+    .map((line) => scopeHeading(line) ?? line)
+    .join("\n");
+
+  // Sentence patterns run one sentence at a time, with runs of spaces made
+  // one and each sentence capped. No pattern needs to see past a sentence end.
+  const sentences = text
+    .split(/(?<=[.!?])\s+|\n/)
+    .map((sentence) => sentence.replace(/\s+/g, " ").slice(0, 1000));
   const inSentences = (pattern: RegExp) => sentences.flatMap((sentence) => [...sentence.matchAll(pattern)]);
 
   const exclusions = [
-    ...listsAfter(legalText, EXCLUSION_HEADER),
+    ...listsAfter(text, EXCLUSION_HEADER),
     ...inSentences(EXCLUSION_PROSE).flatMap((m) => splitList(m[1])),
-    ...inSentences(EXCLUSION_PREDICATE).flatMap((m) => splitList(m[1])),
+    ...sentences.flatMap(excludedSubjects).flatMap(splitList),
   ];
   const inclusions = [
-    ...listsAfter(legalText, INCLUSION_HEADER),
+    ...listsAfter(text, INCLUSION_HEADER),
     ...inSentences(INCLUSION_PROSE).flatMap((m) => splitList(m[1])),
   ];
 
-  const unique = (items: string[]) => Array.from(new Set(items));
-  const excluded = unique(exclusions);
+  const excluded = new Set(exclusions);
   // A phrase the contract excludes is never also counted as included.
-  return { inclusions: unique(inclusions).filter((item) => !excluded.includes(item)), exclusions: excluded };
+  return {
+    inclusions: Array.from(new Set(inclusions)).filter((item) => !excluded.has(item)),
+    exclusions: Array.from(excluded),
+  };
 }
 
 /**
@@ -451,7 +546,9 @@ export function extractStatedEffort(legalText: string): {
   const hours = legalText.match(
     /(?:estimated\s+(?:effort|hours)|estimate|effort|hours)\s*[:=]\s*(\d+)(?:\s*(?:-|–|to)\s*(\d+))?/i
   );
-  const budget = legalText.match(/(?:budget|fee)\s*[:=]\s*(?:usd\s*|\$|£|€)?\s*([\d,]+)/i);
+  // The space after a currency belongs to the currency, so the two spaces
+  // around it can't be split between two patterns.
+  const budget = legalText.match(/(?:budget|fee)\s*[:=]\s*(?:(?:usd|\$|£|€)\s*)?([\d,]+)/i);
 
   const min = hours ? Number(hours[1]) : 0;
   const max = hours ? Number(hours[2] ?? hours[1]) : 0;
