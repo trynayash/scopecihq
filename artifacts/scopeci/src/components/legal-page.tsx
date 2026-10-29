@@ -28,14 +28,17 @@ const reduceMotion = () =>
   typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /** Scrolls to a section; its `scroll-margin-top` keeps the heading clear of the header. */
-function scrollToSection(id: string) {
-  document.getElementById(id)?.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'start' });
+function scrollToSection(id: string, instant = false) {
+  // 'instant', not 'auto': the page's CSS asks for smooth scrolling, and 'auto' follows it.
+  document
+    .getElementById(id)
+    ?.scrollIntoView({ behavior: instant || reduceMotion() ? 'instant' : 'smooth', block: 'start' });
 }
 
 /**
  * Which section the reader is in, and how far through the document they
- * are. A section counts as current once its top passes just under the
- * header.
+ * are. A section counts as current once its top passes the upper third of
+ * the window, so a heading just below the header is never missed.
  */
 function useReadingPosition(ids: string[]) {
   const [active, setActive] = useState(ids[0] ?? '');
@@ -46,7 +49,7 @@ function useReadingPosition(ids: string[]) {
     let frame = 0;
     const measure = () => {
       frame = 0;
-      const line = 120;
+      const line = Math.min(window.innerHeight * 0.3, 280);
       let current = ids[0] ?? '';
       for (const id of ids) {
         const element = document.getElementById(id);
@@ -117,14 +120,29 @@ export function LegalPage({
   const activeIndex = Math.max(0, ids.indexOf(active));
   const percent = Math.round(progress * 100);
 
-  // A link such as /terms#liability may arrive before the sections render.
-  // Go there once they exist.
+  // A link such as /terms#liability may arrive before the sections render,
+  // and typefaces and images can still move them once they load. Jump there
+  // at once, then again as the page settles, until the reader takes over.
   useEffect(() => {
     const id = decodeURIComponent(window.location.hash.replace(/^#/, ''));
     if (!id || !ids.includes(id)) return;
     setActive(id);
-    const timer = window.setTimeout(() => scrollToSection(id), 60);
-    return () => window.clearTimeout(timer);
+    let done = false;
+    const go = () => {
+      if (!done) scrollToSection(id, true);
+    };
+    const stop = () => {
+      done = true;
+    };
+    const timers = [60, 400, 1200].map((ms) => window.setTimeout(go, ms));
+    document.fonts?.ready.then(go, () => undefined);
+    const events = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const;
+    events.forEach((name) => window.addEventListener(name, stop, { once: true, passive: true }));
+    return () => {
+      stop();
+      timers.forEach((timer) => window.clearTimeout(timer));
+      events.forEach((name) => window.removeEventListener(name, stop));
+    };
     // Only the link that brought the reader here matters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

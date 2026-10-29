@@ -112,7 +112,11 @@ export default function Contact() {
         },
         onError: (error) => {
           const status = error?.status;
-          setFormError(status === 400 ? (error?.data?.error ?? 'Check the form and try again.') : sendErrorMessage(status));
+          const data = error?.data;
+          // A 400 names the field in one sentence; a 429 says which limit, in `message`.
+          const said =
+            status === 400 ? data?.error : status === 429 && data && 'message' in data ? data.message : undefined;
+          setFormError(said ?? sendErrorMessage(status));
           setAttempt((count) => count + 1);
           track('contact_error');
         },
