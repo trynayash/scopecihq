@@ -655,6 +655,9 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
         } else if (why === "listedAfter") {
           deltaMsg = `Builds ${built} (${where}), one of the ${named} that contract ${clause.clauseRef} lists after its exception for ${exception ?? "other work"}; nothing says whether it is excluded or part of that exception`;
           reason = `${named} is listed after the exception for ${exception ?? "other work"} in ${clause.clauseRef}, so ${built} may be excluded or allowed`;
+        } else if (why === "unnamed") {
+          deltaMsg = `Builds ${built} (${where}), which falls under "${named}" that contract ${clause.clauseRef} excludes; the contract doesn't name ${built} itself, so a person confirms before a change order goes out`;
+          reason = `${built} falls under "${named}", excluded by ${clause.clauseRef}, but the contract doesn't name ${built}`;
         } else {
           deltaMsg = `Builds ${built} (${where}), one of the ${named} that contract ${clause.clauseRef} excludes, but nothing next to it names ${named}`;
           reason = `${built} is one of the ${named} excluded by ${clause.clauseRef}, but nothing next to it names ${named}`;

@@ -33,7 +33,9 @@ import {
  * ("text"). On top of that, an excluded item that names a category the
  * reviewed vocabulary knows ("native mobile apps", "payment providers") is
  * also matched on that category's members ("React Native", "Klarna"); see
- * vocabulary.ts.
+ * vocabulary.ts. A member the contract doesn't name only ever asks a person:
+ * a change order goes to the client in the contract's own words, never on
+ * the vocabulary's reading of them.
  */
 
 export type EvidenceStrength = "code" | "title" | "text";
@@ -103,9 +105,13 @@ export interface VocabularyMatchInfo {
    * - "listedAfter": listed after an exception, so it may be part of it;
    * - "exception": the pull request also works on what the item leaves out
    *   or the SOW includes ("Apple Pay" next to Stripe changes), so it may be
-   *   that allowed work.
+   *   that allowed work;
+   * - "unnamed": clearly built and called what the item names, but the
+   *   contract never names the member itself. Read on fresh contracts, members
+   *   alone drafted change orders for work a narrower item ("voice one-time
+   *   codes", "iPad layouts") or another clause allowed, so they only ask.
    */
-  reason?: "uncorroborated" | "described" | "qualifier" | "additive" | "listedAfter" | "exception";
+  reason?: "uncorroborated" | "described" | "qualifier" | "additive" | "listedAfter" | "exception" | "unnamed";
   qualifier?: string;
   exception?: string;
 }
@@ -801,6 +807,15 @@ interface Evidence {
 const REMOVAL =
   /^\s*(?:[a-z]+(?:\([^)]*\))?!?:\s*)?(?:revert(?:s|ed)?|remov(?:e|es|ed)|delet(?:e|es|ed)|drop(?:s|ped)?)(?![\w-])/i;
 
+/**
+ * Browser and home-screen icons are named for the platforms that show them
+ * (android-chrome-192x192.png, apple-touch-icon.png, mstile-150x150.png).
+ * Their names say nothing about what was built, so a website's icons never
+ * match excluded "Android" or "Apple" work.
+ */
+const WEB_ICON_NAME =
+  /(?<![a-z0-9])(?:android-chrome|android-icon|apple-touch-icon|apple-icon|apple-splash|apple-launch|mstile|safari-pinned-tab)(?![a-z])/gi;
+
 function buildDocs(pullRequest: PullRequest, issue: LinearIssue | undefined, maintenanceOnly: boolean): EvidenceDoc[] {
   const docs: EvidenceDoc[] = [];
   // Tests, docs, dependencies and build files build nothing new, so nothing
@@ -827,7 +842,7 @@ function buildDocs(pullRequest: PullRequest, issue: LinearIssue | undefined, mai
       text,
       kind,
       group: -1,
-      tokens: tokenize(text),
+      tokens: tokenize(kind === "path" ? text.replace(WEB_ICON_NAME, "icon") : text),
       ...(prose ? { pairs: wordPairs(text) } : {}),
     });
   };
@@ -1246,6 +1261,7 @@ function categoryParts(parts: PhrasePart[]): CategoryPart[] {
 }
 
 const REASON_RANK: Record<NonNullable<VocabularyMatchInfo["reason"]>, number> = {
+  unnamed: 0,
   uncorroborated: 1,
   qualifier: 1,
   additive: 1,
@@ -1461,8 +1477,20 @@ export function matchContractPhrases(input: ContractMatchInput): ContractPhraseM
   };
 
   const matches: ContractPhraseMatch[] = [];
-  const addVocabulary = (clause: ContractClause, phrase: string, found: VocabularyCandidate) => {
+  /**
+   * `named`: the contract writes the member itself ("not Apple"), so the
+   * match is as sure as a literal one. Otherwise it was read from the
+   * category, and only asks.
+   */
+  const addVocabulary = (clause: ContractClause, phrase: string, found: VocabularyCandidate, named = false) => {
     const members = found.info.members.join(", ");
+    // "SMS" built against excluded "SMS": the item's own words name it
+    // ("marketing SMS" doesn't: the reminders may not be marketing).
+    const itemWords = tokenize(found.info.named);
+    named ||= found.info.members.every((member) => {
+      const words = tokenize(member);
+      return words.size === itemWords.size && [...words].every((word) => itemWords.has(word));
+    });
     matches.push({
       clause,
       kind: "exclusion",
@@ -1471,8 +1499,9 @@ export function matchContractPhrases(input: ContractMatchInput): ContractPhraseM
       matchedPart: `${members} (${found.info.named})`,
       matchedTerms: [...tokenize(members)],
       coverage: 1,
-      strong: found.strong,
-      vocabulary: found.info,
+      // Read from the category, only ever a question: see VocabularyMatchInfo["reason"].
+      strong: named && found.strong,
+      vocabulary: found.strong && !named ? { ...found.info, reason: "unnamed" } : found.info,
       evidence: found.refs.map((doc) => doc.entry),
     });
   };
@@ -1519,7 +1548,7 @@ export function matchContractPhrases(input: ContractMatchInput): ContractPhraseM
       } else if (!decision.strong) info.reason = decision.refs.every((doc) => doc.strength === "text") ? "described" : "uncorroborated";
       best = betterCandidate(best, { strong: decision.strong, info, refs: decision.refs });
     }
-    if (best) addVocabulary(clause, `${best.info.named}, ${negations.map((n) => n.trim()).join(", ")}`, best);
+    if (best) addVocabulary(clause, `${best.info.named}, ${negations.map((n) => n.trim()).join(", ")}`, best, true);
   };
 
   /**
@@ -1546,12 +1575,12 @@ export function matchContractPhrases(input: ContractMatchInput): ContractPhraseM
       const plan = planExclusion(phrase);
       let literal = bestOf("exclusion", plan.parts, notIncluded);
       if (literal?.strong && plan.named.length > 0 && aboutAllowedWork(literal, plan)) literal = undefined;
-      // The item's own words decide when they can; the vocabulary when they
-      // can't ("native mobile apps" for an iOS screen), or when it settles a
-      // question they only raise.
+      // The item's own words decide whenever they match; the vocabulary only
+      // when they don't ("native mobile apps" for an iOS screen), and then it
+      // asks.
       const viaVocabulary =
-        plan.named.length > 0 && !literal?.strong ? vocabularyMatch(plan.named, plan.itemMembers, plan.listedAfter) : undefined;
-      if (viaVocabulary && (!literal || viaVocabulary.strong)) addVocabulary(clause, phrase, viaVocabulary);
+        plan.named.length > 0 && !literal ? vocabularyMatch(plan.named, plan.itemMembers, plan.listedAfter) : undefined;
+      if (viaVocabulary) addVocabulary(clause, phrase, viaVocabulary);
       else add(clause, "exclusion", phrase, literal);
     }
     clause.inclusions.forEach((phrase, i) => add(clause, "inclusion", phrase, inclusions[c][i]));
