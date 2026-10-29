@@ -2,7 +2,10 @@
 
 This document describes the Linear integration boundary for ScopeCI Alpha, connecting Linear issues into the Commercial Provenance Graph and enforcing four hard safeguards.
 
-**Status today.** The OAuth connect and callback routes, token encryption, the Linear GraphQL client, webhook handling and sync are built and covered by `artifacts/api-server/src/tests/linear-integration.test.ts`. They are not live: the routes are switched off in production unless `ENABLE_INTEGRATION_ROUTES=true`, and the product app they redirect to does not exist yet.
+**Status today.** The OAuth connect and callback routes, token encryption, the Linear GraphQL client, webhook handling and sync are built and covered by `artifacts/api-server/src/tests/linear-integration.test.ts`. They are not live:
+- The callback does not yet send the authorization code to Linear, and the callback and sync read from `MockLinearClient`, which returns a fixed sample workspace and issues. These stand-ins are only used outside production.
+- In production the routes are mounted only when `ENABLE_INTEGRATION_ROUTES=true` and the Linear secrets are set. Even then, connect, callback and sync answer `503` with "Linear isn't set up on this server yet", until a real token exchange (`setTokenExchanger`) and a client built from the stored token (`setLinearClient`) replace the stand-ins. With no connection, every Linear webhook is recorded as ignored.
+- The product app has no Linear page, so the page the callback redirects to does not exist yet.
 
 ---
 
@@ -88,11 +91,11 @@ Subsequent updates to a Linear issue or deliverable link do not alter existing e
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/integrations/linear/connect` | Initiates OAuth, generates CSRF state bound to org/user |
-| `GET` | `/api/integrations/linear/callback` | Validates state, exchanges code, encrypts tokens, redirects to `app.scopeci.<domain>` |
-| `POST` | `/api/webhooks/linear` | Verifies HMAC signature, ensures idempotency, and updates issues with revision checks |
+| `GET` | `/api/integrations/linear/connect` | Initiates OAuth, generates CSRF state bound to org/user. `503` in production (see Status) |
+| `GET` | `/api/integrations/linear/callback` | Validates state, exchanges code, encrypts tokens, redirects to `app.scopeci.<domain>`. `503` in production (see Status) |
+| `POST` | `/api/webhooks/linear` | Verifies HMAC signature, refuses a payload whose `webhookTimestamp` is missing or more than 5 minutes old, ensures idempotency, and updates issues with revision checks |
 | `POST` | `/api/integrations/linear/projects/map` | Links Linear project to GitHub repository in `project_links` |
-| `POST` | `/api/integrations/linear/projects/:projectId/sync` | Imports and synchronizes all active project issues |
+| `POST` | `/api/integrations/linear/projects/:projectId/sync` | Imports and synchronizes all active project issues. `503` in production (see Status) |
 | `POST` | `/api/integrations/linear/issues/:issueId/link-deliverable` | Manually links Linear issue to Deliverable with audit event |
 
 ---
@@ -105,7 +108,7 @@ Add to your `.env`:
 LINEAR_CLIENT_ID=your_linear_client_id
 LINEAR_CLIENT_SECRET=your_linear_client_secret
 LINEAR_WEBHOOK_SECRET=your_linear_webhook_secret
-LINEAR_REDIRECT_URI=https://api.scopeci.dev/api/integrations/linear/callback
+LINEAR_REDIRECT_URI=https://<your-api-host>/api/integrations/linear/callback
 
 # Token Authenticated Encryption (AES-256-GCM)
 LINEAR_TOKEN_ENCRYPTION_KEY=your_32_byte_secret_passphrase_or_hex
@@ -122,4 +125,4 @@ Execute the deterministic Phase 3 test suite:
 ```bash
 pnpm run test:linear
 ```
-Runs 23 comprehensive scenarios covering OAuth, encryption, errors, normalizers, sync, webhooks, linking, head-SHA invariant, and organization isolation.
+Runs 25 scenarios covering OAuth, encryption, errors, normalizers, sync, webhooks (including late retries and replays), linking, head-SHA invariant, organization isolation, and the production refusal.

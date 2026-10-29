@@ -140,8 +140,9 @@ export function verifyLinearWebhookSignature(
 }
 
 /**
- * September 2026 Linear webhook guidance:
- * Validate webhook timestamp against replay attacks (recommended tolerance: 300 seconds).
+ * Replay defense for Linear webhooks: checks the payload's webhookTimestamp,
+ * the time Linear sent this attempt (Unix ms), is within the tolerance
+ * (300 seconds by default). Seconds, milliseconds and ISO strings are accepted.
  */
 export function verifyLinearWebhookTimestamp(
   timestamp: string | number | undefined,
