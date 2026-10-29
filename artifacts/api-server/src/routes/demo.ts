@@ -402,7 +402,13 @@ router.get("/demo/github-pr", gitHubLimiter, async (req, res): Promise<void> => 
   };
 
   if (cache.size >= 200) cache.delete(cache.keys().next().value as string);
-  cache.set(key, { at: Date.now(), data });
+  const at = Date.now();
+  cache.set(key, { at, data });
+  // Gone from memory after ten minutes, as the privacy page says, not just
+  // no longer served. A newer lookup of the same pull request keeps its own.
+  setTimeout(() => {
+    if (cache.get(key)?.at === at) cache.delete(key);
+  }, CACHE_MS).unref();
   res.json(data);
 });
 

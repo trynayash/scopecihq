@@ -626,6 +626,12 @@ test("the first example after 'including but not limited to' is excluded too", (
     pr("Sync orders to Salesforce", ["src/crm/salesforce.ts", ["src/checkout/cart.ts", "modified"]], { branch: "feat/salesforce" }),
     "CHANGE_REQUIRED",
   );
+  // Without "crm" anywhere in the pull request: Salesforce is its own excluded example.
+  expectState(
+    parsed,
+    pr("Sync orders to Salesforce", ["src/integrations/salesforce/client.ts", ["src/checkout/cart.ts", "modified"]]),
+    "CHANGE_REQUIRED",
+  );
 });
 
 test("a real 'but not' exception still works", () => {
@@ -846,6 +852,45 @@ test("the estimate line says '1 hour' and rounds money", () => {
   const line = describeEstimate(one) ?? "";
   assert.ok(line.startsWith("1 hour, "), line);
   assert.ok(line.includes("$103.13 USD"), line);
+});
+
+console.log("\n▶ A bracket next to an exception keeps the excluded work excluded");
+
+const CHECKOUT = { included: ["product catalogue", "shopping cart", "stripe checkout"] };
+
+test("'payment providers other than stripe (paypal, klarna, apple pay)': the examples aren't exceptions", () => {
+  const baseline = scope({ ...CHECKOUT, excluded: ["payment providers other than stripe (paypal, klarna, apple pay)"] });
+  expectState(baseline, pr("Add Klarna payment provider", ["src/payments/klarna-provider.ts", ["src/checkout/cart.ts", "modified"]]), "CHANGE_REQUIRED");
+  // The bracket may name excluded examples or excepted ones: a question, never in scope.
+  expectReview(baseline, pr("Add PayPal to checkout", ["src/checkout/paypal.ts", ["src/checkout/cart.ts", "modified"]]));
+  expectNotExcluded(baseline, pr("Stripe checkout retries", [["src/checkout/stripe.ts", "modified"]]));
+});
+
+test("'third-party integrations (other than stripe) and gift cards': the exception ends with its bracket", () => {
+  const parsed = scopeFromSow(
+    "# SOW\n## 1.1 Store\nIncludes product catalogue, shopping cart and Stripe checkout.\nThird-party integrations (other than Stripe) and gift cards are out of scope.\n",
+  );
+  expectState(parsed, pr("Add gift cards", ["src/giftcards/redeem.ts", ["src/checkout/cart.ts", "modified"]]), "CHANGE_REQUIRED");
+  const typed = scope({ ...CHECKOUT, excluded: ["third-party integrations (other than stripe and sendgrid) and native mobile apps"] });
+  expectState(typed, pr("Native mobile app shell", ["mobile/app/App.tsx", "mobile/app/screens/Home.tsx"]), "CHANGE_REQUIRED");
+});
+
+console.log("\n▶ An included plain variant clears only its own qualifier question");
+
+const VARIANTS = scope({
+  included: ["single-currency pricing (gbp)", "basic search", "standard sales reports", "product catalogue"],
+  excluded: ["multi-currency pricing", "advanced search", "custom reports"],
+});
+
+test("a qualified inclusion doesn't clear excluded work built without the qualifier word", () => {
+  expectReview(VARIANTS, pr("Currency switcher (EUR, USD) on product pages", ["src/pricing/CurrencySwitcher.tsx", ["src/pricing/ProductPrice.tsx", "modified"]]));
+  expectReview(VARIANTS, pr("Faceted search with price and brand filters", ["src/search/facets.ts"]));
+  expectReview(VARIANTS, pr("Report builder: pick columns and date ranges", ["src/reports/ReportBuilder.tsx"]));
+});
+
+test("a plain inclusion still keeps its own work in scope", () => {
+  const plain = scope({ included: ["basic keyword search"], excluded: ["advanced search"] });
+  expectNotExcluded(plain, pr("Keyword search results page", ["src/search/keyword-results.tsx"]));
 });
 
 /* ------------------------------------------------------------------ */

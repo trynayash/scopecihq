@@ -1646,11 +1646,15 @@ function AcceptDialog({
   // result for the same pull request (a refresh after "out of date") keeps
   // what was typed.
   const [openedFor, setOpenedFor] = useState(pr?.url ?? null);
+  // The result the PM was shown. If the pull request is checked again while
+  // this is open, the change is pointed out before it can be accepted.
+  const [confirmed, setConfirmed] = useState<string | null>(pr?.evaluationId ?? null);
   if ((pr?.url ?? null) !== openedFor) {
     setOpenedFor(pr?.url ?? null);
     if (pr) {
       setReason('');
       setError('');
+      setConfirmed(pr.evaluationId);
     }
   }
   // Keep the last pull request while the dialog animates closed.
@@ -1664,6 +1668,13 @@ function AcceptDialog({
     if (!shown) return;
     if (!reason.trim()) {
       setError('Say why; the reason is kept with the decision.');
+      return;
+    }
+    if (shown.evaluationId !== confirmed) {
+      setConfirmed(shown.evaluationId);
+      setError(
+        `#${shown.number} was checked again since this opened. It now ${flaggedWork ? `flags ${flaggedWork}` : 'flags no excluded work'}. Check that, then Accept again.`,
+      );
       return;
     }
     setError('');

@@ -251,6 +251,13 @@ function run() {
     assert.ok(Date.now() - started < 500, `took ${Date.now() - started} ms`);
   });
 
+  scenario("An exception in brackets ends with its bracket", () => {
+    assert.deepStrictEqual(
+      scope("## Scope\nThird-party integrations (other than Stripe) and gift cards are out of scope.").excluded,
+      ["third-party integrations (other than stripe)", "gift cards"],
+    );
+  });
+
   console.log(`\nSOW parser: ${passed} passed, ${failures.length} failed`);
   if (failures.length > 0) {
     failures.forEach((f) => console.log(`  - ${f}`));

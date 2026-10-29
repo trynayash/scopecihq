@@ -423,11 +423,15 @@ function openBrackets(text: string): number {
  * bracket's end, so its own list stays with it.
  */
 function exceptionEnd(text: string, depth: number): number {
+  const inside = depth;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (ch === "(" || ch === "[") depth++;
-    else if (ch === ")" || ch === "]") depth = Math.max(0, depth - 1);
-    else if ((ch === "," || ch === ";") && depth === 0) return i;
+    else if (ch === ")" || ch === "]") {
+      depth = Math.max(0, depth - 1);
+      // "(other than Stripe) and gift cards": the exception ends with its own bracket.
+      if (inside > 0 && depth < inside) return i + 1;
+    } else if ((ch === "," || ch === ";") && depth === 0) return i;
   }
   return text.length;
 }

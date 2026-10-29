@@ -329,6 +329,7 @@ interface PhrasePart {
   except: Term[][];
   /** The same text, head and exceptions match the same way, so a match is worked out once. */
   key: string;
+  weakOnly?: boolean;
 }
 
 /**
@@ -358,8 +359,7 @@ function listItems(text: string): string[] {
 function partsOf(phrase: string): PhrasePart[] {
   // "CRM integrations, including but not limited to Salesforce": the padding
   // is dropped, so "salesforce" isn't held to words no pull request uses.
-  const [kept, ...exceptions] = phrase.replace(/\u0000/g, " ").replace(NOT_LIMITED_TO, " ").split(EXCEPTION_MARKER);
-  const exceptionItems = exceptions.flatMap(listItems);
+  const [kept, exceptionItems, laterExamples] = splitException(phrase.replace(/\u0000/g, " ").replace(NOT_LIMITED_TO, ","));
   const except = exceptionItems.map((item) => termsOf(item, "inclusion")).filter((terms) => terms.length > 0);
   // Every example in a bracket shares its head's words, worked out once.
   const heads = new Map<string, Term | undefined>();
@@ -367,12 +367,13 @@ function partsOf(phrase: string): PhrasePart[] {
     if (!heads.has(head)) heads.set(head, anyWordOf(head));
     return heads.get(head);
   };
-  const part = (text: string, head?: string): PhrasePart => ({
+  const part = (text: string, head?: string, weakOnly?: boolean): PhrasePart => ({
     text,
     head: head ? headTerm(head) : undefined,
     headText: head || undefined,
     except,
-    key: [text, head ?? "", ...exceptionItems].join("\u0001"),
+    weakOnly,
+    key: [text, head ?? "", weakOnly ? "weak" : "", ...exceptionItems].join("\u0001"),
   });
 
   // Brackets come out first, so a list inside them doesn't split the item around them.
@@ -393,7 +394,33 @@ function partsOf(phrase: string): PhrasePart[] {
       for (const text of examples) parts.push(part(text, head || undefined));
     }
   }
+  // "providers other than stripe (paypal, klarna)": the bracket may name what
+  // is excluded or what is excepted; either way it is a question for a person.
+  for (const text of laterExamples) parts.push(part(text, undefined, true));
   return parts;
+}
+
+/** Item, exception items, and items of a bracket that follows the exception. */
+function splitException(phrase: string): [string, string[], string[]] {
+  const at = phrase.search(EXCEPTION_MARKER);
+  if (at < 0) return [phrase, [], []];
+  const before = phrase.slice(0, at);
+  const after = phrase.slice(at).replace(EXCEPTION_MARKER, "");
+  const excepted = (text: string) => text.split(EXCEPTION_MARKER).flatMap(listItems);
+  let depth = 0;
+  for (const ch of before) depth = ch === "(" ? depth + 1 : ch === ")" ? Math.max(0, depth - 1) : depth;
+  if (depth > 0) {
+    // "integrations (other than stripe) and gift cards": the exception ends with its bracket.
+    const close = after.indexOf(")");
+    if (close >= 0) return [before + after.slice(close), excepted(after.slice(0, close)), []];
+    return [before, excepted(after), []];
+  }
+  const open = after.indexOf("(");
+  if (open < 0) return [before, excepted(after), []];
+  const close = after.indexOf(")", open);
+  const inner = after.slice(open + 1, close < 0 ? undefined : close);
+  const tail = close < 0 ? "" : after.slice(close + 1);
+  return [before + " " + tail, excepted(after.slice(0, open)), listItems(inner)];
 }
 
 /* ------------------------------------------------------------------ */
@@ -733,7 +760,7 @@ function matchTerms(kind: ContractPhraseMatch["kind"], part: PhrasePart, terms: 
     const exceptGroups = exceptionGroups(part.except, evidence);
     const fits = (group: number) => (!headGroups || headGroups.has(group)) && !exceptGroups.has(group);
     const group = bestGroup(terms, compactPart, required, fits, evidence);
-    if (group) return result(find(group), headIn(group) ?? [], true);
+    if (group) return result(find(group), headIn(group) ?? [], !part.weakOnly);
   }
   if (namesException(evidence.all)) return undefined;
   return result(foundAll, headAll, false);
@@ -783,8 +810,20 @@ export function matchContractPhrases(input: ContractMatchInput): ContractPhraseM
   // included work, so that part of the exclusion doesn't count.
   const { clauses } = input.baseline;
   const inclusions = clauses.map((clause) => clause.inclusions.map((phrase) => bestPart("inclusion", phrase)));
-  const included = new Set(inclusions.flat().flatMap((match) => (match?.strong ? termsMatched(match) : [])));
-  const notIncluded = (match: PartMatch) => !(match.missingQualifier && termsMatched(match).every((term) => included.has(term)));
+  const plainInclusions = inclusions.flatMap((row, c) =>
+    row.flatMap((match, i) => {
+      if (!match?.strong) return [];
+      const qualified = splitWords(clauses[c].inclusions[i].replace(/[^A-Za-z0-9_-]+/g, " ")).some((w) => QUALIFIERS.has(w));
+      return [{ terms: new Set(termsMatched(match)), qualified }];
+    }),
+  );
+  const notIncluded = (match: PartMatch) => {
+    if (!match.missingQualifier) return true;
+    const terms = termsMatched(match);
+    return !plainInclusions.some(
+      (inc) => terms.every((t) => inc.terms.has(t)) && (!inc.qualified || [...inc.terms].some((t) => !terms.includes(t))),
+    );
+  };
 
   const matches: ContractPhraseMatch[] = [];
   const add = (clause: ContractClause, kind: ContractPhraseMatch["kind"], phrase: string, best: PartMatch | undefined) => {
