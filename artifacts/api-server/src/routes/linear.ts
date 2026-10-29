@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { Router, type IRouter, type Request, type Response } from "express";
+import { Router, type IRouter, type NextFunction, type Request, type Response } from "express";
 import {
   db,
   linearConnectionsTable,
@@ -64,10 +64,10 @@ export type TokenExchanger = (code: string) => Promise<{
   expires_in?: number;
 }>;
 
-let activeLinearClient: ILinearClient = new MockLinearClient();
-let activeSyncService: LinearSyncService = new LinearSyncService();
-
-let activeTokenExchanger: TokenExchanger = async (code: string) => {
+// The defaults are stand-ins so the suites run without a Linear account: this
+// exchanger never sends the code to Linear, and MockLinearClient answers with
+// a fixed sample workspace and issues.
+const sampleTokenExchanger: TokenExchanger = async (code: string) => {
   if (code === "invalid_code") {
     throw new Error("Invalid authorization code");
   }
@@ -77,6 +77,10 @@ let activeTokenExchanger: TokenExchanger = async (code: string) => {
     expires_in: 3600 * 24 * 30, // 30 days
   };
 };
+
+let activeLinearClient: ILinearClient = new MockLinearClient();
+let activeSyncService: LinearSyncService = new LinearSyncService();
+let activeTokenExchanger: TokenExchanger = sampleTokenExchanger;
 
 export function setLinearClient(client: ILinearClient): void {
   activeLinearClient = client;
@@ -90,11 +94,31 @@ export function setTokenExchanger(fn: TokenExchanger): void {
   activeTokenExchanger = fn;
 }
 
+const LINEAR_NOT_SET_UP =
+  "Linear isn't set up on this server yet. ScopeCI can't connect a Linear workspace or sync its issues here, so nothing was changed.";
+
+/**
+ * ScopeCI doesn't yet exchange a Linear sign-in for a real token or read
+ * issues with one. In production the stand-ins would report a sample
+ * workspace as connected and sync nothing, so connecting and syncing refuse
+ * plainly instead, until a real exchanger and client are set with
+ * setTokenExchanger and setLinearClient.
+ */
+function refuseStandInsInProduction(_req: Request, res: Response, next: NextFunction): void {
+  const usingStandIns =
+    activeTokenExchanger === sampleTokenExchanger || activeLinearClient instanceof MockLinearClient;
+  if (process.env.NODE_ENV === "production" && usingStandIns) {
+    res.status(503).json({ error: LINEAR_NOT_SET_UP });
+    return;
+  }
+  next();
+}
+
 /* ==================================================================
    1. GET /api/integrations/linear/connect
    Initiates Linear OAuth. Generates CSRF state bound strictly to org.
    ================================================================== */
-router.get("/integrations/linear/connect", requireApiKeyOrSession(), async (req: Request, res: Response): Promise<void> => {
+router.get("/integrations/linear/connect", requireApiKeyOrSession(), refuseStandInsInProduction, async (req: Request, res: Response): Promise<void> => {
   const organizationId = (req.query.organizationId as string) || (req.headers["x-organization-id"] as string);
   const userId = (req.query.userId as string) || (req.headers["x-user-id"] as string) || "user_admin";
   const redirectParam = validateRedirectUrl(req.query.redirectUrl as string | undefined);
@@ -152,7 +176,7 @@ router.get("/integrations/linear/connect", requireApiKeyOrSession(), async (req:
    Exchanges authorization code, validates state, encrypts tokens,
    binds strictly to org, and redirects to app.scopeci.<domain>.
    ================================================================== */
-router.get("/integrations/linear/callback", async (req: Request, res: Response): Promise<void> => {
+router.get("/integrations/linear/callback", refuseStandInsInProduction, async (req: Request, res: Response): Promise<void> => {
   const { code, state, error } = req.query;
 
   if (error) {
@@ -313,15 +337,16 @@ router.post("/webhooks/linear", async (req: Request, res: Response): Promise<voi
     return;
   }
 
-  // September 2026 Linear guidance: Validate webhook timestamp against replay attacks (300s window)
-  const timestampHeader =
-    (req.headers["linear-delivery-timestamp"] as string) ||
-    (req.headers["x-linear-timestamp"] as string) ||
-    req.body?.createdAt;
-
-  if (timestampHeader && !verifyLinearWebhookTimestamp(timestampHeader, 300)) {
-    logger.warn({ deliveryId, timestampHeader }, "Linear webhook timestamp replay rejected");
-    res.status(401).json({ error: "Webhook timestamp expired or invalid (replay defense)" });
+  // Replay defense (300s window). Linear sends no timestamp header; it stamps
+  // each send, retries included, with webhookTimestamp (Unix ms) inside the
+  // signed body. createdAt is when the issue changed, so checking it would
+  // refuse Linear's retries an hour or more later.
+  const webhookTimestamp = req.body?.webhookTimestamp;
+  if (!verifyLinearWebhookTimestamp(webhookTimestamp, 300)) {
+    logger.warn({ deliveryId, webhookTimestamp }, "Linear webhook timestamp replay rejected");
+    res.status(401).json({
+      error: "This Linear delivery has no webhookTimestamp or was sent more than five minutes ago, so it was refused as a possible replay.",
+    });
     return;
   }
 
@@ -512,6 +537,7 @@ router.post(
 router.post(
   "/integrations/linear/projects/:projectId/sync",
   requireApiKeyOrSession({ allowAnonymousInDev: true }),
+  refuseStandInsInProduction,
   requireTenantAccess((req) => req.body?.organizationId),
   async (req: Request, res: Response): Promise<void> => {
   const projectId = req.params.projectId as string;
