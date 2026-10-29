@@ -65,6 +65,12 @@ const PATHOLOGICAL: Record<string, string> = {
   "3,000 numbered lines under '4. Exclusions'": ("## 1.1 A\nIncludes a cart.\n4. Exclusions\n" + Array.from({ length: 3000 }, (_, i) => `4.${i + 1} Gift card item ${i}.`).join("\n")).slice(0, 40_000),
   "a numbered title of 39,000 spaces": "4. Exclusions\n4.1" + " ".repeat(39_000) + "x.",
   "a bullet of 2,480 exceptions": ("## 1.1 S\nExclusions:\n- " + "a other than b, ".repeat(2480)).slice(0, 40_000),
+  "1,700 'neither ... nor' in one sentence": ("## 1.1 S\n" + "Neither gift cards nor ".repeat(1700) + "loyalty are included.").slice(0, 40_000),
+  "'No' and 2,100 words without a predicate": ("## 1.1 S\nNo " + "native mobile apps ".repeat(2100)).slice(0, 40_000),
+  "700 'will not build' and Client sentences": ("## 1.1 S\n" + "We will not build gift cards, the Client will not provide copy. ".repeat(700)).slice(0, 40_000),
+  "an 'Assumptions and Exclusions' heading over 2,000 bullets": ("## 1.1 S\nIncludes a cart.\n## 2. Assumptions and Exclusions\n" + "- Native mobile apps\n- Client will provide copy\n".repeat(900)).slice(0, 40_000),
+  "'is not part of' repeated without a subject": ("## 1.1 S\n" + "is not part of this engagement ".repeat(1300)).slice(0, 40_000),
+  "'not responsible for building' and 39,000 spaces": "## 1.1 S\nThe Agency is not responsible for building" + " ".repeat(39_000) + "x",
 };
 
 function run() {
@@ -429,6 +435,85 @@ function run() {
       "multi-currency pricing",
       "two-factor authentication",
     ]);
+  });
+
+
+  scenario("20. 'will not build', 'will not deliver' and other agency verbs are exclusions", () => {
+    for (const sentence of [
+      "We will not build gift cards.",
+      "The Agency will not deliver gift cards.",
+      "The Supplier shall not develop gift cards.",
+      "We will not provide gift cards.",
+      "The Agency will not implement gift cards.",
+      "We won't build gift cards.",
+      "The Agency is not responsible for building gift cards.",
+      "The Supplier will not be responsible for developing gift cards.",
+      "This phase does not cover gift cards.",
+      "Phase 1 doesn't cover gift cards.",
+    ]) {
+      assert.deepStrictEqual(extractScopeBoundaries(sentence), { inclusions: [], exclusions: ["gift cards"] }, sentence);
+    }
+    assert.deepStrictEqual(extractScopeBoundaries("We will not build gift cards or loyalty points.").exclusions, ["gift cards or loyalty points"]);
+    assert.deepStrictEqual(extractScopeBoundaries("The Agency will not integrate with Salesforce.").exclusions, ["salesforce"]);
+  });
+
+  scenario("21. 'is not part of this engagement' and 'does not form part of the deliverables' are exclusions", () => {
+    for (const sentence of [
+      "Gift cards are not part of this engagement.",
+      "Gift cards are not part of the scope.",
+      "Gift cards is not part of the project.",
+      "Gift cards do not form part of the deliverables.",
+      "Gift cards will not be part of this release.",
+      "Gift cards will not be built.",
+      "Gift cards will not be delivered in this phase.",
+    ]) {
+      assert.deepStrictEqual(extractScopeBoundaries(sentence).exclusions, ["gift cards"], sentence);
+    }
+  });
+
+  scenario("22. 'Neither X nor Y are included' and 'No X will be built' are exclusions", () => {
+    assert.deepStrictEqual(extractScopeBoundaries("Neither gift cards nor loyalty points are included.").exclusions, ["gift cards", "loyalty points"]);
+    assert.deepStrictEqual(extractScopeBoundaries("Neither gift cards nor loyalty points is included.").exclusions, ["gift cards", "loyalty points"]);
+    assert.deepStrictEqual(extractScopeBoundaries("Neither gift cards nor loyalty points will be built.").exclusions, ["gift cards", "loyalty points"]);
+    assert.deepStrictEqual(extractScopeBoundaries("The SOW includes neither gift cards nor loyalty points."), {
+      inclusions: [],
+      exclusions: ["gift cards", "loyalty points"],
+    });
+    assert.deepStrictEqual(extractScopeBoundaries("No native mobile apps will be built.").exclusions, ["native mobile apps"]);
+    assert.deepStrictEqual(extractScopeBoundaries("No native mobile apps are included in this SOW.").exclusions, ["native mobile apps"]);
+  });
+
+  scenario("23. 'Assumptions and Exclusions' reads only the lines that name excluded work", () => {
+    for (const heading of ["## 2. Assumptions and Exclusions", "## 2. Exclusions and Assumptions", "## 2.1 Assumptions & Exclusions", "**Exclusions & Assumptions:**"]) {
+      const sow = `## 1.1 Storefront\nIncludes a product catalogue.\n\n${heading}\n- Client will provide copy\n- Gift cards\n- Hosting to be arranged by the Client\n- Native mobile apps\n- The Client will supply Stripe API credentials\n- Content entry is out of scope\n`;
+      assert.deepStrictEqual(scope(sow).excluded, ["gift cards", "native mobile apps", "content entry"], heading);
+    }
+    assert.deepStrictEqual(
+      clauses("## 1.1 Storefront\nIncludes a cart.\n\n## 2.1 Exclusions and Assumptions\n- Gift cards\n- Loyalty points\n").map((c) => [c.clauseRef, c.excluded]),
+      [["§1.1", []], ["§2.1", ["gift cards", "loyalty points"]]],
+    );
+    // An assumption is neither excluded nor included.
+    assert.deepStrictEqual(scope("## Assumptions and Exclusions\n- Client will provide copy\n- Client will provide hosting"), { included: [], excluded: [] });
+  });
+
+  scenario("24. requirements, the Client's obligations and product behaviour are not scope", () => {
+    for (const sentence of [
+      "The storefront should not include gift cards.",
+      "Error pages must not include stack traces.",
+      "The Client will not provide product photography.",
+      "The Client's team will not provide copy.",
+      "Emails will not be delivered to unverified addresses.",
+      "Orders will not be built into the export until paid.",
+      "No refunds will be provided.",
+      "No changes will be implemented without written approval.",
+      "Neither the Agency nor the Client is responsible for delays.",
+      "Draft orders shall be excluded from the sales report.",
+    ]) {
+      assert.deepStrictEqual(extractScopeBoundaries(sentence).exclusions, [], sentence);
+    }
+    assert.deepStrictEqual(extractScopeBoundaries("Client will provide copy.").inclusions, []);
+    assert.deepStrictEqual(extractScopeBoundaries("The Client will provide hosting.").inclusions, []);
+    assert.deepStrictEqual(extractScopeBoundaries("The Agency will provide hosting.").inclusions, ["hosting"]);
   });
 
   console.log(`\nSOW parser: ${passed} passed, ${failures.length} failed`);

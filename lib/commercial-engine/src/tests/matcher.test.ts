@@ -14,6 +14,7 @@ import { describeEstimate } from "../formatter.js";
 import { baselineFromChecklist, checklistFromBaseline } from "../scope-checklist.js";
 import { SOWDecomposer } from "../sow-decomposer.js";
 import type { ChangedFile, CommercialEvaluation, LinearIssue, PullRequest, ScopeBaseline } from "../types.js";
+import { VOCABULARY, vocabularyWords } from "../vocabulary.js";
 import { pullRequestAsWorkItem } from "../work-item.js";
 
 let passed = 0;
@@ -1411,6 +1412,457 @@ test("long exception lists in one item and numbered exclusion sections evaluate 
   const numbered = ("## 1.1 A\nIncludes a cart.\n4. Exclusions\n" + Array.from({ length: 3000 }, (_, i) => `4.${i + 1} Gift card item ${i}.`).join("\n")).slice(0, 40_000);
   const elapsed = time(() => evaluate(scopeFromSow(numbered), pr("Gift cards", files)));
   assert.ok(elapsed < 1000, `numbered exclusions: took ${Math.round(elapsed)} ms`);
+});
+
+
+/* ------------------------------------------------------------------ */
+/* Vocabulary: a category named in the SOW knows its members            */
+/* ------------------------------------------------------------------ */
+console.log("\n▶ Vocabulary: a category named in the SOW recognises its members");
+
+/** One excluded item against the sample storefront, which includes Stripe checkout. */
+const EXCLUDING = (...excluded: string[]) => scope({ title: "Storefront", included: STORE_INCLUDED, excluded });
+
+/**
+ * Per category: an excluded item naming it, a pull request building one of
+ * its members (a change order), and a look-alike that is not one (never a
+ * change order).
+ */
+const CATEGORY_CASES: Array<{ id: string; excluded: string; builds: PullRequest; lookAlike: PullRequest }> = [
+  {
+    id: "native_mobile_app",
+    excluded: "native mobile apps",
+    builds: pr("iOS app shell with product catalogue", ["ios/AcmeStore/AppDelegate.swift", "ios/AcmeStore/CatalogViewController.swift"]),
+    lookAlike: pr("Home screen icons for the shopping cart", ["public/apple-touch-icon.png", "public/android-chrome-192x192.png", M("public/site.webmanifest")]),
+  },
+  {
+    id: "payment_provider",
+    excluded: "payment providers other than stripe",
+    builds: pr("Add Klarna payment provider", ["src/payments/klarna-provider.ts", M("src/checkout/cart.ts")]),
+    lookAlike: pr("Square image crop on product catalogue cards", [M("src/catalog/ProductCard.tsx")]),
+  },
+  {
+    id: "social_login",
+    excluded: "social login other than google",
+    builds: pr("Sign in with Apple", ["src/auth/apple-signin.ts", M("src/auth/login.ts")]),
+    lookAlike: pr("Apple Pay button on Stripe checkout", ["src/checkout/ApplePayButton.tsx"]),
+  },
+  {
+    id: "multi_language",
+    excluded: "localisation",
+    builds: pr("German storefront", ["src/locales/de/common.json", M("src/catalog/ProductPage.tsx")]),
+    lookAlike: pr("Fix error message translations", [M("src/i18n/en.json")]),
+  },
+  {
+    id: "analytics",
+    excluded: "analytics",
+    builds: pr("Track add-to-cart", ["src/analytics/mixpanel.ts", M("src/checkout/cart.ts")]),
+    lookAlike: pr("Shopping cart: parse the path segment of the URL", [M("src/cart/url-segment.ts")]),
+  },
+  {
+    id: "crm",
+    excluded: "crm integration",
+    builds: pr("Sync customers", ["src/crm/hubspot.ts"]),
+    lookAlike: pr("Shopping cart contact form", ["src/cart/ContactForm.tsx"]),
+  },
+  {
+    id: "email_marketing",
+    excluded: "email marketing",
+    builds: pr("Abandoned cart emails", ["src/marketing/klaviyo.ts", M("src/checkout/cart.ts")]),
+    lookAlike: pr("SendGrid order confirmation for the shopping cart", ["src/email/sendgrid.ts"]),
+  },
+  {
+    id: "helpdesk",
+    excluded: "helpdesk integration",
+    builds: pr("Ticket on failed order", ["src/support/zendesk.ts"]),
+    lookAlike: pr("Shopping cart support page copy", [M("src/cart/SupportCopy.tsx")]),
+  },
+  {
+    id: "live_chat",
+    excluded: "live chat",
+    builds: pr("Chat widget on product pages", ["src/chat/intercom.ts"]),
+    lookAlike: pr("AI chatbot for product questions", ["src/chatbot/bot.ts"]),
+  },
+  {
+    id: "chatbot",
+    excluded: "ai chatbot",
+    builds: pr("Product questions assistant", ["src/assistant/openai-chat.ts"]),
+    lookAlike: pr("OpenAI product descriptions for the catalogue", ["src/catalog/openai-descriptions.ts"]),
+  },
+  {
+    id: "search_engine",
+    excluded: "third-party search engines",
+    builds: pr("Product search index", ["src/search/algolia.ts"]),
+    lookAlike: pr("Open search panel on product catalogue", [M("src/catalog/SearchPanel.tsx")]),
+  },
+  {
+    id: "marketplace",
+    excluded: "multi-vendor marketplace functionality",
+    builds: pr("Vendor onboarding and payouts", ["src/vendors/onboarding.ts", M("src/catalog/product.ts")]),
+    lookAlike: pr("Update vendored chart library for the shopping cart", [M("vendor/chart.js"), M("src/cart/Chart.tsx")]),
+  },
+  {
+    id: "data_migration",
+    excluded: "data migration from the legacy platform",
+    builds: pr("Import legacy customers from Magento", ["scripts/data-migration/magento-customers.ts", M("src/accounts/customer.ts")]),
+    lookAlike: pr("Shopping cart table", ["db/migrations/0012_cart.sql", M("src/cart/cart.ts")]),
+  },
+  {
+    id: "subscriptions",
+    excluded: "product subscriptions",
+    builds: pr("Subscribe and save: recurring orders", ["src/subscriptions/plan.ts", M("src/checkout/cart.ts")]),
+    lookAlike: pr("GraphQL subscription for shopping cart updates", ["src/graphql/cartSubscription.ts"]),
+  },
+  {
+    id: "loyalty",
+    excluded: "loyalty programme",
+    builds: pr("Loyalty points on orders", ["src/loyalty/points.ts", M("src/checkout/cart.ts")]),
+    lookAlike: pr("Shopping cart breakpoint fix", [M("src/cart/Cart.css")]),
+  },
+  {
+    id: "push_notifications",
+    excluded: "push notifications",
+    builds: pr("Order status alerts", ["src/notifications/push/fcm.ts"]),
+    lookAlike: pr("Shopping cart: router push after checkout", [M("src/cart/Cart.tsx")]),
+  },
+  {
+    id: "sms",
+    excluded: "sms notifications",
+    builds: pr("Order updates by text", ["src/notifications/sms/twilio.ts"]),
+    lookAlike: pr("Shopping cart message banner", [M("src/cart/MessageBanner.tsx")]),
+  },
+  {
+    id: "notifications",
+    excluded: "notifications other than email",
+    builds: pr("WhatsApp order updates", ["src/notifications/whatsapp.ts", M("src/notifications/order-status.ts")]),
+    lookAlike: pr("Order shipped email notification", ["src/notifications/email/shipped.ts"]),
+  },
+  {
+    id: "maps",
+    excluded: "store locator",
+    builds: pr("Find a store", ["src/stores/GoogleMap.tsx"]),
+    lookAlike: pr("Sitemap for the product catalogue", ["src/seo/sitemap.ts"]),
+  },
+  {
+    id: "video",
+    excluded: "video hosting",
+    builds: pr("Product videos", ["src/video/vimeo.ts"]),
+    lookAlike: pr("Footer YouTube icon link", [M("src/layout/Footer.tsx")]),
+  },
+  {
+    id: "gift_cards",
+    excluded: "gift certificates",
+    builds: pr("E-gift cards at checkout", ["src/checkout/egift-cards.ts"]),
+    lookAlike: pr("Gift wrapping option on the shopping cart", ["src/cart/gift-wrap.tsx"]),
+  },
+  {
+    id: "two_factor",
+    excluded: "two-factor authentication",
+    builds: pr("TOTP setup", ["src/auth/totp.ts"]),
+    lookAlike: pr("Email OTP for passwordless login", ["src/auth/email-otp.ts"]),
+  },
+  {
+    id: "shipping_integration",
+    excluded: "shipping carrier integrations",
+    builds: pr("Live rates at checkout", ["src/shipping/shipstation.ts"]),
+    lookAlike: pr("Shopping cart: ups and downs of quantity stepper", [M("src/cart/Stepper.tsx")]),
+  },
+  {
+    id: "tax_service",
+    excluded: "tax calculation service",
+    builds: pr("Sales tax at checkout", ["src/tax/avalara.ts"]),
+    lookAlike: pr("Show VAT line in the shopping cart", [M("src/cart/Totals.tsx")]),
+  },
+  {
+    id: "erp_accounting",
+    excluded: "erp integration",
+    builds: pr("Push orders", ["src/erp/netsuite.ts"]),
+    lookAlike: pr("Shopping cart order summary", [M("src/cart/Summary.tsx")]),
+  },
+  {
+    id: "cms",
+    excluded: "headless cms",
+    builds: pr("Product content", ["src/cms/contentful.ts"]),
+    lookAlike: pr("Product catalogue content tweaks", [M("src/catalog/content.ts")]),
+  },
+  {
+    id: "review_platform",
+    excluded: "review platform integration",
+    builds: pr("Product reviews widget", ["src/reviews/trustpilot.ts"]),
+    lookAlike: pr("Shopping cart review step", [M("src/cart/ReviewStep.tsx")]),
+  },
+  {
+    id: "ab_testing",
+    excluded: "a/b testing",
+    builds: pr("Checkout experiment", ["src/experiments/optimizely.ts"]),
+    lookAlike: pr("Shopping cart unit tests", [M("src/cart/cart.ts")]),
+  },
+  {
+    id: "third_party_integrations",
+    excluded: "third-party integrations",
+    builds: pr("Sync orders to Salesforce", ["src/integrations/salesforce/client.ts", M("src/checkout/cart.ts")]),
+    lookAlike: pr("Stripe checkout fix", [M("src/integrations/stripe.ts")]),
+  },
+];
+
+test("every category in the vocabulary has a true positive and a look-alike here", () => {
+  const covered = new Set(CATEGORY_CASES.map((c) => c.id));
+  for (const category of VOCABULARY) assert.ok(covered.has(category.id), `no test for ${category.id}`);
+  assert.strictEqual(covered.size, VOCABULARY.length);
+});
+
+for (const { id, excluded, builds, lookAlike } of CATEGORY_CASES) {
+  test(`${id}: "${excluded}" catches "${builds.title}", not "${lookAlike.title}"`, () => {
+    const baseline = EXCLUDING(excluded);
+    expectState(baseline, builds, "CHANGE_REQUIRED");
+    expectNotExcluded(baseline, lookAlike);
+  });
+}
+
+test("the reported item names what was built in the contract's words, and the change order says it", () => {
+  const result = evaluate(EXCLUDING("payment providers other than stripe"), pr("Add Klarna", ["src/payments/klarna.ts"]));
+  assert.ok(result.detectedDelta.some((d) => d.includes("Klarna (payment providers)")), result.detectedDelta.join(" | "));
+  const draft = draftChangeOrder({ evaluation: result, pullRequestTitle: "Add Klarna" });
+  assert.ok(draft && draft.subject.includes("klarna (payment providers)"), draft?.subject);
+});
+
+test("an approved change order covers the member it names, not another member of the category", () => {
+  const baseline = EXCLUDING("payment providers other than stripe");
+  const klarna = pr("Add Klarna", ["src/payments/klarna.ts"]);
+  const order = (title: string) => ({
+    id: "CO-1",
+    contractId: "c",
+    baselineVersion: "v1",
+    title,
+    reason: title,
+    authorizedSubsystems: [],
+    hours: { min: 1, max: 1 },
+    amount: 0,
+    status: "APPROVED" as const,
+  });
+  const approved = (title: string) =>
+    evaluateCommercialScope({ baseline, pullRequest: klarna, issue: pullRequestAsWorkItem(), approvedChangeOrders: [order(title)], policyMode: "REVIEW" }).state;
+  assert.strictEqual(approved("Add Klarna as a payment provider"), "APPROVED_CHANGE");
+  assert.strictEqual(approved("Add PayPal as a payment provider"), "CHANGE_REQUIRED");
+});
+
+console.log("\n▶ Vocabulary: strength needs corroboration");
+
+test("a member named only in a title, with nothing naming its category, is a question", () => {
+  const mobile = EXCLUDING("native mobile apps");
+  expectReview(mobile, pr("React Native app: cart screen", ["apps/mobile/src/screens/CartScreen.tsx"]));
+  expectReview(EXCLUDING("payment providers other than stripe"), pr("Add PayPal to checkout", ["src/checkout/paypal.ts", M("src/checkout/cart.ts")]));
+  // The category's own words, or a path only that work has, make it a change order.
+  expectState(mobile, pr("React Native app: cart screen", ["apps/mobile/src/screens/CartScreen.tsx"], { branch: "feat/mobile-app" }), "CHANGE_REQUIRED");
+  expectState(mobile, pr("Cart screen", ["android/app/src/main/java/com/acme/CartActivity.kt"]), "CHANGE_REQUIRED");
+  expectState(mobile, pr("SwiftUI product list", ["App/Views/ProductList.swift"]), "CHANGE_REQUIRED");
+  expectState(mobile, pr("Flutter cart screen", ["lib/screens/cart.dart", "pubspec.yaml"]), "CHANGE_REQUIRED");
+});
+
+test("a member only described, or only in tests and docs, is a question", () => {
+  const baseline = EXCLUDING("payment providers other than stripe");
+  const described = expectReview(baseline, pr("Checkout tidy-up", [M("src/checkout/cart.ts")], { body: "Prepares the PayPal payment provider for next sprint." }));
+  assert.ok(described.detectedDelta.some((d) => d.includes("no new code shows it")), described.detectedDelta.join(" | "));
+  expectReview(baseline, pr("Klarna provider tests", ["src/payments/klarna-provider.test.ts"]));
+});
+
+test("a member's own name never corroborates it: 'pay' in PayPal is not 'payment'", () => {
+  expectReview(EXCLUDING("payment providers other than stripe"), pr("PayPal", ["src/checkout/PayPalButton.tsx"]));
+  expectState(EXCLUDING("payment providers other than stripe"), pr("Wallets", ["src/payments/PayPalButton.tsx"]), "CHANGE_REQUIRED");
+});
+
+test("case-split names read whole: PayPal, GitHub, iOS, ApplePay", () => {
+  assert.deepStrictEqual(vocabularyWords("src/auth/GitHubSignIn.tsx", "path"), ["src", "|", "auth", "|", "github", "signin", "|", "tsx"]);
+  assert.deepStrictEqual(vocabularyWords("iOS app: ApplePayButton", "prose"), ["ios", "app", "|", "applepay", "button"]);
+  // A space keeps words apart: "Open search" is not OpenSearch.
+  assert.deepStrictEqual(vocabularyWords("Open search panel", "prose"), ["open", "search", "panel"]);
+  expectState(EXCLUDING("social login other than google"), pr("GitHub sign-in", ["src/auth/GitHubSignIn.tsx"]), "CHANGE_REQUIRED");
+});
+
+test("a member is never evidence for an included category", () => {
+  const baseline = scope({ included: ["analytics dashboard", "shopping cart"] });
+  expectReview(baseline, pr("Add Mixpanel", ["src/tracking/mixpanel.ts"]));
+  const social = scope({ included: ["social login"] });
+  expectReview(social, pr("Add Facebook pixel", ["src/marketing/facebook-pixel.ts"]));
+});
+
+console.log("\n▶ Vocabulary: exceptions and what the SOW includes");
+
+test("an exception still clears the member it names", () => {
+  const baseline = EXCLUDING("payment providers other than stripe", "social login other than google", "analytics other than google analytics");
+  expectState(baseline, pr("Stripe webhooks for refunds", ["src/payments/stripe/webhooks.ts", M("src/checkout/cart.ts")]), "IN_SCOPE");
+  expectNotExcluded(baseline, pr("Google sign-in", ["src/auth/google.ts", M("src/auth/login.ts")]));
+  // GA4 is Google Analytics: the item's own word "analytics" in its path is the allowed work.
+  expectNotExcluded(baseline, pr("GA4 ecommerce events for the shopping cart", ["src/analytics/ga4.ts", M("src/checkout/cart.ts")]));
+  expectState(baseline, pr("Mixpanel and GA4 events for the shopping cart", ["src/analytics/mixpanel.ts", "src/analytics/ga4.ts"]), "CHANGE_REQUIRED");
+  expectState(baseline, pr("Facebook login", ["src/auth/facebook.ts", M("src/auth/login.ts")]), "CHANGE_REQUIRED");
+  // Typed with "save for", as a PM writes it: still the exception.
+  const saveFor = EXCLUDING("payment providers save for stripe");
+  expectNotExcluded(saveFor, pr("Stripe payment provider: 3D Secure", [M("src/payments/providers/stripe.ts"), M("src/checkout/cart.ts")]));
+  expectState(saveFor, pr("Add Klarna payment provider", ["src/payments/klarna-provider.ts"]), "CHANGE_REQUIRED");
+  expectNotExcluded(EXCLUDING("gift cards"), pr("Save for later in the shopping cart", ["src/cart/save-for-later.ts"]));
+});
+
+test("work next to an exception or an included member may be that allowed work: a question", () => {
+  const baseline = EXCLUDING("payment providers other than stripe");
+  expectReview(baseline, pr("Apple Pay through the Stripe Payment Element", ["src/payments/apple-pay.ts"]));
+  expectReview(baseline, pr("Add Klarna", ["src/payments/klarna.ts", M("src/payments/stripe.ts")]));
+  expectState(baseline, pr("Add Klarna", ["src/payments/klarna.ts"]), "CHANGE_REQUIRED");
+});
+
+test("a member the SOW includes elsewhere stays in scope against an excluded category", () => {
+  const baseline = scopeFromSow("# SOW\n## 1.1 Checkout\nIncludes payments via Stripe and a shopping cart.\nOut of scope: payment providers.\n");
+  expectState(baseline, pr("Stripe payment provider: webhooks", [M("src/payments/providers/stripe.ts")]), "IN_SCOPE");
+  expectState(baseline, pr("PayPal payment provider", ["src/payments/providers/paypal.ts"]), "CHANGE_REQUIRED");
+  const bracketed = scope({ included: STORE_INCLUDED, excluded: ["payment providers [paypal, klarna]"] });
+  expectNotExcluded(bracketed, pr("Stripe payment provider: 3D Secure", [M("src/payments/providers/stripe.ts"), M("src/checkout/cart.ts")]));
+  // A brand in an included list is not an included login.
+  const brands = scope({ included: ["product search by brand (apple, samsung)", "email login"], excluded: ["social login"] });
+  expectState(brands, pr("Sign in with Apple", ["src/auth/apple-signin.ts"]), "CHANGE_REQUIRED");
+});
+
+test("what an included item says it leaves out ('not Apple') is excluded", () => {
+  const baseline = scopeFromSow("# SOW\n## 1.1 Accounts\nIncludes email and password login and social login (Google and Facebook only, not Apple).\n");
+  expectState(baseline, pr("Apple sign-in", ["src/auth/social/apple.ts", M("src/auth/social/index.ts")]), "CHANGE_REQUIRED");
+  expectState(baseline, pr("Google sign-in", ["src/auth/social/google.ts"]), "IN_SCOPE");
+  expectNotExcluded(baseline, pr("Apple touch icon for the login page", ["public/apple-touch-icon.png", M("src/auth/LoginPage.tsx")]));
+});
+
+test("members listed after an exception may belong to it: a question", () => {
+  expectReview(BULLET_SOW("All third-party integrations except Stripe, including CRM and ERP systems"), pr("Sync customers to the CRM", ["src/integrations/crm/hubspot-sync.ts", M("src/checkout/cart.ts")]));
+  expectReview(BULLET_SOW("Payment gateways other than Stripe, such as PayPal or Klarna"), pr("Add PayPal", ["src/payments/paypal.ts"]));
+});
+
+console.log("\n▶ Vocabulary: qualified and additive categories");
+
+test("'multi-language' and 'additional languages' ask, unless the work says it", () => {
+  const multi = EXCLUDING("multi-language support");
+  expectReview(multi, pr("French translations for product pages", ["src/i18n/fr.json", "src/i18n/index.ts", M("src/catalog/ProductPage.tsx")]));
+  expectState(multi, pr("Multi-language: add German", ["src/locales/de/common.json"]), "CHANGE_REQUIRED");
+  expectReview(EXCLUDING("additional languages"), pr("French translations for product pages", ["src/i18n/fr.json"]));
+  // An English-only change is no language at all.
+  expectNotExcluded(multi, pr("Fix error message translations", [M("src/i18n/en.json"), M("src/locales/en-GB/errors.json")]));
+  expectNotExcluded(EXCLUDING("translations"), pr("Animate the shopping cart drawer with translateX", [M("src/cart/Drawer.css")]));
+});
+
+test("'additional', 'other' and 'custom' ask, unless the work says it", () => {
+  expectReview(EXCLUDING("additional payment methods"), pr("Klarna payment method", ["src/payments/klarna.ts"]));
+  expectState(EXCLUDING("additional payment methods"), pr("Klarna as an additional payment method", ["src/payments/klarna.ts"]), "CHANGE_REQUIRED");
+  expectReview(EXCLUDING("custom integrations"), pr("Sync orders to Salesforce", ["src/integrations/salesforce/client.ts", M("src/checkout/cart.ts")]));
+  expectReview(EXCLUDING("advanced analytics"), pr("Mixpanel events", ["src/analytics/mixpanel.ts", M("src/checkout/cart.ts")]));
+});
+
+test("an item naming one variant ('native iOS app') only asks about another", () => {
+  const ios = EXCLUDING("native ios app");
+  expectState(ios, pr("Product list", ["ios/App/ProductList.swift"]), "CHANGE_REQUIRED");
+  expectReview(ios, pr("Cart screen", ["android/app/src/main/java/com/acme/CartActivity.kt"]));
+  expectState(EXCLUDING("native ios or android apps"), pr("Cart screen", ["android/app/src/main/java/com/acme/CartActivity.kt"]), "CHANGE_REQUIRED");
+});
+
+console.log("\n▶ Vocabulary: look-alikes are never members");
+
+test("favicons and web-app icons are not native apps", () => {
+  const mobile = EXCLUDING("native mobile apps");
+  expectNotExcluded(mobile, pr("Shopping cart icons", ["public/android-chrome-512x512.png", "public/apple-touch-icon.png", "public/favicon.ico"]));
+  expectState(mobile, pr("Fix iOS Safari keyboard overlap on the shopping cart", [M("src/cart/Cart.css")]), "IN_SCOPE");
+  expectState(mobile, pr("Mobile responsive shopping cart layout", [M("src/cart/Cart.css")]), "IN_SCOPE");
+  expectNotExcluded(mobile, pr("Shopping cart pricing service", ["src/main/kotlin/com/acme/CartService.kt"]));
+  expectNotExcluded(mobile, pr("Shopping cart: detect iOS for the share sheet", ["src/cart/isIOS.ts"]));
+});
+
+test("Apple Pay is not Sign in with Apple; Google Analytics is not Google sign-in", () => {
+  const social = EXCLUDING("social login");
+  expectState(social, pr("Apple Pay on Stripe checkout", ["src/payments/apple-pay.ts"]), "IN_SCOPE");
+  expectNotExcluded(social, pr("Google Analytics on the login page", ["src/analytics/google-analytics.ts", M("src/auth/LoginPage.tsx")]));
+  expectNotExcluded(social, pr("GitHub Actions: run login tests", [".github/workflows/ci.yml"]));
+  expectState(social, pr("Google sign-in", ["src/auth/google.ts"]), "CHANGE_REQUIRED");
+  expectState(EXCLUDING("payment providers other than stripe"), pr("Apple Pay express checkout", ["src/payments/apple-pay.ts"]), "CHANGE_REQUIRED");
+});
+
+test("import statements and schema migrations are not a data migration", () => {
+  const baseline = EXCLUDING("data migration from the legacy platform");
+  expectState(baseline, pr("Fix import order in the shopping cart", [M("src/cart/cart.ts")]), "IN_SCOPE");
+  expectNotExcluded(baseline, pr("Shopping cart schema", ["prisma/migrations/20260101_cart/migration.sql"]));
+  expectNotExcluded(baseline, pr("Add magento_id to products", ["db/migrations/0042_add_magento_id.sql"]));
+  expectState(baseline, pr("WooCommerce CSV import", ["src/migration/woocommerce.ts"]), "CHANGE_REQUIRED");
+});
+
+test("vendor/ directories and vendor chunks are not a marketplace", () => {
+  const baseline = EXCLUDING("multi-vendor marketplace");
+  expectNotExcluded(baseline, pr("Split vendor chunk", [M("webpack.config.js")]));
+  expectState(baseline, pr("Show product vendor on the product catalogue", [M("src/catalog/Product.tsx")]), "IN_SCOPE");
+  expectNotExcluded(baseline, pr("Best sellers row on the product catalogue", [M("src/catalog/BestSellers.tsx")]));
+  expectState(baseline, pr("Seller dashboard", ["src/sellers/dashboard.tsx"]), "CHANGE_REQUIRED");
+});
+
+test("a subscription in GraphQL, websockets or a newsletter is not a product subscription", () => {
+  const baseline = EXCLUDING("product subscriptions");
+  expectNotExcluded(baseline, pr("GraphQL subscription for shopping cart updates", ["src/graphql/cartSubscription.ts"]));
+  expectNotExcluded(baseline, pr("Shopping cart: subscribe to stock updates", ["src/cart/useStockSubscription.ts"]));
+  expectNotExcluded(baseline, pr("Newsletter subscribe form", ["src/newsletter/Subscribe.tsx"]));
+  expectNotExcluded(baseline, pr("Shopping cart websocket subscription", ["src/realtime/socket.ts"]));
+});
+
+test("payment work stays in scope when Stripe checkout is included", () => {
+  const baseline = EXCLUDING("payment providers other than stripe", "additional payment methods");
+  expectState(baseline, pr("Fix payment form validation on the shopping cart", [M("src/checkout/PaymentForm.tsx"), M("src/checkout/cart.ts")]), "IN_SCOPE");
+  expectState(baseline, pr("Stripe payment intents retry", [M("src/payments/stripe.ts")]), "IN_SCOPE");
+  expectState(baseline, pr("Stripe Payment Request button", [M("src/payments/stripe/PaymentRequest.tsx")]), "IN_SCOPE");
+});
+
+test("other look-alikes: git push, router push, Array.map, sitemap, SEO, passwordless OTP", () => {
+  expectNotExcluded(EXCLUDING("push notifications"), pr("CI: push docker image", [M(".github/workflows/deploy.yml")]));
+  expectNotExcluded(EXCLUDING("store locator"), pr("Refactor shopping cart map helper", [M("src/cart/mapItems.ts")]));
+  expectNotExcluded(EXCLUDING("search engine optimisation"), pr("Algolia search index", ["src/search/algolia.ts"]));
+  expectNotExcluded(EXCLUDING("two-factor authentication"), pr("Magic link login", ["src/auth/magic-link.ts"]));
+});
+
+console.log("\n▶ Vocabulary: SOW wording read end to end");
+
+test("new exclusion wording reaches the vocabulary", () => {
+  const sow = (line: string) => scopeFromSow(`# SOW\n## 1.1 Storefront\nIncludes product catalogue, shopping cart and Stripe checkout.\n${line}\n`);
+  const ios = pr("iOS app shell with product catalogue", ["ios/AcmeStore/AppDelegate.swift"]);
+  for (const line of [
+    "We will not build native mobile apps.",
+    "The Agency will not develop native mobile apps.",
+    "Native mobile apps are not part of this engagement.",
+    "This phase does not cover native mobile apps.",
+    "No native mobile apps will be built.",
+    "Neither native mobile apps nor gift cards are included.",
+    "The Agency is not responsible for building native mobile apps.",
+  ]) {
+    expectState(sow(line), ios, "CHANGE_REQUIRED");
+  }
+  expectState(sow("The project shall not include the development of native mobile applications."), pr("Android app: shopping cart", ["android/app/src/main/java/com/acme/CartActivity.kt"]), "CHANGE_REQUIRED");
+  // A requirement is not scope; an assumption about the Client is not excluded work.
+  expectNotExcluded(sow("The storefront must not include native app banners."), ios);
+  expectState(sow("The Client will not provide product photography."), pr("Product photography for the product catalogue", ["src/catalog/photos.ts"]), "IN_SCOPE");
+  const mixed = scopeFromSow(
+    "# SOW\n## 1.1 Storefront\nIncludes product catalogue, shopping cart and Stripe checkout.\n\n## 2. Assumptions and Exclusions\n- Client will provide product copy\n- Native mobile apps\n- Payment providers other than Stripe\n",
+  );
+  expectState(mixed, pr("Android app: cart", ["android/app/src/main/java/com/acme/Cart.kt"]), "CHANGE_REQUIRED");
+  expectState(mixed, pr("Klarna payments", ["src/payments/klarna.ts"]), "CHANGE_REQUIRED");
+  expectNotExcluded(mixed, pr("Product copy updates on the product catalogue", [M("src/catalog/copy.ts")]));
+});
+
+test("the demo's largest vocabulary-heavy check stays fast", () => {
+  const camel = "PayPalApplePayGoogleAnalyticsGitHubSignInReactNativeSwiftUIiOSAndroidLanguageSwitcher";
+  const dirs = ["ios", "android", "i18n/fr", "payments/paypal", "auth/apple", "analytics/mixpanel", "vendors/onboarding", "loyalty/points", "integrations/salesforce", "locales/de"];
+  const files = Array.from({ length: 300 }, (_, i) => `src/${dirs[i % dirs.length]}/${camel}${i}.${i % 2 ? "swift" : "json"}`);
+  const words = "paypal klarna apple pay google analytics sign in with apple ios android swiftui react native french translations i18n mixpanel hubspot vendor onboarding magento import subscribe and save loyalty points ";
+  const body = words.repeat(Math.ceil(40_000 / words.length)).slice(0, 40_000);
+  const names = CATEGORY_CASES.map((c) => c.excluded);
+  const excluded = Array.from({ length: 500 }, (_, i) => `${names[i % names.length]} ${i}`);
+  const included = Array.from({ length: 500 }, (_, i) => `stripe checkout, google sign-in and plausible analytics ${i} (not apple, no paypal)`);
+  const clauses: Clause[] = [];
+  for (let i = 0; i < 500; i += 100) clauses.push({ included: included.slice(i, i + 100), excluded: excluded.slice(i, i + 100) });
+  const baseline = scope(...clauses);
+  const pullRequest = pr("PayPal Apple Pay iOS React Native French translations", files, { body });
+  evaluate(baseline, pullRequest);
+  const elapsed = time(() => evaluate(baseline, pullRequest));
+  assert.ok(elapsed < 600, `took ${Math.round(elapsed)} ms`);
+  const camelBody = time(() => evaluate(baseline, pr("x", files, { body: "PayPal".repeat(6700) })));
+  assert.ok(camelBody < 600, `one 40,000-character camelCase word took ${Math.round(camelBody)} ms`);
 });
 
 /* ------------------------------------------------------------------ */

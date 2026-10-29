@@ -5,6 +5,17 @@ import type {
   PullRequest,
   ScopeBaseline,
 } from "./types.js";
+import {
+  allMembersOf,
+  categoriesNamedIn,
+  facetsNamedIn,
+  membersIn,
+  membersOf,
+  type NamedMembers,
+  startsWithMember,
+  type VocabularyCategory,
+  VocabularyEvidence,
+} from "./vocabulary.js";
 
 /**
  * Contract Phrase Matcher.
@@ -15,10 +26,14 @@ import type {
  * exclusion phrases with words taken from the pull request and its linked
  * issue, so whatever wording a contract uses can be matched.
  *
- * It is deliberately literal: words are split, normalised and lightly stemmed,
- * never interpreted. Where a word was found matters as much as whether it was:
- * changed file paths and titles say what was built ("code" and "title"
- * evidence), while descriptions only say what was talked about ("text").
+ * The SOW's words are matched literally: split, normalised and lightly
+ * stemmed, never interpreted. Where a word was found matters as much as
+ * whether it was: changed file paths and titles say what was built ("code"
+ * and "title" evidence), while descriptions only say what was talked about
+ * ("text"). On top of that, an excluded item that names a category the
+ * reviewed vocabulary knows ("native mobile apps", "payment providers") is
+ * also matched on that category's members ("React Native", "Klarna"); see
+ * vocabulary.ts.
  */
 
 export type EvidenceStrength = "code" | "title" | "text";
@@ -62,7 +77,37 @@ export interface ContractPhraseMatch {
    * reports"), so it may be the work the contract allows.
    */
   exceptionQuestion?: { exception: string; listedAfter: boolean };
+  /**
+   * Matched through the vocabulary: the pull request builds `members` of a
+   * category the item names (`named`, as the SOW words it). A weak one says
+   * why it is only a question.
+   */
+  vocabulary?: VocabularyMatchInfo;
   evidence: PhraseEvidence[];
+}
+
+export interface VocabularyMatchInfo {
+  category: string;
+  /** The SOW's words for the category, e.g. "payment providers". */
+  named: string;
+  /** What the pull request builds, e.g. ["Klarna"]. */
+  members: string[];
+  /**
+   * Why a weak match is only a question:
+   * - "uncorroborated": built, but nothing next to it names the category;
+   * - "described": only in descriptions, or only in tests and docs;
+   * - "qualifier": the item is qualified ("advanced analytics") and the pull
+   *   request never says the qualifier;
+   * - "additive": "additional payment providers" built as a provider the
+   *   pull request never calls additional, so it may be the one the SOW means;
+   * - "listedAfter": listed after an exception, so it may be part of it;
+   * - "exception": the pull request also works on what the item leaves out
+   *   or the SOW includes ("Apple Pay" next to Stripe changes), so it may be
+   *   that allowed work.
+   */
+  reason?: "uncorroborated" | "described" | "qualifier" | "additive" | "listedAfter" | "exception";
+  qualifier?: string;
+  exception?: string;
 }
 
 export interface ContractMatchInput {
@@ -361,10 +406,14 @@ interface PhrasePart {
    * reports" leaves out standard reports, not every report.
    */
   except: Term[][];
+  /** `except` without the members the SOW includes elsewhere: what the item itself says it leaves out. */
+  explicitExcept: Term[][];
   /** Qualified exceptions without their qualifier: "report" for "other than standard reports". */
   plainExcept: Term[][];
   /** The exceptions as the SOW wrote them, for the reason given to a person. */
   exceptText?: string;
+  /** The exception items themselves ("stripe"), for the vocabulary. */
+  exceptItems: string[];
   /** The same text, head and exceptions match the same way, so a match is worked out once. */
   key: string;
   /** Listed after an exception, so it may be excluded or part of the exception: only ever a question. */
@@ -430,11 +479,19 @@ function listItems(text: string): string[] {
  * "Social login (Google, Facebook)" -> "social login", and "google" and
  * "facebook", each of which also needs "social" or "login" next to it.
  */
-function partsOf(phrase: string): PhrasePart[] {
+function partsOf(phrase: string, implicitExceptions: readonly string[] = []): PhrasePart[] {
   // "CRM integrations, including but not limited to Salesforce": the padding
   // is dropped, so "salesforce" isn't held to words no pull request uses.
+  // "Payment providers save for stripe", as a PM types it: "save for" before
+  // a name the vocabulary knows is an exception ("save for later" is not).
+  // "A/B testing" and "I/O" are one word, not a list of "a" and "b testing".
   const [kept, exceptionItems, laterExamples] = splitException(
-    plainHyphens(phrase).replace(/\u0000/g, " ").replace(NOT_LIMITED_TO, ","),
+    withSaveForExceptions(
+      plainHyphens(phrase)
+        .replace(/\u0000/g, " ")
+        .replace(NOT_LIMITED_TO, ",")
+        .replace(/(?<![A-Za-z0-9])([A-Za-z])\/([A-Za-z])(?![A-Za-z0-9])/g, "$1-$2"),
+    ),
   );
   // "Reports other than standard reports": the exception keeps its qualifier,
   // or it would name every report. Work named without the qualifier may be
@@ -452,9 +509,20 @@ function partsOf(phrase: string): PhrasePart[] {
       plainExcept.push(plain);
     } else except.push(plain);
   }
-  const named = exceptionItems.slice(0, 3).map((item) => item.replace(/^(?:the|a|an)\s+/i, ""));
-  const exceptText =
-    named.length === 0 ? undefined : `${named.join(" and ")}${exceptionItems.length > named.length ? " and others" : ""}`;
+  const explicitExcept = except === NO_EXCEPTIONS ? NO_EXCEPTIONS : [...except];
+  // Members the SOW includes elsewhere ("Stripe checkout") are left out of an
+  // excluded category ("payment providers") the way an exception is.
+  for (const item of implicitExceptions) {
+    const terms = termsOf(item, "inclusion");
+    if (terms.length === 0) continue;
+    if (except === NO_EXCEPTIONS) except = [];
+    except.push(terms);
+  }
+  const named = (exceptionItems.length > 0 ? exceptionItems : implicitExceptions)
+    .slice(0, 3)
+    .map((item) => item.replace(/^(?:the|a|an)\s+/i, ""));
+  const allNamed = exceptionItems.length > 0 ? exceptionItems.length : implicitExceptions.length;
+  const exceptText = named.length === 0 ? undefined : `${named.join(" and ")}${allNamed > named.length ? " and others" : ""}`;
   // Every example in a bracket shares its head's words, worked out once.
   const heads = new Map<string, Term | undefined>();
   const headTerm = (head: string) => {
@@ -468,8 +536,10 @@ function partsOf(phrase: string): PhrasePart[] {
     head: head ? headTerm(head) : undefined,
     headText: head || undefined,
     except,
+    explicitExcept,
     plainExcept,
     exceptText,
+    exceptItems: exceptionItems,
     weakOnly,
     key: [text, head ?? "", weakOnly ? "weak" : ""].join("\u0001"),
   });
@@ -507,6 +577,18 @@ function partsOf(phrase: string): PhrasePart[] {
   return parts.filter((p) => !seen.has(p.key) && Boolean(seen.add(p.key)));
 }
 
+/**
+ * "save for stripe" -> "except for stripe" when a vocabulary member follows,
+ * so a typed "payment providers save for stripe" keeps Stripe in scope.
+ * "save for later" stays a feature.
+ */
+function withSaveForExceptions(text: string): string {
+  if (!/\bsave\s+for\b/i.test(text)) return text;
+  return text.replace(/\bsave\s+for\s+(?=\S)/gi, (marker: string, at: number, all: string) =>
+    startsWithMember(all.slice(at + marker.length, at + marker.length + 80)) ? "except for " : marker,
+  );
+}
+
 const isOpen = (ch: string) => ch === "(" || ch === "[";
 const isClose = (ch: string) => ch === ")" || ch === "]";
 
@@ -534,6 +616,7 @@ function oneLevelOfBrackets(text: string): string {
 
 /** The exceptions of an item that has none, shared, so such parts are matched once across items. */
 const NO_EXCEPTIONS: Term[][] = [];
+const NO_LABELS: ReadonlySet<string> = new Set();
 
 /** Where the bracket open at `from` closes: the index of its ")" or "]", or the end of `text`. */
 function closingBracket(text: string, from: number): number {
@@ -667,6 +750,11 @@ function splitException(phrase: string): [string, string[], string[]] {
 /* ------------------------------------------------------------------ */
 
 interface EvidenceDoc extends PhraseEvidence {
+  /** The path or text itself, for the vocabulary. */
+  text: string;
+  kind: "path" | "prose";
+  /** Its group (see Evidence.groups), or -1 for a description. */
+  group: number;
   tokens: Set<string>;
   /** Adjacent word pairs, for titles and descriptions. */
   pairs?: Set<string>;
@@ -705,6 +793,8 @@ interface Evidence {
   exceptNamed: WeakMap<Term[][], Map<Scope, boolean>>;
   /** Per group, how many of the current part's terms it holds; all zero between parts. */
   counts: Int32Array;
+  /** The vocabulary's reading of the same documents, made on first use. */
+  vocabulary: VocabularyEvidence<EvidenceDoc>;
 }
 
 /** "Revert …", "Removes …", "chore(cart): drop …": the pull request takes work out. */
@@ -726,6 +816,7 @@ function buildDocs(pullRequest: PullRequest, issue: LinearIssue | undefined, mai
     strength: EvidenceStrength,
     sourceQuality: EvidenceSourceQuality,
     prose = false,
+    kind: EvidenceDoc["kind"] = prose ? "prose" : "path",
   ) => {
     if (!text || !text.trim()) return;
     docs.push({
@@ -733,6 +824,9 @@ function buildDocs(pullRequest: PullRequest, issue: LinearIssue | undefined, mai
       strength,
       sourceQuality,
       entry: { location, strength, sourceQuality },
+      text,
+      kind,
+      group: -1,
       tokens: tokenize(text),
       ...(prose ? { pairs: wordPairs(text) } : {}),
     });
@@ -743,7 +837,7 @@ function buildDocs(pullRequest: PullRequest, issue: LinearIssue | undefined, mai
     if (file.status !== "deleted") add(file.path, file.path, pathStrength, "GITHUB_DIFF");
   }
   if (pullRequest.detectedSubsystems?.length) {
-    add("diff subsystems", pullRequest.detectedSubsystems.join(" "), pathStrength, "GITHUB_DIFF");
+    add("diff subsystems", pullRequest.detectedSubsystems.join(" "), pathStrength, "GITHUB_DIFF", false, "prose");
   }
   add(`PR #${pullRequest.number} title`, pullRequest.title, titleStrength, "GITHUB_PR", true);
   const branch = pullRequest.branch ?? pullRequest.headBranch;
@@ -767,11 +861,11 @@ function scopeOf(docs: EvidenceDoc[]): Scope {
 function gatherEvidence(pullRequest: PullRequest, issue: LinearIssue | undefined, maintenanceOnly: boolean): Evidence {
   const docs = buildDocs(pullRequest, issue, maintenanceOnly);
   const strongDocs = docs.filter((doc) => doc.strength !== "text");
+  const code = strongDocs.filter((doc) => doc.strength === "code");
   const named = strongDocs.filter((doc) => doc.strength === "title");
-  const groups = [
-    ...strongDocs.filter((doc) => doc.strength === "code").map((doc) => scopeOf([doc])),
-    ...(named.length > 0 ? [scopeOf(named)] : []),
-  ];
+  code.forEach((doc, index) => (doc.group = index));
+  for (const doc of named) doc.group = code.length;
+  const groups = [...code.map((doc) => scopeOf([doc])), ...(named.length > 0 ? [scopeOf(named)] : [])];
   const groupsOf = new Map<string, Set<number>>();
   groups.forEach((group, index) => {
     for (const token of group.tokens) {
@@ -792,6 +886,9 @@ function gatherEvidence(pullRequest: PullRequest, issue: LinearIssue | undefined
     exceptGroups: new WeakMap(),
     exceptNamed: new WeakMap(),
     counts: new Int32Array(groups.length),
+    vocabulary: new VocabularyEvidence(
+      docs.map((doc) => ({ ref: doc, text: doc.text, kind: doc.kind, strength: doc.strength, group: doc.group })),
+    ),
   };
 }
 
@@ -1097,6 +1194,79 @@ function evidenceOf(match: PartMatch, evidence: Evidence): PhraseEvidence[] {
     .map((doc) => doc.entry);
 }
 
+/* ------------------------------------------------------------------ */
+/* Vocabulary                                                          */
+/* ------------------------------------------------------------------ */
+
+const ADDITIVE_WORD = new Set(["other", "additional", "alternative", "further", "extra"]);
+
+/** "Not Apple", "no PayPal", "without SMS": what an included item says it leaves out. */
+const NEGATED = /\b(?:not|no|without|never)\b[^,;()[\]]*/gi;
+/** An included part that only says what is left out ("not apple"): it includes nothing. */
+const NEGATED_PART = /^\s*(?:not|no|without|never)\b/i;
+
+/** An excluded item's part that names a category the vocabulary knows. */
+interface CategoryPart {
+  part: PhrasePart;
+  category: VocabularyCategory;
+  /** The SOW's words for the category, e.g. "payment providers". */
+  named: string;
+  /** "Multi" in "multi-language support", "advanced" in "advanced analytics": work must say it to be the excluded kind. */
+  qualifier?: string;
+  /** "Additional", "other": what the category is additional to is not known from the words. */
+  additive?: string;
+}
+
+interface VocabularyCandidate {
+  strong: boolean;
+  info: VocabularyMatchInfo;
+  refs: EvidenceDoc[];
+}
+
+/** The parts of an excluded item that name a vocabulary category, with what qualifies each. */
+function categoryParts(parts: PhrasePart[]): CategoryPart[] {
+  const found: CategoryPart[] = [];
+  for (const part of parts) {
+    // A bracketed example ("paypal" in "payment providers (paypal)") is
+    // checked through its head, which is a part of its own.
+    if (part.head) continue;
+    const wording = categoriesNamedIn(part.text);
+    for (const { category, spans, qualifier } of wording.categories) {
+      const outside = wording.words.filter((_, i) => !spans.some((span) => i >= span.start && i < span.end));
+      found.push({
+        part,
+        category,
+        named: part.text.replace(/\s+/g, " ").trim(),
+        qualifier: qualifier ?? outside.find((word) => QUALIFIERS.has(word)),
+        additive: wording.words.find((word) => ADDITIVE_WORD.has(word)),
+      });
+    }
+  }
+  return found;
+}
+
+const REASON_RANK: Record<NonNullable<VocabularyMatchInfo["reason"]>, number> = {
+  uncorroborated: 1,
+  qualifier: 1,
+  additive: 1,
+  listedAfter: 1,
+  exception: 1,
+  described: 2,
+};
+
+/** Strong before weak; among weak, built before only described. */
+function betterCandidate(a: VocabularyCandidate | undefined, b: VocabularyCandidate): VocabularyCandidate {
+  if (!a) return b;
+  if (a.strong !== b.strong) return a.strong ? a : b;
+  const rank = (c: VocabularyCandidate) => (c.info.reason ? REASON_RANK[c.info.reason] : 0);
+  return rank(b) < rank(a) ? b : a;
+}
+
+/** Labels in `labels` but not in `minus`. */
+function without(labels: ReadonlySet<string>, minus: ReadonlySet<string>): Set<string> {
+  return new Set([...labels].filter((label) => !minus.has(label)));
+}
+
 /**
  * Returns at most one match per SOW item: the best-matching part of each
  * inclusion and exclusion phrase on every clause of the baseline.
@@ -1108,9 +1278,11 @@ export function matchContractPhrases(input: ContractMatchInput): ContractPhraseM
   // Keyed by the part's exceptions first: parts of items with none share NO_EXCEPTIONS.
   const known = new Map<Term[][], Map<string, PartMatch | undefined>>();
   const termsMatched = (match: PartMatch) => [...new Set(match.found.flatMap(({ form }) => form))];
-  const bestPart = (kind: ContractPhraseMatch["kind"], phrase: string, keep?: (match: PartMatch) => boolean) => {
+  const bestOf = (kind: ContractPhraseMatch["kind"], parts: PhrasePart[], keep?: (match: PartMatch) => boolean) => {
     let best: PartMatch | undefined;
-    for (const part of partsOf(phrase)) {
+    for (const part of parts) {
+      // "Social login (google and facebook only, not apple)": "not apple" includes nothing.
+      if (kind === "inclusion" && NEGATED_PART.test(part.text)) continue;
       let byPart = known.get(part.except);
       if (!byPart) known.set(part.except, (byPart = new Map()));
       const key = `${kind}\u0001${part.key}`;
@@ -1120,7 +1292,23 @@ export function matchContractPhrases(input: ContractMatchInput): ContractPhraseM
     }
     return best;
   };
-
+  // An item's parts are read once, however many times it is looked at.
+  const partsMemo = new Map<string, PhrasePart[]>();
+  const partsOfPhrase = (phrase: string): PhrasePart[] => {
+    let parts = partsMemo.get(phrase);
+    if (!parts) partsMemo.set(phrase, (parts = partsOf(phrase)));
+    return parts;
+  };
+  // The same for what the vocabulary reads in SOW wording.
+  const membersMemo = new Map<string, NamedMembers>();
+  const membersInText = (text: string, needContext: boolean): NamedMembers => {
+    const key = `${needContext ? 1 : 0}${text}`;
+    let named = membersMemo.get(key);
+    if (!named) membersMemo.set(key, (named = membersIn(text, needContext)));
+    return named;
+  };
+  const bestPart = (kind: ContractPhraseMatch["kind"], phrase: string, keep?: (match: PartMatch) => boolean) =>
+    bestOf(kind, partsOfPhrase(phrase), keep);
   // Inclusions first. When the SOW includes the plain variant of what it
   // excludes with a qualifier ("basic keyword search" and "advanced search"),
   // work matching that inclusion that never names the qualifier is the
@@ -1152,7 +1340,142 @@ export function matchContractPhrases(input: ContractMatchInput): ContractPhraseM
     );
   };
 
+  // Members the SOW includes anywhere ("Stripe checkout", "social login
+  // (Google)"), read from its included items once, when an excluded item
+  // names a category. What an included item says it leaves out ("not Apple")
+  // is not included.
+  let includedMembers: NamedMembers[] | undefined;
+  const includedCache = new Map<string, Set<string>>();
+  const includedIn = (category: VocabularyCategory): Set<string> => {
+    let labels = includedCache.get(category.id);
+    if (labels) return labels;
+    includedMembers ??= clauses.flatMap((clause) =>
+      clause.inclusions.map((phrase) =>
+        membersInText(
+          partsOfPhrase(phrase)
+            .filter((part) => !part.weakOnly)
+            .map((part) => `${part.headText ?? ""} ${part.text}`.replace(NEGATED, " "))
+            .join(", "),
+          true,
+        ),
+      ),
+    );
+    labels = new Set(includedMembers.flatMap((named) => [...membersOf(named, category)]));
+    includedCache.set(category.id, labels);
+    return labels;
+  };
+
+  /**
+   * An excluded item read with the vocabulary: its parts, the parts that name
+   * a category, the members it names itself, and the members it lists after
+   * an exception. Members the SOW includes elsewhere ("Stripe checkout")
+   * become exceptions of the item's own words too ("payment providers"),
+   * unless the item is "additional" or "other" ones, which asks its own
+   * question about them.
+   */
+  const planExclusion = (phrase: string) => {
+    const first = partsOfPhrase(phrase);
+    const named = categoryParts(first);
+    if (named.length === 0) return { parts: first, named, itemMembers: undefined, listedAfter: NO_LABELS };
+    // Members the item names itself ("payment providers (stripe connect)")
+    // are never taken out of it.
+    const itemMembers = membersInText(first.filter((part) => !part.weakOnly).map((part) => part.text).join(", "), false);
+    // "All third-party integrations except Stripe, including CRM and ERP
+    // systems": CRM work may be the exclusion or part of the exception.
+    const listedAfter = new Set<string>();
+    for (const part of first) {
+      if (!part.weakOnly) continue;
+      for (const labels of membersInText(part.text, false).values()) for (const label of labels) listedAfter.add(label);
+      for (const { category } of categoriesNamedIn(part.text).categories) for (const label of allMembersOf(category)) listedAfter.add(label);
+    }
+    const implicit = new Set<string>();
+    if (!ADDITIVE.test(phrase)) {
+      for (const { category } of named) for (const label of without(includedIn(category), membersOf(itemMembers, category))) implicit.add(label);
+    }
+    if (implicit.size === 0) return { parts: first, named, itemMembers, listedAfter };
+    // The same parts in the same order, now with the included members as exceptions.
+    const parts = partsOf(phrase, [...implicit]);
+    const byKey = new Map(parts.map((part) => [part.key, part]));
+    return { parts, named: named.map((c) => ({ ...c, part: byKey.get(c.part.key) ?? c.part })), itemMembers, listedAfter };
+  };
+
+  /** Whether the pull request's own words (files and titles) say `word`: "multi" also as "multilingual". */
+  const says = (word: string): boolean => {
+    if (evidence.strong.tokens.has(stemWord(word))) return true;
+    if (!word.startsWith("multi")) return false;
+    for (const token of evidence.strong.tokens) if (token.startsWith("multi")) return true;
+    return false;
+  };
+
+  /** The best vocabulary match among an item's category parts. */
+  const vocabularyMatch = (
+    named: CategoryPart[],
+    itemMembers: NamedMembers | undefined,
+    listedAfter: ReadonlySet<string>,
+  ): VocabularyCandidate | undefined => {
+    let best: VocabularyCandidate | undefined;
+    for (const { part, category, named: words, qualifier, additive } of named) {
+      const own = itemMembers ? membersOf(itemMembers, category) : NO_LABELS;
+      const explicit = part.explicitExcept;
+      const decision = evidence.vocabulary.decide(category, {
+        excepted: membersOf(membersInText(part.exceptItems.join(", "), false), category),
+        included: without(includedIn(category), own),
+        // "Payment methods other than card": a file that says "card" may be the allowed work.
+        exceptionAt:
+          explicit.length === 0
+            ? undefined
+            : (doc) =>
+                doc.group >= 0
+                  ? exceptionGroups(explicit, evidence).has(doc.group)
+                  : explicit.some((exception) => exception.every((term) => termIn(term, scopeOf([doc])))),
+        allowedGroups: part.except.length === 0 ? undefined : exceptionGroups(part.except, evidence),
+        facets: facetsNamedIn(part.text, category),
+      });
+      if (!decision) continue;
+      const info: VocabularyMatchInfo = { category: category.id, named: words, members: decision.members.slice(0, 3) };
+      let strong = decision.strong;
+      if (decision.nextToAllowed) {
+        info.reason = "exception";
+        info.exception = part.exceptText ?? "work the contract allows";
+      } else if (!strong) {
+        info.reason = decision.refs.every((doc) => doc.strength === "text") ? "described" : "uncorroborated";
+      } else if (part.weakOnly || decision.members.some((label) => listedAfter.has(label))) {
+        // Listed after an exception: it may be part of it.
+        strong = false;
+        info.reason = "listedAfter";
+        info.exception = part.exceptText;
+      } else if (qualifier && !says(qualifier)) {
+        // "Advanced analytics" built as analytics that never says "advanced".
+        strong = false;
+        info.reason = "qualifier";
+        info.qualifier = qualifier;
+      } else if (additive && !says(additive)) {
+        // "Additional payment providers": this may be the provider the SOW means.
+        strong = false;
+        info.reason = "additive";
+        info.qualifier = additive;
+      }
+      best = betterCandidate(best, { strong, info, refs: decision.refs });
+    }
+    return best;
+  };
+
   const matches: ContractPhraseMatch[] = [];
+  const addVocabulary = (clause: ContractClause, phrase: string, found: VocabularyCandidate) => {
+    const members = found.info.members.join(", ");
+    matches.push({
+      clause,
+      kind: "exclusion",
+      phrase,
+      // "Klarna (payment providers)": what was built, in the contract's words.
+      matchedPart: `${members} (${found.info.named})`,
+      matchedTerms: [...tokenize(members)],
+      coverage: 1,
+      strong: found.strong,
+      vocabulary: found.info,
+      evidence: found.refs.map((doc) => doc.entry),
+    });
+  };
   const add = (clause: ContractClause, kind: ContractPhraseMatch["kind"], phrase: string, best: PartMatch | undefined) => {
     if (!best) return;
     matches.push({
@@ -1170,9 +1493,69 @@ export function matchContractPhrases(input: ContractMatchInput): ContractPhraseM
       evidence: evidenceOf(best, evidence),
     });
   };
+
+  /**
+   * "Includes social login (Google and Facebook only, not Apple)": the
+   * members an included item names as left out are excluded, read with the
+   * same rules as an excluded item's members.
+   */
+  const negatedMembers = (clause: ContractClause, phrase: string) => {
+    const negations = phrase.match(NEGATED);
+    if (!negations) return;
+    const wording = categoriesNamedIn(phrase.replace(NEGATED, " "));
+    if (wording.categories.length === 0) return;
+    const left = membersIn(negations.join(", "), false);
+    let best: VocabularyCandidate | undefined;
+    for (const { category, spans } of wording.categories) {
+      const only = membersOf(left, category);
+      if (only.size === 0) continue;
+      const decision = evidence.vocabulary.decide(category, { only, included: without(includedIn(category), only) });
+      if (!decision) continue;
+      const named = wording.words.slice(spans[0].start, spans[0].end).join(" ");
+      const info: VocabularyMatchInfo = { category: category.id, named, members: decision.members.slice(0, 3) };
+      if (decision.nextToAllowed) {
+        info.reason = "exception";
+        info.exception = [...without(includedIn(category), only)].slice(0, 3).join(" and ") || "work the contract allows";
+      } else if (!decision.strong) info.reason = decision.refs.every((doc) => doc.strength === "text") ? "described" : "uncorroborated";
+      best = betterCandidate(best, { strong: decision.strong, info, refs: decision.refs });
+    }
+    if (best) addVocabulary(clause, `${best.info.named}, ${negations.map((n) => n.trim()).join(", ")}`, best);
+  };
+
+  /**
+   * "Analytics other than Google Analytics" built as `src/analytics/ga4.ts`:
+   * the item's own words matched, but every file or title they matched in
+   * holds only members the item leaves out or the SOW includes. That is the
+   * allowed work, read the way a file naming the exception is.
+   */
+  const aboutAllowedWork = (match: PartMatch, plan: ReturnType<typeof planExclusion>): boolean => {
+    const docs = evidenceOf(match, evidence).map((entry) => evidence.docs.find((doc) => doc.entry === entry)!);
+    if (docs.length === 0) return false;
+    return docs.every((doc) =>
+      plan.named.some(({ part, category }) => {
+        const labels = evidence.vocabulary.labelsAt(category, doc);
+        if (labels.size === 0) return false;
+        const allowed = new Set([...membersOf(membersInText(part.exceptItems.join(", "), false), category), ...includedIn(category)]);
+        return [...labels].every((label) => allowed.has(label));
+      }),
+    );
+  };
+
   clauses.forEach((clause, c) => {
-    for (const phrase of clause.exclusions) add(clause, "exclusion", phrase, bestPart("exclusion", phrase, notIncluded));
+    for (const phrase of clause.exclusions) {
+      const plan = planExclusion(phrase);
+      let literal = bestOf("exclusion", plan.parts, notIncluded);
+      if (literal?.strong && plan.named.length > 0 && aboutAllowedWork(literal, plan)) literal = undefined;
+      // The item's own words decide when they can; the vocabulary when they
+      // can't ("native mobile apps" for an iOS screen), or when it settles a
+      // question they only raise.
+      const viaVocabulary =
+        plan.named.length > 0 && !literal?.strong ? vocabularyMatch(plan.named, plan.itemMembers, plan.listedAfter) : undefined;
+      if (viaVocabulary && (!literal || viaVocabulary.strong)) addVocabulary(clause, phrase, viaVocabulary);
+      else add(clause, "exclusion", phrase, literal);
+    }
     clause.inclusions.forEach((phrase, i) => add(clause, "inclusion", phrase, inclusions[c][i]));
+    for (const phrase of clause.inclusions) negatedMembers(clause, phrase);
   });
   return matches;
 }
@@ -1183,6 +1566,15 @@ export function matchContractPhrases(input: ContractMatchInput): ContractPhraseM
  */
 export function textCoversMatch(text: string, match: ContractPhraseMatch): boolean {
   const tokens = tokenize(text);
+  // A vocabulary match is covered by a change order that names what was
+  // built ("Klarna"), not by one that approved another member of the same
+  // category ("Add PayPal as a payment provider").
+  if (match.vocabulary) {
+    return match.vocabulary.members.some((label) => {
+      const words = [...tokenize(label)];
+      return words.length > 0 && words.every((word) => tokens.has(word));
+    });
+  }
   const named = match.matchedTerms.filter((term) => tokens.has(term)).length;
   return named >= Math.max(1, Math.ceil(match.matchedTerms.length / 2));
 }
