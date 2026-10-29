@@ -350,7 +350,33 @@ export const RevokeInviteResponse = zod.void()
 
 
 /**
- * @summary Remove someone from the workspace (owners only)
+ * @summary Make someone an owner or a member (owners only)
+ */
+export const changeMemberRolePathUserIdMax = 36;
+
+
+
+export const ChangeMemberRoleParams = zod.object({
+  "userId": zod.coerce.string().max(changeMemberRolePathUserIdMax)
+})
+
+export const ChangeMemberRoleBody = zod.object({
+  "role": zod.enum(['OWNER', 'MEMBER'])
+})
+
+export const ChangeMemberRoleResponse = zod.object({
+  "userId": zod.string(),
+  "login": zod.string(),
+  "name": zod.string().nullable(),
+  "avatarUrl": zod.string().nullable(),
+  "role": zod.enum(['OWNER', 'MEMBER']),
+  "joinedAt": zod.coerce.date(),
+  "you": zod.boolean()
+})
+
+
+/**
+ * @summary Remove someone from the workspace (owners), or leave it (anyone, with their own id)
  */
 export const removeMemberPathUserIdMax = 36;
 
@@ -397,6 +423,72 @@ export const AcceptInviteResponse = zod.object({
   "id": zod.string(),
   "name": zod.string(),
   "role": zod.enum(['OWNER', 'MEMBER'])
+})
+
+
+/**
+ * @summary The organization's archived projects, most recently archived first
+ */
+export const ListArchivedProjectsResponse = zod.object({
+  "projects": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "clientName": zod.string().nullable(),
+  "hourlyRate": zod.number().int().nullable(),
+  "currency": zod.string(),
+  "policyMode": zod.enum(['OBSERVE', 'REVIEW', 'ENFORCE']).describe('OBSERVE only reports; REVIEW asks for a decision on the check; ENFORCE fails the check on excluded work.'),
+  "repository": zod.union([zod.object({
+  "fullName": zod.string(),
+  "installationId": zod.string()
+}),zod.null()]),
+  "scopeVersion": zod.string().nullable(),
+  "scopeSavedAt": zod.coerce.date().nullable(),
+  "createdAt": zod.coerce.date(),
+  "counts": zod.object({
+  "checked": zod.number().int(),
+  "changeOrders": zod.number().int(),
+  "decisions": zod.number().int(),
+  "changeOrdersSent": zod.number().int().describe('Sent and still waiting on the client'),
+  "changeOrdersApproved": zod.number().int(),
+  "approvedValue": zod.number().int().describe('Total of approved change orders that have a price, in the project\'s currency')
+})
+}))
+})
+
+
+/**
+ * @summary Bring an archived project back; its repository has to be connected again
+ */
+export const restoreProjectPathProjectIdMax = 36;
+
+
+
+export const RestoreProjectParams = zod.object({
+  "projectId": zod.coerce.string().max(restoreProjectPathProjectIdMax)
+})
+
+export const RestoreProjectResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "clientName": zod.string().nullable(),
+  "hourlyRate": zod.number().int().nullable(),
+  "currency": zod.string(),
+  "policyMode": zod.enum(['OBSERVE', 'REVIEW', 'ENFORCE']).describe('OBSERVE only reports; REVIEW asks for a decision on the check; ENFORCE fails the check on excluded work.'),
+  "repository": zod.union([zod.object({
+  "fullName": zod.string(),
+  "installationId": zod.string()
+}),zod.null()]),
+  "scopeVersion": zod.string().nullable(),
+  "scopeSavedAt": zod.coerce.date().nullable(),
+  "createdAt": zod.coerce.date(),
+  "counts": zod.object({
+  "checked": zod.number().int(),
+  "changeOrders": zod.number().int(),
+  "decisions": zod.number().int(),
+  "changeOrdersSent": zod.number().int().describe('Sent and still waiting on the client'),
+  "changeOrdersApproved": zod.number().int(),
+  "approvedValue": zod.number().int().describe('Total of approved change orders that have a price, in the project\'s currency')
+})
 })
 
 

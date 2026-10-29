@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   changeOrdersTable,
@@ -21,7 +21,9 @@ import {
   LinkProjectRepositoryBody,
   ListGitHubRepositoriesResponse,
   ListProjectPullRequestsResponse,
+  ListArchivedProjectsResponse,
   ListProjectsResponse,
+  RestoreProjectResponse,
   RecheckProjectResponse,
   SaveProjectScopeBody,
   SaveProjectScopeResponse,
@@ -285,6 +287,46 @@ router.post("/projects", async (req, res): Promise<void> => {
     })
     .returning();
   res.status(201).json(CreateProjectResponse.parse(toProject(row, undefined, undefined)));
+});
+
+router.get("/projects/archived", async (_req, res): Promise<void> => {
+  const account = accountOf(res);
+  const rows = await db.query.projectsTable.findMany({
+    where: and(eq(projectsTable.organizationId, account.organizationId), isNotNull(projectsTable.archivedAt)),
+    orderBy: [desc(projectsTable.archivedAt)],
+    limit: 200,
+  });
+  const versions = await scopeVersions(rows.flatMap((r) => (r.contractId ? [r.contractId] : [])));
+  const counts = await countsFor(rows.map((r) => r.id));
+  res.json(
+    ListArchivedProjectsResponse.parse({
+      projects: rows.map((r) => toProject(r, r.contractId ? versions.get(r.contractId) : undefined, counts.get(r.id))),
+    }),
+  );
+});
+
+/** An archived project comes back with its scope, results and change orders; its repository is connected again by hand. */
+router.post("/projects/:projectId/restore", async (req, res): Promise<void> => {
+  const account = accountOf(res);
+  const projectId = String(req.params.projectId);
+  const [row] = UUID.test(projectId)
+    ? await db
+        .update(projectsTable)
+        .set({ archivedAt: null, updatedAt: new Date() })
+        .where(
+          and(
+            eq(projectsTable.id, projectId),
+            eq(projectsTable.organizationId, account.organizationId),
+            isNotNull(projectsTable.archivedAt),
+          ),
+        )
+        .returning()
+    : [];
+  if (!row) {
+    res.status(404).json({ error: "No such archived project." });
+    return;
+  }
+  res.json(RestoreProjectResponse.parse(await presentProject(row)));
 });
 
 router.get("/projects/:projectId", async (req, res): Promise<void> => {

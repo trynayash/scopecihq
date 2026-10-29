@@ -10,6 +10,8 @@ import {
 } from "@workspace/db/schema";
 import {
   AcceptInviteResponse,
+  ChangeMemberRoleBody,
+  ChangeMemberRoleResponse,
   CreateInviteResponse,
   GetInviteResponse,
   GetWorkspaceResponse,
@@ -167,33 +169,73 @@ router.delete("/workspace/invites/:inviteId", async (req, res): Promise<void> =>
   res.status(204).end();
 });
 
-router.delete("/workspace/members/:userId", async (req, res): Promise<void> => {
-  const account = accountOf(res);
-  if (!ownersOnly(account, res)) return;
-  const userId = String(req.params.userId);
-  const target = UUID.test(userId)
-    ? await db.query.organizationMembersTable.findFirst({
-        where: and(
-          eq(organizationMembersTable.organizationId, account.organizationId),
-          eq(organizationMembersTable.userId, userId),
-        ),
+async function memberOf(organizationId: string, userId: string) {
+  return UUID.test(userId)
+    ? db.query.organizationMembersTable.findFirst({
+        where: and(eq(organizationMembersTable.organizationId, organizationId), eq(organizationMembersTable.userId, userId)),
       })
     : undefined;
+}
+
+async function ownerCount(organizationId: string): Promise<number> {
+  const [{ owners }] = await db
+    .select({ owners: sql<number>`count(*)::int` })
+    .from(organizationMembersTable)
+    .where(and(eq(organizationMembersTable.organizationId, organizationId), eq(organizationMembersTable.role, "OWNER")));
+  return owners;
+}
+
+router.patch("/workspace/members/:userId", async (req, res): Promise<void> => {
+  const account = accountOf(res);
+  if (!ownersOnly(account, res)) return;
+  const parsed = ChangeMemberRoleBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Choose OWNER or MEMBER." });
+    return;
+  }
+  const target = await memberOf(account.organizationId, String(req.params.userId));
   if (!target) {
     res.status(404).json({ error: "That person isn't in this workspace." });
     return;
   }
-  if (target.role === "OWNER") {
-    const [{ owners }] = await db
-      .select({ owners: sql<number>`count(*)::int` })
-      .from(organizationMembersTable)
-      .where(
-        and(eq(organizationMembersTable.organizationId, account.organizationId), eq(organizationMembersTable.role, "OWNER")),
-      );
-    if (owners <= 1) {
-      res.status(409).json({ error: "A workspace needs at least one owner." });
-      return;
-    }
+  if (target.role === "OWNER" && parsed.data.role === "MEMBER" && (await ownerCount(account.organizationId)) <= 1) {
+    res.status(409).json({ error: "A workspace needs at least one owner. Make someone else an owner first." });
+    return;
+  }
+  await db
+    .update(organizationMembersTable)
+    .set({ role: parsed.data.role })
+    .where(eq(organizationMembersTable.id, target.id));
+  const member = (await workspaceInfo({ ...account, role: "MEMBER" })).members.find((m) => m.userId === target.userId)!;
+  res.json(ChangeMemberRoleResponse.parse(member));
+});
+
+/**
+ * Owners remove people; anyone removes themselves, which is leaving. A
+ * workspace keeps at least one owner, and nobody leaves their only one
+ * (they would have nowhere to sign in to).
+ */
+router.delete("/workspace/members/:userId", async (req, res): Promise<void> => {
+  const account = accountOf(res);
+  const userId = String(req.params.userId);
+  const leaving = userId === account.userId;
+  if (!leaving && !ownersOnly(account, res)) return;
+  const target = await memberOf(account.organizationId, userId);
+  if (!target) {
+    res.status(404).json({ error: "That person isn't in this workspace." });
+    return;
+  }
+  if (target.role === "OWNER" && (await ownerCount(account.organizationId)) <= 1) {
+    res.status(409).json({
+      error: leaving
+        ? "You're the only owner. Make someone else an owner before you leave."
+        : "A workspace needs at least one owner.",
+    });
+    return;
+  }
+  if (leaving && (await listWorkspaces(account.userId)).length <= 1) {
+    res.status(409).json({ error: "This is your only workspace, so you can't leave it." });
+    return;
   }
   await db.delete(organizationMembersTable).where(eq(organizationMembersTable.id, target.id));
   res.status(204).end();

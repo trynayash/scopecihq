@@ -969,6 +969,21 @@ async function run() {
       assert.strictEqual(session.body.organization.id, danaWorkspace);
     });
 
+    await scenario("Owners change roles; the last owner can't step down", async () => {
+      const team = await call(server, "/api/workspace", { cookie: dana });
+      const eveId = team.body.members.find((m: any) => m.login === "eve").userId;
+      const danaId = team.body.members.find((m: any) => m.login === "dana").userId;
+      assert.strictEqual((await call(server, `/api/workspace/members/${danaId}`, { method: "PATCH", body: { role: "MEMBER" }, cookie: dana })).status, 409);
+      assert.strictEqual((await call(server, `/api/workspace/members/${danaId}`, { method: "PATCH", body: { role: "MEMBER" }, cookie: eve })).status, 403);
+      const promoted = await call(server, `/api/workspace/members/${eveId}`, { method: "PATCH", body: { role: "OWNER" }, cookie: dana });
+      assert.strictEqual(promoted.status, 200, JSON.stringify(promoted.body));
+      assert.strictEqual(promoted.body.role, "OWNER");
+      assert.strictEqual((await call(server, "/api/workspace/invites", { method: "POST", cookie: eve })).status, 201, "a new owner can invite");
+      assert.strictEqual((await call(server, `/api/workspace/members/${eveId}`, { method: "PATCH", body: { role: "BOSS" }, cookie: dana })).status, 400);
+      const back = await call(server, `/api/workspace/members/${eveId}`, { method: "PATCH", body: { role: "MEMBER" }, cookie: dana });
+      assert.strictEqual(back.body.role, "MEMBER");
+    });
+
     await scenario("Removing a member cuts their access; the last owner can't be removed", async () => {
       const team = await call(server, "/api/workspace", { cookie: dana });
       const eveId = team.body.members.find((m: any) => m.login === "eve").userId;
@@ -979,6 +994,21 @@ async function run() {
       assert.strictEqual((await call(server, `/api/projects/${projectId}`, { cookie: eve })).status, 404);
       const session = await call(server, "/api/session", { cookie: eve });
       assert.strictEqual(session.body.organization.id, eveWorkspace, "falls back to their own workspace");
+    });
+
+    await scenario("Anyone can leave a workspace, but not their only one", async () => {
+      const invite = await call(server, "/api/workspace/invites", { method: "POST", cookie: dana });
+      const token = invite.body.url.split("/").pop();
+      assert.strictEqual((await call(server, `/api/invites/${token}/accept`, { method: "POST", cookie: eve })).status, 200);
+      const me = (await call(server, "/api/session", { cookie: eve })).body.user;
+      const eveId = (await call(server, "/api/workspace", { cookie: eve })).body.members.find((m: any) => m.you).userId;
+      assert.ok(me);
+      const left = await call(server, `/api/workspace/members/${eveId}`, { method: "DELETE", cookie: eve });
+      assert.strictEqual(left.status, 204, "a member leaves without an owner's help");
+      const now = await call(server, "/api/session", { cookie: eve });
+      assert.strictEqual(now.body.organization.id, eveWorkspace);
+      const only = await call(server, `/api/workspace/members/${eveId}`, { method: "DELETE", cookie: eve });
+      assert.strictEqual(only.status, 409, "their own, only workspace stays");
     });
 
     await scenario("Cancelled and expired invites can't be used", async () => {
@@ -1073,6 +1103,19 @@ async function run() {
       assert.strictEqual((await call(server, `/api/projects/${projectId}`, { cookie: dana })).status, 404);
       const row = await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) });
       assert.strictEqual(row?.repositoryExternalId, null);
+    });
+
+    await scenario("An archived project is listed and can be restored, with its results", async () => {
+      const archived = await call(server, "/api/projects/archived", { cookie: dana });
+      assert.ok(archived.body.projects.some((p: any) => p.id === projectId));
+      assert.strictEqual((await call(server, `/api/projects/${projectId}/restore`, { method: "POST", cookie: eve })).status, 404);
+      const restored = await call(server, `/api/projects/${projectId}/restore`, { method: "POST", cookie: dana });
+      assert.strictEqual(restored.status, 200, JSON.stringify(restored.body));
+      assert.strictEqual(restored.body.repository, null, "the repository is connected again by hand");
+      assert.ok((await call(server, "/api/projects", { cookie: dana })).body.projects.some((p: any) => p.id === projectId));
+      const results = await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana });
+      assert.ok(results.body.pullRequests.length > 0, "its results are still there");
+      assert.strictEqual((await call(server, `/api/projects/${projectId}/restore`, { method: "POST", cookie: dana })).status, 404, "not archived any more");
     });
 
     await scenario("A GitHub account its workspace no longer uses can be connected from another", async () => {

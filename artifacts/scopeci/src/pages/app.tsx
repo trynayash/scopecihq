@@ -28,6 +28,10 @@ import {
   useListGitHubRepositories,
   useListProjectPullRequests,
   useRecheckProject,
+  useChangeMemberRole,
+  useListArchivedProjects,
+  useRestoreProject,
+  getListArchivedProjectsQueryKey,
   useAcceptPullRequest,
   useWithdrawPullRequestAcceptance,
   useListProjects,
@@ -480,7 +484,77 @@ function ProjectsHome() {
           ))}
         </ul>
       )}
+      {projects.data && <ArchivedProjects />}
     </>
+  );
+}
+
+/**
+ * Archived projects, folded away under the list until asked for. Restoring
+ * brings back the scope, results and change orders; the repository has to be
+ * connected again, since archiving released it.
+ */
+function ArchivedProjects() {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const archived = useListArchivedProjects({ query: { queryKey: getListArchivedProjectsQueryKey(), enabled: open } });
+  const restore = useRestoreProject();
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
+
+  return (
+    <div className="archived">
+      <button type="button" className="text-link" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        {open ? 'Hide archived projects' : 'Archived projects'}
+      </button>
+      {open && archived.isPending && <Loading>Loading archived projects…</Loading>}
+      {open && archived.isError && (
+        <LoadError error={archived.error} fallback="We couldn't load the archived projects." onRetry={() => archived.refetch()} retrying={archived.isFetching} />
+      )}
+      {open && archived.data && archived.data.projects.length === 0 && <p className="help">Nothing archived.</p>}
+      {open && archived.data && archived.data.projects.length > 0 && (
+        <ul className="archived-list">
+          {archived.data.projects.map((project) => (
+            <li key={project.id}>
+              <span>
+                <strong>{project.name}</strong>
+                {project.clientName && <span className="archived-client"> · {project.clientName}</span>}
+              </span>
+              <button
+                type="button"
+                className="button button-quiet button-sm"
+                disabled={restore.isPending}
+                aria-label={`Restore ${project.name}`}
+                onClick={() =>
+                  restore.mutate(
+                    { projectId: project.id },
+                    {
+                      onSuccess: () => {
+                        setError('');
+                        setStatus(`${project.name} is back. Connect its repository again to check pull requests.`);
+                        queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
+                        queryClient.invalidateQueries({ queryKey: getListArchivedProjectsQueryKey() });
+                      },
+                      onError: (err) => setError(errorMessage(err, "We couldn't restore it.")),
+                    },
+                  )
+                }
+              >
+                Restore
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+      <p className="app-status" role="status">
+        {status}
+      </p>
+    </div>
   );
 }
 
@@ -1840,6 +1914,8 @@ function TeamPage() {
   const createInvite = useCreateInvite();
   const revoke = useRevokeInvite();
   const remove = useRemoveMember();
+  const changeRole = useChangeMemberRole();
+  const [, navigate] = useLocation();
   const [confirm, confirmDialog] = useConfirm();
   const [name, setName] = useState('');
   const [link, setLink] = useState('');
@@ -1935,6 +2011,66 @@ function TeamPage() {
                   {member.you ? ' · you' : ''}
                 </span>
               </span>
+              {owner && !member.you && (
+                <button
+                  type="button"
+                  className="text-link"
+                  disabled={changeRole.isPending}
+                  aria-label={member.role === 'OWNER' ? `Make @${member.login} a member` : `Make @${member.login} an owner`}
+                  onClick={async () => {
+                    const toOwner = member.role !== 'OWNER';
+                    const confirmed = await confirm({
+                      title: toOwner ? `Make @${member.login} an owner?` : `Make @${member.login} a member?`,
+                      description: toOwner
+                        ? 'Owners rename the workspace, invite and remove people, and change roles, as you can.'
+                        : 'They keep working on every project but no longer manage the team.',
+                      confirmLabel: toOwner ? 'Make owner' : 'Make member',
+                    });
+                    if (!confirmed) return;
+                    changeRole.mutate(
+                      { userId: member.userId, data: { role: toOwner ? 'OWNER' : 'MEMBER' } },
+                      {
+                        onSuccess: () => {
+                          setStatus(toOwner ? `@${member.login} is now an owner.` : `@${member.login} is now a member.`);
+                          refresh();
+                        },
+                        onError: fail("We couldn't change their role."),
+                      },
+                    );
+                  }}
+                >
+                  {member.role === 'OWNER' ? 'Make member' : 'Make owner'}
+                </button>
+              )}
+              {member.you && (
+                <button
+                  type="button"
+                  className="text-link app-archive"
+                  disabled={remove.isPending}
+                  onClick={async () => {
+                    const confirmed = await confirm({
+                      title: `Leave ${team.name}?`,
+                      description: "You lose access to its projects. An owner can invite you back.",
+                      confirmLabel: 'Leave workspace',
+                      danger: true,
+                    });
+                    if (!confirmed) return;
+                    remove.mutate(
+                      { userId: member.userId },
+                      {
+                        onSuccess: () => {
+                          // Everything on screen belonged to the workspace just left.
+                          queryClient.invalidateQueries();
+                          navigate('/');
+                        },
+                        onError: fail("We couldn't take you out of the workspace."),
+                      },
+                    );
+                  }}
+                >
+                  Leave workspace
+                </button>
+              )}
               {owner && !member.you && (
                 <button
                   type="button"

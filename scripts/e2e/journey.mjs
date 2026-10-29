@@ -276,12 +276,40 @@ export async function journey({ browser, app, github, fake, out, results, server
     await page.getByText("@eve-dev").waitFor();
   });
 
+  await step(page, "The owner makes the teammate an owner", async () => {
+    await page.getByRole("button", { name: "Make @eve-dev an owner" }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Make owner" }).click();
+    await page.getByText("@eve-dev is now an owner.").waitFor();
+    await page.getByText(/@eve-dev · owner/).waitFor();
+    await shot(page, "06-team");
+  });
+
+  await step(phone, "The teammate leaves the workspace", async () => {
+    await phone.goto(`${app}/app/team`);
+    await phone.getByRole("button", { name: "Leave workspace" }).click();
+    await phone.getByRole("alertdialog").getByRole("button", { name: "Leave workspace" }).click();
+    await phone.getByRole("heading", { name: "Projects", exact: true }).waitFor();
+    if (await phone.getByText("Harbor & Pine store").count()) throw new Error("still sees the agency's project");
+  });
+
   await step(page, "Archiving a project asks first and removes it from the list", async () => {
     await page.goto(projectUrl);
     await page.getByRole("button", { name: "Archive project" }).click();
     await page.getByRole("alertdialog").getByRole("button", { name: "Archive project" }).click();
     await page.getByRole("heading", { name: "Projects", exact: true }).waitFor();
     if ((await page.getByTestId("project-card").count()) !== 0) throw new Error("the archived project is still listed");
+  });
+
+  await step(page, "An archived project can be restored from the list", async () => {
+    await page.getByRole("button", { name: "Archived projects" }).click();
+    await page.getByRole("button", { name: "Restore Harbor & Pine store" }).click();
+    await page.getByText(/Harbor & Pine store is back/).waitFor();
+    await page.getByTestId("project-card").first().waitFor();
+    // Archive it again, so the error drills can connect its repository elsewhere.
+    await page.getByTestId("project-card").first().click();
+    await page.getByRole("button", { name: "Archive project" }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Archive project" }).click();
+    await page.getByRole("heading", { name: "Projects", exact: true }).waitFor();
   });
 
   await step(page, "Signing out returns to the sign-in page", async () => {

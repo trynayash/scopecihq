@@ -554,6 +554,18 @@ export interface WorkspaceUpdateInput {
   name: string;
 }
 
+export type MemberRoleInputRole = typeof MemberRoleInputRole[keyof typeof MemberRoleInputRole];
+
+
+export const MemberRoleInputRole = {
+  OWNER: 'OWNER',
+  MEMBER: 'MEMBER',
+} as const;
+
+export interface MemberRoleInput {
+  role: MemberRoleInputRole;
+}
+
 export type WorkspaceMemberRole = typeof WorkspaceMemberRole[keyof typeof WorkspaceMemberRole];
 
 

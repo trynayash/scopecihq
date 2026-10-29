@@ -35,6 +35,8 @@ export * from './healthStatus';
 export * from './inviteCreated';
 export * from './invitePreview';
 export * from './linkedRepository';
+export * from './memberRoleInput';
+export * from './memberRoleInputRole';
 export * from './policyMode';
 export * from './project';
 export * from './projectCounts';

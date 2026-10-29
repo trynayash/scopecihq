@@ -35,6 +35,7 @@ import type {
   HealthStatus,
   InviteCreated,
   InvitePreview,
+  MemberRoleInput,
   Project,
   ProjectCreateInput,
   ProjectDetail,
@@ -51,6 +52,7 @@ import type {
   WaitlistSignup,
   WaitlistSignupInput,
   WorkspaceInfo,
+  WorkspaceMember,
   WorkspaceUpdateInput
 } from './api.schemas';
 
@@ -967,6 +969,78 @@ export const useRevokeInvite = <TError = ErrorType<ErrorResponse>,
       return useMutation(getRevokeInviteMutationOptions(options));
     }
 
+export const getChangeMemberRoleUrl = (userId: string,) => {
+
+
+
+
+  return `/api/workspace/members/${userId}`
+}
+
+/**
+ * @summary Make someone an owner or a member (owners only)
+ */
+export const changeMemberRole = async (userId: string,
+    memberRoleInput: MemberRoleInput, options?: Parameters<typeof customFetch>[1]): Promise<WorkspaceMember> => {
+
+  return customFetch<WorkspaceMember>(getChangeMemberRoleUrl(userId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(memberRoleInput)
+  }
+);}
+
+
+
+
+
+export const getChangeMemberRoleMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changeMemberRole>>, TError,{userId: string;data: BodyType<MemberRoleInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof changeMemberRole>>, TError,{userId: string;data: BodyType<MemberRoleInput>}, TContext> => {
+
+const mutationKey = ['changeMemberRole'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof changeMemberRole>>, {userId: string;data: BodyType<MemberRoleInput>}> = (props) => {
+          const {userId,data} = props ?? {};
+
+          return  changeMemberRole(userId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ChangeMemberRoleMutationResult = NonNullable<Awaited<ReturnType<typeof changeMemberRole>>>
+    export type ChangeMemberRoleMutationBody = BodyType<MemberRoleInput>
+    export type ChangeMemberRoleMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Make someone an owner or a member (owners only)
+ */
+export const useChangeMemberRole = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changeMemberRole>>, TError,{userId: string;data: BodyType<MemberRoleInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof changeMemberRole>>,
+        TError,
+        {userId: string;data: BodyType<MemberRoleInput>},
+        TContext
+      > => {
+      return useMutation(getChangeMemberRoleMutationOptions(options));
+    }
+
 export const getRemoveMemberUrl = (userId: string,) => {
 
 
@@ -976,7 +1050,7 @@ export const getRemoveMemberUrl = (userId: string,) => {
 }
 
 /**
- * @summary Remove someone from the workspace (owners only)
+ * @summary Remove someone from the workspace (owners), or leave it (anyone, with their own id)
  */
 export const removeMember = async (userId: string, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
 
@@ -1025,7 +1099,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type RemoveMemberMutationError = ErrorType<ErrorResponse>
 
     /**
- * @summary Remove someone from the workspace (owners only)
+ * @summary Remove someone from the workspace (owners), or leave it (anyone, with their own id)
  */
 export const useRemoveMember = <TError = ErrorType<ErrorResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeMember>>, TError,{userId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
@@ -1184,6 +1258,154 @@ export const useAcceptInvite = <TError = ErrorType<ErrorResponse>,
         TContext
       > => {
       return useMutation(getAcceptInviteMutationOptions(options));
+    }
+
+export const getListArchivedProjectsUrl = () => {
+
+
+
+
+  return `/api/projects/archived`
+}
+
+/**
+ * @summary The organization's archived projects, most recently archived first
+ */
+export const listArchivedProjects = async ( options?: Parameters<typeof customFetch>[1]): Promise<ProjectList> => {
+
+  return customFetch<ProjectList>(getListArchivedProjectsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListArchivedProjectsQueryKey = () => {
+    return [
+    `/api/projects/archived`
+    ] as const;
+    }
+
+
+export const getListArchivedProjectsQueryOptions = <TData = Awaited<ReturnType<typeof listArchivedProjects>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listArchivedProjects>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListArchivedProjectsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listArchivedProjects>>> = ({ signal }) => listArchivedProjects({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listArchivedProjects>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListArchivedProjectsQueryResult = NonNullable<Awaited<ReturnType<typeof listArchivedProjects>>>
+export type ListArchivedProjectsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary The organization's archived projects, most recently archived first
+ */
+
+export function useListArchivedProjects<TData = Awaited<ReturnType<typeof listArchivedProjects>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listArchivedProjects>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListArchivedProjectsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getRestoreProjectUrl = (projectId: string,) => {
+
+
+
+
+  return `/api/projects/${projectId}/restore`
+}
+
+/**
+ * @summary Bring an archived project back; its repository has to be connected again
+ */
+export const restoreProject = async (projectId: string, options?: Parameters<typeof customFetch>[1]): Promise<Project> => {
+
+  return customFetch<Project>(getRestoreProjectUrl(projectId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRestoreProjectMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof restoreProject>>, TError,{projectId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof restoreProject>>, TError,{projectId: string}, TContext> => {
+
+const mutationKey = ['restoreProject'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof restoreProject>>, {projectId: string}> = (props) => {
+          const {projectId} = props ?? {};
+
+          return  restoreProject(projectId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RestoreProjectMutationResult = NonNullable<Awaited<ReturnType<typeof restoreProject>>>
+
+    export type RestoreProjectMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Bring an archived project back; its repository has to be connected again
+ */
+export const useRestoreProject = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof restoreProject>>, TError,{projectId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof restoreProject>>,
+        TError,
+        {projectId: string},
+        TContext
+      > => {
+      return useMutation(getRestoreProjectMutationOptions(options));
     }
 
 export const getListProjectsUrl = () => {

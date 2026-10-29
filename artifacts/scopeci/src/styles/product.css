@@ -467,6 +467,20 @@ button.text-link { margin-right: var(--space-3); font-size: var(--t-ui); }
 .project-counts .is-ok,
 .project-counts .is-ok strong { color: var(--success); }
 
+/* Archived projects: a quiet link under the list, a plain list when open. */
+.archived { margin-top: var(--space-5); }
+.archived-list { display: grid; margin-top: var(--space-3); border-top: 1px solid var(--line); }
+.archived-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-block: var(--space-3);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--t-ui);
+}
+.archived-client { color: var(--fg-muted); }
+
 .app-actions { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-top: var(--space-4); }
 .app-actions .text-link { margin-right: 0; }
 .app-archive { margin-left: auto; color: var(--error); text-decoration-color: var(--error-line); }
