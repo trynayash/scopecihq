@@ -110,6 +110,9 @@ button.text-link { margin-right: var(--space-3); font-size: var(--t-ui); }
   padding-block: 3px;
   font-size: var(--t-ui);
   line-height: 1.4;
+  /* A URL or snake_case name has nowhere to break; without this it runs
+     over the remove button and out of the card on a phone. */
+  overflow-wrap: anywhere;
 }
 /* A just-added item comes up from the field it was typed in, on a wash
    that fades, so it's clear where it went. */

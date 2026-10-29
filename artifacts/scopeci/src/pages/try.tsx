@@ -32,6 +32,8 @@ Product catalogue, shopping cart and Stripe checkout for a single currency (GBP)
 `;
 
 interface DraftPullRequest {
+  /** Set for a pull request loaded from GitHub, so the comment names it. */
+  number: number | null;
   title: string;
   branch: string;
   body: string;
@@ -43,6 +45,7 @@ const SAMPLE_PRS: ReadonlyArray<{ label: string; hint: string; pr: DraftPullRequ
     label: 'Loyalty points',
     hint: 'Builds something the SOW excludes',
     pr: {
+      number: null,
       title: 'Add loyalty points at checkout',
       branch: 'feat/loyalty-points',
       body: 'Customers earn points on every order and see them on a rewards page.',
@@ -53,6 +56,7 @@ const SAMPLE_PRS: ReadonlyArray<{ label: string; hint: string; pr: DraftPullRequ
     label: 'Cart fix',
     hint: 'Work the SOW includes',
     pr: {
+      number: null,
       title: 'Fix cart quantity rounding',
       branch: 'fix/cart-rounding',
       body: 'Shopping cart rounds 0.5 kg items down to zero.',
@@ -63,6 +67,7 @@ const SAMPLE_PRS: ReadonlyArray<{ label: string; hint: string; pr: DraftPullRequ
     label: 'Wishlist',
     hint: 'Something the SOW never mentions',
     pr: {
+      number: null,
       title: 'Add a wishlist',
       branch: 'feat/wishlist',
       body: 'Let customers save items for later.',
@@ -71,7 +76,7 @@ const SAMPLE_PRS: ReadonlyArray<{ label: string; hint: string; pr: DraftPullRequ
   },
 ];
 
-const EMPTY_PR: DraftPullRequest = { title: '', branch: '', body: '', files: '' };
+const EMPTY_PR: DraftPullRequest = { number: null, title: '', branch: '', body: '', files: '' };
 
 const TRY_STEPS = ['Statement of work', 'What ScopeCI read', 'A pull request', 'The result'] as const;
 
@@ -186,11 +191,14 @@ export default function TryPage() {
     try {
       const loaded = await getDemoGithubPr({ url: prUrl.trim() });
       setPr({
+        number: loaded.number ?? null,
         title: loaded.title,
         branch: loaded.branch ?? '',
         body: loaded.body ?? '',
         files: filesToText(loaded.files),
       });
+      // The result on screen was for the pull request this replaced.
+      setResult(null);
       setPrUrlState({ loading: false, error: '', loaded: `Loaded #${loaded.number ?? ''}: ${loaded.files.length} files` });
       track('try_github_pr_loaded');
     } catch (error) {
@@ -213,6 +221,7 @@ export default function TryPage() {
         data: {
           scope: { title: scopeTitle.slice(0, 200), clauses },
           pullRequest: {
+            number: pr.number,
             title: pr.title.trim().slice(0, 300),
             branch: pr.branch.trim() || null,
             body: pr.body.trim().slice(0, 5000) || null,
@@ -438,6 +447,7 @@ export default function TryPage() {
                           type="number"
                           min={0}
                           max={10000}
+                          step="any"
                           inputMode="decimal"
                           value={hours}
                           onChange={(e) => setHours(e.target.value)}
@@ -452,6 +462,7 @@ export default function TryPage() {
                           type="number"
                           min={0}
                           max={10000}
+                          step="any"
                           inputMode="decimal"
                           value={rate}
                           onChange={(e) => setRate(e.target.value)}
