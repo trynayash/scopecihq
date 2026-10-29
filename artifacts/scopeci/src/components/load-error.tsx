@@ -24,3 +24,33 @@ export function LoadError({
     </div>
   );
 }
+
+/**
+ * A refresh that failed while the page already shows what it loaded before.
+ * The page stays as it is, with anything being typed on it; this only says
+ * it may be out of date, and offers to ask again.
+ */
+export function StaleNotice({
+  error,
+  what,
+  onRetry,
+  retrying = false,
+}: {
+  error: unknown;
+  /** What couldn't be refreshed, as in "We couldn't refresh this project." */
+  what: string;
+  onRetry: () => void;
+  retrying?: boolean;
+}) {
+  const reason = errorMessage(error, '');
+  return (
+    <div className="stale-notice" role="status">
+      <p>
+        We couldn't refresh {what}, so it may be out of date.{reason && ` ${reason}`}
+      </p>
+      <button type="button" className="button button-quiet button-sm" onClick={onRetry} disabled={retrying}>
+        {retrying ? 'Refreshing…' : 'Refresh'}
+      </button>
+    </div>
+  );
+}
