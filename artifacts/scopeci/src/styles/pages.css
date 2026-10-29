@@ -337,6 +337,124 @@
 .contact-notes dd { margin-top: var(--space-2); color: var(--fg-muted); font-size: var(--t-ui); line-height: 1.6; }
 
 /* ==================================================================
+   Pricing
+   ================================================================== */
+
+.pricing { padding-block: calc(var(--header-h) + clamp(var(--space-6), 5vw, var(--space-8))) clamp(var(--space-8), 9vw, var(--space-10)); }
+.pricing-head { max-width: 720px; }
+.pricing-title { margin-top: var(--space-4); font-size: var(--t-display); }
+.pricing-lede {
+  max-width: 58ch;
+  margin-top: var(--space-4);
+  color: var(--fg-muted);
+  font-size: var(--t-lede);
+  line-height: 1.65;
+}
+.pricing-note {
+  max-width: 76ch;
+  margin-top: clamp(var(--space-5), 4vw, var(--space-6));
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--brand-line);
+  border-radius: var(--radius);
+  background: var(--brand-wash);
+  color: var(--fg-2);
+  font-size: var(--t-ui);
+  line-height: 1.6;
+}
+.pricing-note strong { color: var(--fg); font-weight: 600; }
+
+.pricing-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-5);
+  margin-top: clamp(var(--space-6), 5vw, var(--space-7));
+}
+.pricing-currency { color: var(--fg-faint); font-size: var(--t-caption); }
+
+/* One frame split by hairlines, not four floating cards: the plans are
+   one offer that grows with the number of projects. */
+.plans {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: var(--space-4);
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-l);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-1);
+}
+.plan {
+  display: flex;
+  flex-direction: column;
+  padding: clamp(var(--space-5), 2.4vw, var(--space-6));
+}
+.plan + .plan { border-left: 1px solid var(--line-2); }
+/* The one plan that can be had today carries the brand's rule. */
+.plan.is-open { box-shadow: inset 0 3px 0 var(--brand); }
+.plan-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); }
+.plan-name { font-size: var(--t-title); font-weight: 600; letter-spacing: -0.015em; }
+.plan-when { color: var(--fg-faint); font-size: var(--t-caption); white-space: nowrap; }
+.plan.is-open .plan-when { color: var(--brand); font-weight: 500; }
+.plan-price { display: grid; gap: var(--space-1); margin-top: var(--space-5); }
+.plan-amount {
+  font-family: var(--font-display);
+  font-size: var(--t-display-m);
+  font-weight: 450;
+  font-variant-numeric: lining-nums tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  animation: tour-caption-in var(--medium) var(--ease-out) both;
+}
+.plan-amount.is-words { letter-spacing: -0.015em; }
+.plan-per { color: var(--fg-muted); font-size: var(--t-caption); }
+.plan-limit {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+  color: var(--fg);
+  font-size: var(--t-body);
+  font-weight: 600;
+  letter-spacing: -0.012em;
+}
+.plan-audience { margin-top: var(--space-2); color: var(--fg-muted); font-size: var(--t-ui); line-height: 1.55; }
+.plan-foot { margin-top: auto; padding-top: var(--space-5); }
+.plan-action { width: 100%; }
+.plan-later {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--fg-muted);
+  font-size: var(--t-caption);
+  line-height: 1.45;
+}
+
+.pricing-included,
+.pricing-questions { margin-top: clamp(var(--space-8), 8vw, var(--space-9)); }
+.pricing-included { display: grid; gap: clamp(var(--space-5), 3vw, var(--space-6)); }
+.pricing-section-head { max-width: 640px; }
+.pricing-subtitle { font-size: var(--t-display-m); }
+.pricing-section-head p { margin-top: var(--space-3); color: var(--fg-muted); font-size: var(--t-body); line-height: 1.62; }
+.pricing-questions {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: clamp(var(--space-6), 5.5vw, var(--space-9));
+  align-items: start;
+}
+.pricing-questions .pricing-section-head { position: sticky; top: calc(var(--header-h) + 40px); }
+
+.pricing-close {
+  display: grid;
+  justify-items: start;
+  margin-top: clamp(var(--space-8), 8vw, var(--space-9));
+  padding-top: clamp(var(--space-6), 5vw, var(--space-7));
+  border-top: 1px solid var(--line-2);
+}
+.pricing-close p { max-width: 56ch; margin-top: var(--space-3); color: var(--fg-muted); font-size: var(--t-lede); line-height: 1.6; }
+.pricing-close-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-5); }
+
+/* ==================================================================
    Not found
    ================================================================== */
 
@@ -574,7 +692,17 @@ main.admin { padding-block: clamp(var(--space-6), 4vw, var(--space-7)) var(--spa
    Responsive
    ================================================================== */
 
+/* Four plans need room for their prices; below this they pair up. */
+@media (max-width: 1100px) {
+  .plans { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .plan + .plan { border-left: 0; }
+  .plan:nth-child(even) { border-left: 1px solid var(--line-2); }
+  .plan:nth-child(n + 3) { border-top: 1px solid var(--line-2); }
+}
+
 @media (max-width: 1023px) {
+  .pricing-questions { grid-template-columns: minmax(0, 1fr); }
+  .pricing-questions .pricing-section-head { position: static; }
   .contact-grid { grid-template-columns: minmax(0, 1fr); }
   .legal-layout { grid-template-columns: minmax(0, 1fr); }
   .legal-toc { display: none; }
@@ -586,6 +714,12 @@ main.admin { padding-block: clamp(var(--space-6), 4vw, var(--space-7)) var(--spa
 }
 
 @media (max-width: 719px) {
+  .plans { grid-template-columns: minmax(0, 1fr); }
+  .plan:nth-child(even) { border-left: 0; }
+  .plan + .plan { border-top: 1px solid var(--line-2); }
+  .pricing-bar { flex-direction: column; align-items: flex-start; }
+  .pricing-close-actions { display: grid; width: 100%; }
+  .pricing-close-actions .button { width: 100%; }
   .contact-row { grid-template-columns: minmax(0, 1fr); }
   .contact-submit .button { width: 100%; }
   .legal-section { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); padding-block: var(--space-5); }

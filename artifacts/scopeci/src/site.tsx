@@ -22,6 +22,7 @@ export const PRIVACY_PATH = `${BASE}/privacy`;
 export const TERMS_PATH = `${BASE}/terms`;
 export const SECURITY_PATH = `${BASE}/security`;
 export const CONTACT_PATH = `${BASE}/contact`;
+export const PRICING_PATH = `${BASE}/pricing`;
 export const TRY_PATH = `${BASE}/try`;
 export const APP_PATH = `${BASE}/app`;
 export const anchor = (id: string) => `${BASE}/#${id}`;
@@ -220,8 +221,12 @@ const NAV_LINKS = [
   { href: anchor('how-it-works'), label: 'How it works', testId: 'link-how-it-works' },
   { href: anchor('policy'), label: 'Policies', testId: 'link-policy' },
   { href: TRY_PATH, label: 'Try it', testId: 'link-try' },
+  { href: PRICING_PATH, label: 'Pricing', testId: 'link-pricing' },
   { href: anchor('questions'), label: 'Questions', testId: 'link-questions' },
 ];
+
+/** Marks the link to the page being read, so the nav says where you are. */
+const currentPage = (href: string) => (href === window.location.pathname ? ('page' as const) : undefined);
 
 export function Navbar() {
   const [scrolled, setScrolled] = useState(false);
@@ -262,7 +267,13 @@ export function Navbar() {
 
         <nav className="site-nav" aria-label="Primary">
           {NAV_LINKS.map((link) => (
-            <a key={link.href} className="site-nav-link" href={link.href} data-testid={link.testId}>
+            <a
+              key={link.href}
+              className="site-nav-link"
+              href={link.href}
+              aria-current={currentPage(link.href)}
+              data-testid={link.testId}
+            >
               {link.label}
             </a>
           ))}
@@ -293,7 +304,7 @@ export function Navbar() {
       <div id="mobile-menu" className="mobile-menu" hidden={!open}>
         <nav className="container mobile-menu-inner" aria-label="Menu">
           {NAV_LINKS.map((link) => (
-            <a key={link.href} href={link.href} onClick={() => setOpen(false)}>
+            <a key={link.href} href={link.href} aria-current={currentPage(link.href)} onClick={() => setOpen(false)}>
               {link.label}
             </a>
           ))}
@@ -336,6 +347,7 @@ export function Footer() {
             <a href={anchor('how-it-works')} data-testid="link-how-footer">How it works</a>
             <a href={anchor('policy')}>Policies</a>
             <a href={TRY_PATH} data-testid="link-try-footer">Try it on your SOW</a>
+            <a href={PRICING_PATH} data-testid="link-pricing-footer">Pricing</a>
             <a href={APP_PATH}>Sign in</a>
           </nav>
           <nav className="footer-col" aria-labelledby="footer-company">
