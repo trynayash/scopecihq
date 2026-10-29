@@ -8,6 +8,7 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 
 import { securityHeaders } from "./middlewares/security-headers";
+import { databaseUnavailable } from "./lib/database-errors";
 
 const app: Express = express();
 
@@ -149,38 +150,6 @@ if (fs.existsSync(publicDir)) {
   });
 } else {
   logger.warn({ publicDir }, "Frontend build not found; serving API only.");
-}
-
-/** Postgres and network codes that mean the database is unreachable or busy, not that the query was wrong. */
-const DATABASE_UNAVAILABLE = new Set([
-  "ECONNREFUSED",
-  "ECONNRESET",
-  "ENOTFOUND",
-  "ETIMEDOUT",
-  "EAI_AGAIN",
-  "57P01", // admin shutdown
-  "57P02", // crash shutdown
-  "57P03", // cannot connect now
-  "53300", // too many connections
-  "08000",
-  "08001",
-  "08003",
-  "08004",
-  "08006",
-  // A database TLS setup that doesn't verify (see DATABASE_CA_CERT).
-  "DEPTH_ZERO_SELF_SIGNED_CERT",
-  "SELF_SIGNED_CERT_IN_CHAIN",
-  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-  "CERT_HAS_EXPIRED",
-  "ERR_TLS_CERT_ALTNAME_INVALID",
-]);
-
-function databaseUnavailable(err: any): boolean {
-  for (let e = err, depth = 0; e && depth < 4; e = e.cause, depth++) {
-    if (DATABASE_UNAVAILABLE.has(e.code)) return true;
-    if (typeof e.message === "string" && /Connection terminated|timeout exceeded when trying to connect/i.test(e.message)) return true;
-  }
-  return false;
 }
 
 /**

@@ -18,7 +18,7 @@ const PRIVACY_SECTIONS: ReadonlyArray<{ id: string; heading: string; body: reado
     heading: 'What we collect',
     body: [
       'What ScopeCI stores depends on how you use it: joining the early-access list, signing in to the app with GitHub, or connecting a repository to a project. The sections below list each in turn.',
-      'The demo at /try stores nothing you paste into it. It reads your statement of work and pull request in memory and forgets them once it has answered.',
+      'The demo at /try saves nothing you paste into it: it reads your statement of work and pull request in memory and does not write them anywhere. A public pull request it looks up from a link is held in server memory for up to ten minutes, so repeat lookups don\'t use up GitHub\'s rate limit, and is then dropped.',
     ],
   },
   {
@@ -51,9 +51,9 @@ const PRIVACY_SECTIONS: ReadonlyArray<{ id: string; heading: string; body: reado
     id: 'pull-requests',
     heading: 'Repositories and pull requests',
     body: [
-      'When you connect a repository we store its name and the GitHub App installation it belongs to. For each pull request ScopeCI checks, we store its number, title, description, branch names, link and state, the GitHub user ID of its author, the commit that was checked, and the names of the changed files with how many lines each added and removed. ScopeCI never reads or stores the code itself or the diff.',
+      'When you connect a repository we store its name and the GitHub App installation it belongs to. For each pull request ScopeCI checks, we store its number, title, description, branch names, link and state, the GitHub username of its author, the commit that was checked, and the names of the changed files with how many lines each added and removed. ScopeCI never uses or stores the code itself or the diff; it reads only file names and line counts.',
       'With each check we store the result, its reason and any estimate. For change orders we store the items they cover, the hours, the subject and text of the letter, and whether it was sent, approved or declined. We also keep a log of who did what (who approved a change order, for example), and a short record of each notification GitHub sends us about a pull request, including the GitHub username that triggered it.',
-      'Pull requests can be opened by people who never use ScopeCI. About them we keep only what is listed above: their GitHub user ID and username, alongside their pull request.',
+      'Pull requests can be opened by people who never use ScopeCI. About them we keep only what is listed above: their GitHub username, alongside their pull request.',
       'ScopeCI posts its result on each pull request as a check and a comment, which anyone who can see the repository on GitHub can read.',
     ],
   },

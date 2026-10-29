@@ -812,7 +812,7 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
     }
     setError('');
     save.mutate(
-      { projectId: project.id, data: { title: (title || project.name).slice(0, 200), clauses: draft.slice(0, 60) } },
+      { projectId: project.id, data: { title: (title || project.name).slice(0, 200), clauses: draft } },
       {
         onSuccess: (saved) => {
           setMessage(
@@ -1260,12 +1260,9 @@ function ChangeOrderPanel({
   const sent = tracked?.status === 'SENT';
 
   // The work the client is asked to approve. Until something is saved there
-  // is no change order yet: it is raised for the excluded work that no
-  // decided change order already listed, as the server does.
-  const listedBefore = new Set((pr.previousChangeOrder?.items ?? []).map(itemKey));
-  const items = tracked
-    ? tracked.items
-    : pr.excluded.map((e) => e.item).filter((item) => !listedBefore.has(itemKey(item)));
+  // is no change order yet: the server says what one would list (the
+  // excluded work no decided change order already listed).
+  const items = tracked ? tracked.items : pr.newItems;
   // Sent with Mark as sent and Client approved, so the server refuses if the
   // change order lists other work by then. Results from before items were
   // recorded list none here, and then there is nothing to compare.
@@ -1645,10 +1642,12 @@ function AcceptDialog({
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
   // Each opening starts empty: a reason typed for one pull request and then
-  // cancelled, or last time's error, must not turn up on the next.
-  const [openedFor, setOpenedFor] = useState(pr);
-  if (pr !== openedFor) {
-    setOpenedFor(pr);
+  // cancelled, or last time's error, must not turn up on the next. A new
+  // result for the same pull request (a refresh after "out of date") keeps
+  // what was typed.
+  const [openedFor, setOpenedFor] = useState(pr?.url ?? null);
+  if ((pr?.url ?? null) !== openedFor) {
+    setOpenedFor(pr?.url ?? null);
     if (pr) {
       setReason('');
       setError('');
@@ -1856,7 +1855,10 @@ function PullRequestsSection({ project }: { project: Project }) {
   const withdraw = useWithdrawPullRequestAcceptance();
   const [confirm, confirmDialog] = useConfirm();
   const [recheckStatus, setRecheckStatus] = useState('');
-  const [accepting, setAccepting] = useState<PullRequestResult | null>(null);
+  // The pull request being accepted, by url, so the dialog follows its
+  // latest result (a retry after "out of date" sends the new one).
+  const [acceptingUrl, setAcceptingUrl] = useState<string | null>(null);
+  const accepting = acceptingUrl ? (results.data?.pullRequests.find((p) => p.url === acceptingUrl) ?? null) : null;
   const refreshResults = () => {
     queryClient.invalidateQueries({ queryKey: getListProjectPullRequestsQueryKey(project.id) });
     queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(project.id) });
@@ -1955,7 +1957,7 @@ function PullRequestsSection({ project }: { project: Project }) {
               onAccept={(button) => {
                 acceptOpener.current = button;
                 accepted.current = false;
-                setAccepting(pr);
+                setAcceptingUrl(pr.url);
               }}
               onWithdraw={() => withdrawAcceptance(pr)}
             />
@@ -1973,7 +1975,7 @@ function PullRequestsSection({ project }: { project: Project }) {
         pr={accepting}
         onClose={(done) => {
           accepted.current = Boolean(done);
-          setAccepting(null);
+          setAcceptingUrl(null);
           if (done) setRecheckStatus(done);
         }}
         returnFocus={() => {

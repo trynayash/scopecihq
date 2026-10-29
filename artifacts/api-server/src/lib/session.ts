@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
-import { and, desc, eq, gt, isNotNull } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, lt } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   organizationMembersTable,
@@ -238,4 +238,13 @@ export function sameOriginWrites(req: Request, res: Response, next: NextFunction
     return;
   }
   next();
+}
+
+/** Deletes sessions past their 30 days: an expired session is never used again, and the privacy policy says it's gone. */
+export async function purgeExpiredSessions(): Promise<number> {
+  const deleted = await db
+    .delete(userSessionsTable)
+    .where(lt(userSessionsTable.expiresAt, new Date()))
+    .returning({ id: userSessionsTable.id });
+  return deleted.length;
 }

@@ -1040,6 +1040,7 @@ export const ListProjectPullRequestsResponse = zod.object({
   "sentAt": zod.coerce.date().nullable(),
   "decidedAt": zod.coerce.date().nullable()
 }),zod.null()]).describe('An earlier change order on this pull request that the client already decided, when a later push added excluded work it doesn\'t cover. That new work is the current draft; this one is for reference.'),
+  "newItems": zod.array(zod.string()).describe('The excluded work a new change order would list: what no decided change order on this pull request lists. Empty when trackedChangeOrder is set (its items are the list).'),
   "checkedAt": zod.coerce.date()
 }))
 })

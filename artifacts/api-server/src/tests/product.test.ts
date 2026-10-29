@@ -1343,6 +1343,35 @@ async function run() {
       }
       assert.strictEqual(verdict, "APPROVED_CHANGE", "the approval in phase two covers the work there");
 
+      // A re-check of phase two's commit that fails is reported on phase
+      // two's own check run, never on phase one's row for the same pull request.
+      {
+        const { githubCheckRunsTable } = await import("@workspace/db/schema");
+        const [twoRow] = await db
+          .select()
+          .from(pullRequestsTable)
+          .where(and(eq(pullRequestsTable.externalId, `gh_pr_${admin.id * 1000 + 5}`), eq(pullRequestsTable.projectId, phaseTwo)));
+        // Phase one checked the same commit before it was archived: its run stays as it was.
+        const runsOnCommit = () => db.select().from(githubCheckRunsTable).where(eq(githubCheckRunsTable.headSha, "c3".repeat(20)));
+        const othersOf = (rows: Awaited<ReturnType<typeof runsOnCommit>>) =>
+          rows.filter((r) => r.pullRequestId !== twoRow.id).map((r) => `${r.id}:${r.latestEvaluationId}:${r.updatedAt.getTime()}`);
+        const before = await runsOnCommit();
+        setGitHubFetch(async (url, init) =>
+          url.includes("/repos/harbor-agency/admin/pulls/5/files") ? json({ message: "Server Error" }, 500) : fakeGitHub(url, init),
+        );
+        try {
+          const failed: any = await service.reevaluatePullRequest(twoRow.id);
+          assert.strictEqual(failed.status, "error", JSON.stringify(failed));
+        } finally {
+          setGitHubFetch(fakeGitHub);
+        }
+        const after = await runsOnCommit();
+        const mine = after.filter((r) => r.pullRequestId === twoRow.id);
+        assert.strictEqual(mine.length, 1, "phase two's own run is updated, not a new one added");
+        assert.strictEqual(mine[0].latestEvaluationId, null, "and says it couldn't check");
+        assert.deepStrictEqual(othersOf(after), othersOf(before), "no other project's run changed");
+      }
+
       // Restored, phase one still has its results, change order and acceptance.
       assert.strictEqual((await call(server, `/api/projects/${phaseOne}/restore`, { method: "POST", cookie: dana })).status, 200);
       const kept = await adminFive(phaseOne);
@@ -1429,6 +1458,11 @@ async function run() {
       const [delivery] = await db.select().from(webhookDeliveriesTable).where(eq(webhookDeliveriesTable.deliveryId, redelivered.deliveryId));
       assert.strictEqual(delivery?.status, "IGNORED");
       assert.strictEqual(delivery?.errorMessage, "Superseded by a newer pull request event");
+
+      // A bulk re-check's list, read from GitHub before the merge, doesn't reopen it either.
+      const snapshot = event("d2".repeat(20), "rechecked", "2026-10-01T11:00:00Z", "Cart coupons, tidied");
+      assert.strictEqual(((await deliver(snapshot)) as any).status, "ignored");
+      assert.strictEqual((await row()).state, "MERGED");
 
       // A newer event still applies.
       const reopened = event("d2".repeat(20), "reopened", "2026-10-01T13:00:00Z", "Cart coupons, tidied");
@@ -1676,6 +1710,8 @@ async function run() {
       ]) {
         const reply = await at(path, { method, body: method === "PATCH" ? { role: "MEMBER" } : undefined, cookie: gus, headers: shows(gusHome) });
         assert.strictEqual(reply.status, 409, `${method} ${path}`);
+        // Refused as stale, not by another rule (gus is the last owner here too).
+        assert.strictEqual(reply.body.error, stale.body.error, `${method} ${path}`);
       }
       const team = await at("/api/workspace", { cookie: gus, headers: shows(gusHome) });
       assert.strictEqual(team.body.name, "Frank Studio", "reading is never refused, and nothing changed");

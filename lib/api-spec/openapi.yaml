@@ -1444,6 +1444,13 @@ components:
           oneOf:
             - $ref: "#/components/schemas/TrackedChangeOrder"
             - type: "null"
+        newItems:
+          type: array
+          items:
+            type: string
+          description: >-
+            The excluded work a new change order would list: what no decided change order on this pull request lists.
+            Empty when trackedChangeOrder is set (its items are the list).
         checkedAt:
           type: string
           format: date-time
@@ -1451,6 +1458,7 @@ components:
         - scopeVersion
         - acceptance
         - previousChangeOrder
+        - newItems
         - trackedChangeOrder
         - evaluationId
         - number

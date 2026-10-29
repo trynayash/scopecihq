@@ -1,9 +1,11 @@
-import { ensureSchema, pool } from "@workspace/db";
+import { dropRetiredIndexes, ensureSchema, pool } from "@workspace/db";
 import app from "./app";
 import { logger } from "./lib/logger";
+import { databaseUnavailable } from "./lib/database-errors";
 import { backgroundCount, drain, runInBackground } from "./lib/background";
 import { currentWebhookService } from "./routes/github";
 import { purgeExpiredDeliveries } from "./github/webhook-service";
+import { purgeExpiredSessions } from "./lib/session";
 
 const rawPort = process.env["PORT"];
 
@@ -23,12 +25,16 @@ if (Number.isNaN(port) || port <= 0) {
 const timers: NodeJS.Timeout[] = [];
 
 // Create any missing tables and columns before taking traffic, so a deploy
-// never waits on a manual `drizzle-kit push`. It only adds, never drops. A
+// never waits on a manual `drizzle-kit push`. It only adds, apart from the
+// few retired indexes ensure-schema.ts names (one waits; see below). A
 // failed sync (a deadlock with the instance being replaced, a dropped
 // connection) is tried again: three times before listening, then in the
-// background with growing waits until it works. The server starts either
-// way, since the site and demo don't need the database; meanwhile
-// `app.locals.schemaSync` says "behind", for the health check to report.
+// background until it works. The server starts either way, since the site
+// and demo don't need the database. `app.locals.schemaSync` tells the health
+// check which it is: "behind" (the database answered and still refused the
+// sync, so this new code mustn't take traffic) holds a deploy back;
+// "unreachable" (no database at all, as when the free plan wakes before it)
+// doesn't, since there is no old schema to serve on and the site still works.
 async function syncSchema(): Promise<boolean> {
   try {
     const started = Date.now();
@@ -39,7 +45,7 @@ async function syncSchema(): Promise<boolean> {
     return true;
   } catch (err) {
     logger.error({ err }, "Could not bring the database schema up to date");
-    app.locals.schemaSync = "behind";
+    app.locals.schemaSync = databaseUnavailable(err, { tls: false }) ? "unreachable" : "behind";
     return false;
   }
 }
@@ -54,7 +60,8 @@ if (process.env.SCOPECI_SCHEMA_SYNC !== "off") {
     const retry = (wait: number) => {
       const timer = setTimeout(() => {
         void syncSchema().then((ok) => {
-          if (!ok) retry(Math.min(wait * 2, 5 * 60 * 1000));
+          // A database coming back is picked up within seconds; a refused sync backs off.
+          if (!ok) retry(app.locals.schemaSync === "unreachable" ? 10_000 : Math.min(wait * 2, 5 * 60 * 1000));
         });
       }, wait);
       timer.unref();
@@ -73,6 +80,28 @@ const server = app.listen(port, (err) => {
   logger.info({ port }, "Server listening");
 });
 
+// An index the code being replaced still needs is dropped only once that
+// instance has gone: Render stops it within a minute of this one listening.
+if (process.env.SCOPECI_SCHEMA_SYNC !== "off") {
+  const retire = (wait: number) => {
+    const timer = setTimeout(() => {
+      if (app.locals.schemaSync !== "synced") return retire(5 * 60 * 1000);
+      runInBackground(
+        dropRetiredIndexes(pool).then(
+          () => logger.info("Retired indexes dropped"),
+          (err) => {
+            logger.warn({ err }, "Could not drop retired indexes yet");
+            retire(5 * 60 * 1000);
+          },
+        ),
+      );
+    }, wait);
+    timer.unref();
+    timers.push(timer);
+  };
+  retire(4 * 60 * 1000);
+}
+
 // GitHub doesn't resend a webhook it gave up on (the server was waking up,
 // or a deploy was in flight), so open pull requests are swept regularly and
 // any commit without a result is checked. SCOPECI_SWEEP_MS=0 turns it off.
@@ -89,14 +118,22 @@ if (sweepEvery > 0) {
 }
 
 // Webhook deliveries are kept 30 days, for idempotency and for reading why
-// one was ignored; then they are deleted, every hour.
+// one was ignored, and sessions 30 days at most; then they are deleted,
+// every hour.
 const purge = () =>
   runInBackground(
-    purgeExpiredDeliveries()
-      .then((deleted) => {
-        if (deleted > 0) logger.info({ deleted }, "Deleted expired webhook deliveries");
-      })
-      .catch((err) => logger.warn({ err }, "Deleting expired webhook deliveries failed")),
+    Promise.all([
+      purgeExpiredDeliveries()
+        .then((deleted) => {
+          if (deleted > 0) logger.info({ deleted }, "Deleted expired webhook deliveries");
+        })
+        .catch((err) => logger.warn({ err }, "Deleting expired webhook deliveries failed")),
+      purgeExpiredSessions()
+        .then((deleted) => {
+          if (deleted > 0) logger.info({ deleted }, "Deleted expired sessions");
+        })
+        .catch((err) => logger.warn({ err }, "Deleting expired sessions failed")),
+    ]),
   );
 timers.push(setTimeout(purge, 60_000).unref());
 timers.push(setInterval(purge, 60 * 60 * 1000).unref());

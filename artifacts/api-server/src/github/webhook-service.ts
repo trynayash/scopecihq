@@ -513,6 +513,8 @@ export class WebhookService {
     // Set once the pull request is known to belong to a project, so a
     // failure can still be reported on it.
     let failureCheck: { installationId: string; owner: string; repo: string; detailsUrl?: string } | null = null;
+    // The project the failed check belongs to: a pull request has a row per project.
+    let failureProjectId = "";
     // Set once GitHub has the verdict's check run: a later failure (the
     // comment, the audit record) must not cover it with "couldn't check".
     let checkPosted = false;
@@ -605,19 +607,23 @@ export class WebhookService {
       const detailsUrl = project && process.env.APP_BASE_URL
         ? `${process.env.APP_BASE_URL.replace(/\/+$/, "")}/app/projects/${project.id}`
         : undefined;
-      if (project && installationId && headSha && action !== "closed") failureCheck = { installationId, owner, repo, detailsUrl };
+      if (project && installationId && headSha && action !== "closed") {
+        failureCheck = { installationId, owner, repo, detailsUrl };
+        failureProjectId = project.id;
+      }
 
       // 2. Persist / Upsert Pull Request into Provenance Graph
       const externalPrId = `gh_pr_${prData.id}`;
       const prState = prData.merged ? "MERGED" : prData.state === "closed" ? "CLOSED" : "OPEN";
       // GitHub stamps each pull request event with updated_at. An event older
-      // than the one stored (a failed delivery sent again, or two arriving
-      // out of order) would put back an old title, state and verdict, so it
-      // changes nothing. ScopeCI's own re-checks always go through: they read
-      // GitHub as it is now, or the row already stored.
+      // than the one stored (a failed delivery sent again, two arriving out of
+      // order, or a bulk re-check's list read before a merge) would put back
+      // an old title, state and verdict, so it changes nothing. A re-check
+      // built from the stored row carries no updated_at and always goes
+      // through; one read from GitHub with the same updated_at does too.
       const stamped = prData.updated_at ? new Date(prData.updated_at) : null;
       const providerUpdatedAt = stamped && !Number.isNaN(stamped.getTime()) ? stamped : null;
-      const guardOrder = providerUpdatedAt !== null && action !== "rechecked";
+      const guardOrder = providerUpdatedAt !== null;
 
       const [prRecord] = await db
         .insert(pullRequestsTable)
@@ -1157,7 +1163,7 @@ export class WebhookService {
       // Not once the verdict is on GitHub: only a later step failed then.
       if (failureCheck && !checkPosted) {
         try {
-          await this.reportCouldNotCheck(failureCheck, `gh_pr_${prData.id}`, headSha);
+          await this.reportCouldNotCheck(failureCheck, failureProjectId, `gh_pr_${prData.id}`, headSha);
         } catch (reportErr: any) {
           logger.warn({ deliveryId, err: reportErr.message }, "Couldn't report the failed check on the pull request");
         }
@@ -1181,6 +1187,7 @@ export class WebhookService {
    */
   private async reportCouldNotCheck(
     target: { installationId: string; owner: string; repo: string; detailsUrl?: string },
+    projectId: string,
     pullRequestExternalId: string,
     headSha: string,
   ): Promise<void> {
@@ -1193,7 +1200,11 @@ export class WebhookService {
     // The database may be what failed: then the run is posted, not recorded.
     const pr = await db.query.pullRequestsTable
       .findFirst({
-        where: and(eq(pullRequestsTable.externalProvider, "GITHUB"), eq(pullRequestsTable.externalId, pullRequestExternalId)),
+        where: and(
+          eq(pullRequestsTable.externalProvider, "GITHUB"),
+          eq(pullRequestsTable.externalId, pullRequestExternalId),
+          eq(pullRequestsTable.projectId, projectId),
+        ),
       })
       .catch(() => undefined);
     const recorded = pr

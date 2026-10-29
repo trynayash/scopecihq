@@ -17,13 +17,13 @@ export const eventsRateLimiter = rateLimiter({
 });
 
 /**
- * A visitor sends a handful of events per page, so 500 a day from one
+ * A visitor sends a handful of events per page, so 100 a day from one
  * address is far more than anyone browsing. Past that it's a script, and it
  * shouldn't use up the whole site's daily allowance below.
  */
 export const eventsDailyLimiter = rateLimiter({
   windowMs: 24 * 60 * 60 * 1000,
-  max: 500,
+  max: 100,
   message: "Too many site events from this address today.",
 });
 
@@ -85,17 +85,33 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** Events kept per UTC day across all visitors, and for how long. */
 const DAILY_EVENT_LIMIT = 2000;
 const KEEP_EVENTS_DAYS = 90;
+/**
+ * Signups and the steps to them are what the numbers are for: they get room
+ * past the daily limit, so page views on a busy day (or a script) can't
+ * crowd them out.
+ */
+const CONVERSION_EVENTS = new Set([
+  "waitlist_started",
+  "waitlist_submitted",
+  "waitlist_success",
+  "waitlist_duplicate",
+  "waitlist_error",
+  "try_waitlist_click",
+]);
+const CONVERSION_RESERVE = 500;
 
 /**
  * Bounds what the events table can hold: at most `limit` rows a UTC day,
  * and rows older than `keepDays` are deleted when a new day starts. The
  * day's count is read from the table, so a restart (a deploy, or the host
  * waking the service) doesn't hand out a fresh allowance. The returned
- * function answers whether one more event may be stored today.
+ * function answers whether one more event may be stored today; a
+ * conversion event may use `reserve` more.
  */
-export function dailyEventBudget(limit: number, keepDays: number) {
+export function dailyEventBudget(limit: number, keepDays: number, reserve = 0) {
   let day = "";
   let used = 0;
+  let warned = false;
   let ready: Promise<void> = Promise.resolve();
 
   const startDay = async (today: string, log: Logger) => {
@@ -111,21 +127,28 @@ export function dailyEventBudget(limit: number, keepDays: number) {
     }
   };
 
-  return async (log: Logger): Promise<boolean> => {
+  return async (log: Logger, event?: string): Promise<boolean> => {
     const today = new Date().toISOString().slice(0, 10);
     if (today !== day) {
       day = today;
       used = 0;
+      warned = false;
       ready = startDay(today, log);
     }
     await ready;
-    if (used >= limit) return false;
+    if (used >= limit + (event && CONVERSION_EVENTS.has(event) ? reserve : 0)) {
+      if (!warned) {
+        warned = true;
+        log.warn({ limit }, "Daily site-event limit reached; events are dropped until 00:00 UTC");
+      }
+      return false;
+    }
     used += 1;
     return true;
   };
 }
 
-const roomForEvent = dailyEventBudget(DAILY_EVENT_LIMIT, KEEP_EVENTS_DAYS);
+const roomForEvent = dailyEventBudget(DAILY_EVENT_LIMIT, KEEP_EVENTS_DAYS, CONVERSION_RESERVE);
 
 /**
  * Lightweight analytics endpoint. Answers at once, then stores the event,
@@ -146,7 +169,7 @@ router.post("/events", eventsRateLimiter, eventsDailyLimiter, async (req, res): 
   res.status(202).json({ accepted: true });
 
   // Past today's allowance the event is accepted but not kept.
-  if (!(await roomForEvent(req.log))) return;
+  if (!(await roomForEvent(req.log, event))) return;
   try {
     await db.insert(siteEventsTable).values({
       event,

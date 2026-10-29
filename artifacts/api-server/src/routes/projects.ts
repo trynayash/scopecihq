@@ -1117,6 +1117,7 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
         changeOrder: suggested,
         trackedChangeOrder: plan.current ? toTracked(plan.current) : null,
         previousChangeOrder: plan.previous ? toTracked(plan.previous) : null,
+        newItems: plan.current ? [] : plan.fresh.map((i) => i.item),
         acceptance: acceptance
           ? { reason: acceptance.reason, acceptedBy: acceptance.acceptedBy, acceptedAt: acceptance.acceptedAt }
           : null,
