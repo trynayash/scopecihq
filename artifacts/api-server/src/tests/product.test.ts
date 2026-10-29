@@ -180,7 +180,7 @@ async function fakeGitHub(url: string, init: RequestInit): Promise<Response> {
   }
 
   const openList = path.match(/^\/repos\/([^/]+\/[^/]+)\/pulls\?state=open/);
-  if (openList) return json((fake.open[openList[1]] ?? []).map((p) => ({ number: p.number })));
+  if (openList) return json((fake.open[openList[1]] ?? []).map((p) => ({ number: p.number, head: p.head })));
   const single = path.match(/^\/repos\/([^/]+\/[^/]+)\/pulls\/(\d+)$/);
   if (single) {
     const pr = (fake.open[single[1]] ?? []).find((p) => p.number === Number(single[2]));
@@ -811,6 +811,21 @@ async function run() {
       assert.strictEqual(found.scopeVersion, "v2");
       const foreign = await call(server, `/api/projects/${projectId}/recheck`, { method: "POST", cookie: eve });
       assert.strictEqual(foreign.status, 404);
+    });
+
+    await scenario("The sweep checks a pull request whose webhook never arrived, and only once", async () => {
+      fake.files["harbor-agency/storefront#19"] = [[{ filename: "src/giftcards/apply.ts", status: "added", additions: 22, deletions: 0 }]];
+      const lost = prPayload(storefront, 19, "5".repeat(40)).pull_request;
+      fake.open["harbor-agency/storefront"] = [
+        ...(fake.open["harbor-agency/storefront"] ?? []),
+        { ...lost, title: "Apply gift cards at checkout", head: { ref: "feat/gift-card-apply", sha: "5".repeat(40) } },
+      ];
+      const first = await service.sweepMissedPullRequests();
+      assert.strictEqual(first.checked, 1, "only the commit without a result");
+      const list = await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana });
+      assert.strictEqual(list.body.pullRequests.find((p: any) => p.number === 19)?.verdict, "CHANGE_REQUIRED");
+      const again = await service.sweepMissedPullRequests();
+      assert.strictEqual(again.checked, 0, "nothing left to check");
     });
 
     let eveWorkspace = "";

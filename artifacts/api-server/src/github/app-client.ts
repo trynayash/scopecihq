@@ -117,17 +117,25 @@ export class GitHubAppClient implements IGitHubClient {
     return files;
   }
 
-  async listOpenPullRequests(installationId: string, owner: string, repo: string, limit: number): Promise<any[]> {
-    const { data } = await this.api<Array<{ number: number }>>(
+  async listOpenPullRequestHeads(installationId: string, owner: string, repo: string, limit: number) {
+    const { data } = await this.api<Array<{ number: number; head?: { sha?: string } }>>(
       installationId,
       "GET",
       `${this.repoPath(owner, repo)}/pulls?state=open&sort=updated&direction=desc&per_page=${Math.min(limit, 100)}`,
     );
+    return data.slice(0, limit).flatMap((pr) => (pr.head?.sha ? [{ number: pr.number, headSha: pr.head.sha }] : []));
+  }
+
+  async getPullRequest(installationId: string, owner: string, repo: string, number: number): Promise<any> {
+    const { data } = await this.api<any>(installationId, "GET", `${this.repoPath(owner, repo)}/pulls/${number}`);
+    return data;
+  }
+
+  async listOpenPullRequests(installationId: string, owner: string, repo: string, limit: number): Promise<any[]> {
     // The list leaves out file and line counts; the single pull request has them.
     const full: any[] = [];
-    for (const { number } of data.slice(0, limit)) {
-      const { data: pr } = await this.api<any>(installationId, "GET", `${this.repoPath(owner, repo)}/pulls/${number}`);
-      full.push(pr);
+    for (const { number } of await this.listOpenPullRequestHeads(installationId, owner, repo, limit)) {
+      full.push(await this.getPullRequest(installationId, owner, repo, number));
     }
     return full;
   }

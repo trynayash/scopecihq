@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   changeOrdersTable,
@@ -335,6 +335,87 @@ export class WebhookService {
       if (result.status === "processed") checked++;
     }
     return { checked };
+  }
+
+  /** Commits the sweep has already tried, and how often, so one that keeps failing isn't retried forever. */
+  private sweepTries = new Map<string, number>();
+  private sweeping = false;
+
+  /**
+   * Catches what GitHub never delivered. A webhook can be lost (the server
+   * was waking up, a deploy was in flight, processing failed); GitHub
+   * doesn't send it again. So every few minutes this looks at the open pull
+   * requests on each connected repository and checks any commit that has no
+   * result yet. One list request per project; a full pull request is
+   * fetched only for commits that need checking, and each commit is tried
+   * at most three times.
+   */
+  async sweepMissedPullRequests(): Promise<{ checked: number }> {
+    if (this.sweeping || !this.gitHubClient.listOpenPullRequestHeads || !this.gitHubClient.getPullRequest) return { checked: 0 };
+    this.sweeping = true;
+    let checked = 0;
+    try {
+      const projects = await db
+        .select()
+        .from(projectsTable)
+        .where(
+          and(
+            isNull(projectsTable.archivedAt),
+            isNotNull(projectsTable.githubInstallationId),
+            isNotNull(projectsTable.repositoryFullName),
+            isNotNull(projectsTable.contractId),
+          ),
+        );
+      for (const project of projects) {
+        const [owner, name] = project.repositoryFullName!.split("/");
+        let heads: Array<{ number: number; headSha: string }>;
+        try {
+          heads = await this.gitHubClient.listOpenPullRequestHeads(project.githubInstallationId!, owner, name, 30);
+        } catch (err: any) {
+          logger.warn({ projectId: project.id, err: err.message }, "Sweep couldn't list open pull requests");
+          continue;
+        }
+        for (const { number, headSha } of heads) {
+          const key = `${project.repositoryFullName}#${number}@${headSha}`;
+          if ((this.sweepTries.get(key) ?? 0) >= 3) continue;
+          const done = await db
+            .select({ id: commercialEvaluationsTable.id })
+            .from(commercialEvaluationsTable)
+            .innerJoin(pullRequestsTable, eq(pullRequestsTable.id, commercialEvaluationsTable.pullRequestId))
+            .where(
+              and(
+                eq(pullRequestsTable.projectId, project.id),
+                eq(pullRequestsTable.number, number),
+                eq(commercialEvaluationsTable.headSha, headSha),
+              ),
+            )
+            .limit(1);
+          if (done.length > 0) continue;
+          this.sweepTries.set(key, (this.sweepTries.get(key) ?? 0) + 1);
+          try {
+            const pullRequest = await this.gitHubClient.getPullRequest(project.githubInstallationId!, owner, name, number);
+            const result = await this.processPullRequestEvent(`sweep_${crypto.randomUUID()}`, {
+              action: "rechecked",
+              installation: { id: Number(project.githubInstallationId) },
+              repository: { id: Number(project.repositoryExternalId), name, full_name: project.repositoryFullName, owner: { login: owner } },
+              pull_request: pullRequest,
+            });
+            if (result.status === "processed") {
+              checked++;
+              this.sweepTries.delete(key);
+            }
+          } catch (err: any) {
+            logger.warn({ projectId: project.id, number, err: err.message }, "Sweep couldn't check a pull request");
+          }
+        }
+      }
+      if (checked > 0) logger.info({ checked }, "Sweep checked pull requests GitHub hadn't delivered");
+      // Keep the memory of tries bounded.
+      if (this.sweepTries.size > 5000) this.sweepTries.clear();
+      return { checked };
+    } finally {
+      this.sweeping = false;
+    }
   }
 
   /** The last piece of work queued for each pull request, keyed by repository and number. */

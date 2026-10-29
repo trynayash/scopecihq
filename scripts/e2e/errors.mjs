@@ -133,6 +133,21 @@ export async function errorJourney({ browser, app, github, out, results }) {
     }, "the re-checked result", 30_000);
   });
 
+  await step(page, "A pull request whose webhook never arrived is still checked", async () => {
+    const sha = "d4".repeat(20);
+    await control("/__e2e/pull-request", {
+      repo: "harbor-agency/storefront",
+      number: 40,
+      title: "Cart totals rounding",
+      branch: "fix/cart-rounding",
+      sha,
+      files: [{ filename: "src/cart/totals.ts", status: "modified", additions: 6, deletions: 2 }],
+      silent: true,
+    });
+    const run = await until(async () => (await ghState()).checkRuns.find((r) => r.head_sha === sha), "the sweep's check run", 30_000);
+    if (run.output?.title !== "ScopeCI: In scope") throw new Error(`check run was "${run.output?.title}"`);
+  });
+
   await step(page, "A session that ends mid-use goes back to sign-in, not a page of errors", async () => {
     await page.goto(`${app}/app/projects/${projectId}`);
     await page.getByRole("button", { name: "Re-check open pull requests" }).waitFor();

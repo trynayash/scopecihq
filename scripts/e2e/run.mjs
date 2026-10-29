@@ -64,6 +64,8 @@ function startServer() {
     GITHUB_TOKEN_ENCRYPTION_KEY: crypto.randomBytes(32).toString("base64"),
     ADMIN_SECRET: "e2e-admin-secret-0123456789",
     LOG_LEVEL: "warn",
+    // Sweep for missed webhooks every few seconds instead of every ten minutes.
+    SCOPECI_SWEEP_MS: "4000",
   };
   const child = spawn("node", ["--enable-source-maps", "artifacts/api-server/dist/index.mjs"], { cwd: ROOT, env });
   const log = [];
