@@ -147,7 +147,7 @@ html.menu-open { overflow: hidden; }
 }
 .footer-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) repeat(2, minmax(0, 0.7fr));
+  grid-template-columns: minmax(0, 1.5fr) repeat(3, minmax(0, 0.7fr));
   gap: var(--space-6);
 }
 .footer-brand > a { display: inline-flex; border-radius: var(--radius-s); }
@@ -186,11 +186,12 @@ html.menu-open { overflow: hidden; }
 @media (max-width: 1023px) {
   .site-nav { display: none; }
   .menu-toggle { display: inline-grid; }
-  .footer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .footer-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .footer-brand { grid-column: 1 / -1; }
 }
 
 @media (max-width: 719px) {
   .site-signin,
   .site-cta { display: none; }
+  .footer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

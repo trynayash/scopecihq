@@ -1,7 +1,19 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowRightIcon, CrossIcon, Icon, PlusIcon, TickIcon } from '../icons';
 import { useCreateWaitlistSignup } from '@workspace/api-client-react';
-import { Footer, ICON_MARK, Navbar, PRIVACY_PATH, TRY_PATH, VendorMark, anchor, attribution, track, usePageMeta } from '../site';
+import {
+  CONTACT_PATH,
+  Footer,
+  ICON_MARK,
+  Navbar,
+  PRIVACY_PATH,
+  TRY_PATH,
+  VendorMark,
+  anchor,
+  attribution,
+  track,
+  usePageMeta,
+} from '../site';
 import { useReveal } from '../motion';
 import { HeroStage } from '../landing/hero-stage';
 import { CreepChart } from '../landing/creep-chart';
@@ -537,7 +549,11 @@ function Questions() {
             Worth knowing first.
           </h2>
           <p className="section-lede">
-            Anything else, ask us when you join the pilot. A person answers.
+            Anything else,{' '}
+            <a className="text-link" href={CONTACT_PATH}>
+              write to us
+            </a>
+            . A person answers.
           </p>
         </div>
 

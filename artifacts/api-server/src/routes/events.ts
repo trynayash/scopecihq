@@ -49,6 +49,9 @@ export const KNOWN_EVENTS = new Set([
   "try_evaluated",
   "try_change_order_copied",
   "try_waitlist_click",
+  "contact_submitted",
+  "contact_sent",
+  "contact_error",
 ]);
 
 /** A campaign tag (utm_source and the like), trimmed and kept short. */

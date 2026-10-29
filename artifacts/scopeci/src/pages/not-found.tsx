@@ -39,7 +39,8 @@ export default function NotFound() {
             <ul>
               <li>Home</li>
               <li>Try it on your SOW</li>
-              <li>Privacy policy</li>
+              <li>Contact</li>
+              <li>Terms, privacy and security</li>
             </ul>
             <p className="missing-paper-label">Explicit exclusions</p>
             <ul>
