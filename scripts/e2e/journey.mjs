@@ -2,6 +2,7 @@
 // Each step is named for what a person would notice if it broke.
 
 import path from "node:path";
+import { onScreen } from "./on-screen.mjs";
 
 const SOW = `# Statement of Work — Harbor & Pine Online Store
 
@@ -51,7 +52,7 @@ export async function journey({ browser, app, github, fake, out, results, server
       await fn();
       results.push({ ok: true, name });
     } catch (err) {
-      results.push({ ok: false, name, detail: (err?.message ?? String(err)).split("\n")[0] });
+      results.push({ ok: false, name, detail: `${(err?.message ?? String(err)).split("\n")[0]}${await onScreen(page)}` });
       await page?.screenshot({ path: path.join(out, `fail-${results.length}.png`), fullPage: true }).catch(() => {});
       stop = true;
     }

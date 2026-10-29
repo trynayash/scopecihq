@@ -6,6 +6,7 @@
 
 import path from "node:path";
 import { execSync } from "node:child_process";
+import { onScreen } from "./on-screen.mjs";
 
 export async function errorJourney({ browser, app, github, out, results }) {
   const step = async (page, name, fn) => {
@@ -13,7 +14,7 @@ export async function errorJourney({ browser, app, github, out, results }) {
       await fn();
       results.push({ ok: true, name });
     } catch (err) {
-      results.push({ ok: false, name, detail: (err?.message ?? String(err)).split("\n")[0] });
+      results.push({ ok: false, name, detail: `${(err?.message ?? String(err)).split("\n")[0]}${await onScreen(page)}` });
       await page?.screenshot({ path: path.join(out, `fail-errors-${results.length}.png`), fullPage: true }).catch(() => {});
     }
   };
