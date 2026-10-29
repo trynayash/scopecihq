@@ -143,6 +143,8 @@ export default function TryPage() {
   const [prError, setPrError] = useState('');
 
   const [result, setResult] = useState<DemoEvaluation | null>(null);
+  // What reading the document left out (sections past the limit).
+  const [scopeWarnings, setScopeWarnings] = useState<string[]>([]);
   const [changeOrder, setChangeOrder] = useState('');
 
   const parseSow = useParseDemoSow();
@@ -169,6 +171,7 @@ export default function TryPage() {
         onSuccess: (scope) => {
           setScopeTitle(scope.title);
           setClauses(scope.clauses);
+          setScopeWarnings(scope.warnings ?? []);
           setResult(null);
           track('try_sow_read');
           requestAnimationFrame(() => scopeHeading.current?.focus());
@@ -199,7 +202,15 @@ export default function TryPage() {
       });
       // The result on screen was for the pull request this replaced.
       setResult(null);
-      setPrUrlState({ loading: false, error: '', loaded: `Loaded #${loaded.number ?? ''}: ${loaded.files.length} files` });
+      const total = loaded.totalFiles ?? loaded.files.length;
+      setPrUrlState({
+        loading: false,
+        error: '',
+        loaded:
+          total > loaded.files.length
+            ? `Loaded #${loaded.number ?? ''}: ${loaded.files.length} of ${total} files (the demo checks the first ${loaded.files.length})`
+            : `Loaded #${loaded.number ?? ''}: ${loaded.files.length} files`,
+      });
       track('try_github_pr_loaded');
     } catch (error) {
       setPrUrlState({ loading: false, error: errorMessage(error, "We couldn't load that pull request."), loaded: '' });
@@ -344,6 +355,11 @@ export default function TryPage() {
                     Fix anything it got wrong. This list, not the raw document, is what pull requests are checked
                     against.
                   </p>
+                  {scopeWarnings.map((warning) => (
+                    <p key={warning} className="notice is-warning">
+                      {warning}
+                    </p>
+                  ))}
                   {itemCount(clauses) === 0 && (
                     <p className="notice">
                       We didn't find anything marked as included or excluded. Add items below, or paste a document with

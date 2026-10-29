@@ -60,6 +60,8 @@ interface GitHubAppStatus {
   webhooksReady: boolean;
   encryptionReady: boolean;
   baseUrl: string;
+  /** An App saved here whose keys no longer decrypt (GITHUB_TOKEN_ENCRYPTION_KEY changed). */
+  storedUnreadable?: { slug: string; owner: string; htmlUrl: string } | null;
 }
 
 const SETUP_RESULTS: Record<string, string> = {
@@ -194,6 +196,18 @@ function GitHubAppPanel({ onSignedOut }: { onSignedOut: () => void }) {
             {status.source === 'admin' && (
               <button type="button" className="button button-quiet button-danger" onClick={forget}>Forget this App</button>
             )}
+          </div>
+        </>
+      ) : status.storedUnreadable ? (
+        <>
+          <p className="form-error">
+            A GitHub App ({status.storedUnreadable.slug}) is saved but can't be decrypted with the current
+            GITHUB_TOKEN_ENCRYPTION_KEY. Restore the key it was saved with. Creating a new App means every customer
+            has to install it and connect their repositories again.
+          </p>
+          <div className="row-actions">
+            <a className="button button-quiet" href={status.storedUnreadable.htmlUrl}>App on GitHub</a>
+            <button type="button" className="button button-quiet button-danger" onClick={forget}>Forget this App</button>
           </div>
         </>
       ) : (

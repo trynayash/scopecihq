@@ -81,7 +81,7 @@ export interface DemoScopeInput {
   title: string;
   /**
      * @minItems 1
-     * @maxItems 60
+     * @maxItems 200
      */
   clauses: DemoScopeClause[];
 }
@@ -134,6 +134,11 @@ export interface DemoPullRequest {
      * @maxItems 300
      */
   files: DemoChangedFile[];
+  /**
+     * How many files GitHub says the pull request changes, when loaded from GitHub; more than files.length when the demo read only the first 300.
+     * @nullable
+     */
+  totalFiles?: number | null;
 }
 
 export interface DemoIssue {
@@ -533,6 +538,8 @@ export interface GitHubRepositoryList {
   /** @nullable */
   installUrl: string | null;
   repositories: GitHubRepository[];
+  /** GitHub accounts whose installation has more repositories than ScopeCI lists (5,000); their list is cut short. */
+  truncatedAccounts?: string[];
 }
 
 export type ChangeOrderUpdateInputStatus = typeof ChangeOrderUpdateInputStatus[keyof typeof ChangeOrderUpdateInputStatus];

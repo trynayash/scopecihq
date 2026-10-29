@@ -164,6 +164,27 @@ function run() {
     assert.deepStrictEqual(extractStatedEffort("Estimated hours: 40-60").estimatedHours, { min: 40, max: 60 });
   });
 
+  scenario("An exception stays with its item, and bracketed examples aren't split off", () => {
+    assert.deepStrictEqual(
+      scope("## Scope\nThird-party integrations other than Stripe and SendGrid are out of scope.").excluded,
+      ["third-party integrations other than stripe and sendgrid"],
+    );
+    assert.deepStrictEqual(
+      scope("## Scope\nExcluded: social login (Google, Facebook), native apps.").excluded,
+      ["social login (google, facebook)", "native apps"],
+    );
+    assert.deepStrictEqual(
+      scope("## Scope\nExcluded: payment providers except PayPal; SMS alerts and push notifications.").excluded,
+      ["payment providers except paypal", "sms alerts", "push notifications"],
+    );
+  });
+
+  scenario("Splitting a long list stays fast", () => {
+    const started = Date.now();
+    scope(`## Scope\nExcluded: ${"(".repeat(5_000)}${"a, ".repeat(5_000)} and b other than c.`);
+    assert.ok(Date.now() - started < 500, `took ${Date.now() - started} ms`);
+  });
+
   console.log(`\nSOW parser: ${passed} passed, ${failures.length} failed`);
   if (failures.length > 0) {
     failures.forEach((f) => console.log(`  - ${f}`));

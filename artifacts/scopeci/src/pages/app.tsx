@@ -278,6 +278,7 @@ const SIGN_IN_PROBLEMS: Record<string, string> = {
   expired: 'That sign-in link expired. Try again.',
   failed: "GitHub sign-in didn't complete. Try again in a moment.",
   unavailable: "Sign-in isn't switched on for this server yet.",
+  busy: 'Too many sign-ins from your network just now. Wait a minute and try again.',
 };
 
 function SignIn({ available }: { available: boolean }) {
@@ -752,6 +753,9 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
   const [draft, setDraft] = useState<DemoScopeClause[] | null>(scope?.clauses ?? null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  // What reading the document couldn't take in (sections past the limit),
+  // shown above the lists so a partial read is never mistaken for the whole.
+  const [warnings, setWarnings] = useState<string[]>([]);
 
   // A newly saved version replaces the draft. Only that: renaming the
   // project (here or by a teammate) must not throw away unsaved edits.
@@ -789,6 +793,7 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
           setTitle(parsed.title || '');
           setPasting(false);
           setMessage('');
+          setWarnings(parsed.warnings ?? []);
         },
         onError: (err) => setError(errorMessage(err, "We couldn't read that document.")),
       },
@@ -874,6 +879,12 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
       ) : (
         draft && (
           <>
+            {dirty &&
+              warnings.map((warning) => (
+                <p key={warning} className="notice is-warning">
+                  {warning}
+                </p>
+              ))}
             {itemCount(draft) === 0 && (
               <p className="notice">
                 Nothing is marked as included or excluded yet. Add the work this engagement covers and what it
@@ -1079,6 +1090,12 @@ function RepositorySection({ project }: { project: Project }) {
               })}
             </fieldset>
           )}
+          {(repos.data.truncatedAccounts ?? []).map((account) => (
+            <p key={account} className="notice">
+              Showing the first 5,000 repositories in {account}. To connect another, limit the ScopeCI GitHub App to
+              selected repositories on GitHub.
+            </p>
+          ))}
           {error && (
             <p className="form-error" role="alert">
               {error}
@@ -1281,15 +1298,15 @@ function ChangeOrderPanel({
     });
   const save = (
     data: { hours?: number | null; status?: 'SENT' | 'APPROVED' | 'DECLINED'; subject?: string; body?: string; items?: string[] },
-    done: string,
+    done: string | ((saved: TrackedChangeOrder) => string),
     then?: 'approve' | 'letter',
   ) =>
     update.mutate(
       { projectId: project.id, data: { evaluationId: pr.evaluationId, ...data } },
       {
-        onSuccess: () => {
+        onSuccess: (saved) => {
           setError('');
-          setStatus(done);
+          setStatus(typeof done === 'string' ? done : done(saved));
           focusNext(then);
           queryClient.invalidateQueries({ queryKey: getListProjectPullRequestsQueryKey(project.id) });
           queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(project.id) });
@@ -1313,7 +1330,15 @@ function ChangeOrderPanel({
     // An edited letter is sent along, so the server keeps it rather than
     // redrawing it with the new price.
     if (edited && !sent) save({ hours: value, ...splitMessage(text) }, 'Hours saved. Your edited letter was kept; update the price in it if it mentions one.');
-    else save({ hours: value }, sent ? 'Hours saved.' : 'Hours saved and the letter updated.');
+    else
+      save({ hours: value }, (saved) =>
+        sent
+          ? 'Hours saved.'
+          : // A letter saved with edits earlier is the PM's: the server keeps it.
+            changeOrderText(saved) === original
+            ? 'Hours saved. Your saved letter was kept; update the price in it if it mentions one.'
+            : 'Hours saved and the letter updated.',
+      );
   };
 
   const reference = tracked?.reference ?? 'this change order';
@@ -2309,7 +2334,7 @@ function TeamPage() {
                   onClick={async () => {
                     const confirmed = await confirm({
                       title: `Remove ${member.name ?? member.login} from ${team.name}?`,
-                      description: `@${member.login} loses access to every project in this workspace. You can invite them again later.`,
+                      description: `@${member.login} loses access to every project in this workspace, and any invite links they made stop working. You can invite them again later.`,
                       confirmLabel: 'Remove',
                       danger: true,
                     });

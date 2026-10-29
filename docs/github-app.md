@@ -18,7 +18,7 @@ The server needs `ADMIN_SECRET`, `GITHUB_TOKEN_ENCRYPTION_KEY` (`openssl rand -h
 3. GitHub shows the App with every setting below already filled in. Confirm it. GitHub sends you back to the admin page, and the server stores the App's ID, client secret, private key and webhook secret, encrypted, in the database.
 4. Choose **Install on a repository**.
 
-Sign-in and pull request checks work from that moment; there is nothing to copy into environment variables and no restart. **Forget this App** on the same page removes the stored credentials (the App stays on GitHub until you delete it there).
+Sign-in and pull request checks work from that moment; there is nothing to copy into environment variables and no restart. **Forget this App** on the same page removes the stored credentials (the App stays on GitHub until you delete it there). Forgetting can't be undone from the page. Installations and linked repositories belong to that App, so a newly created App only works for a customer after they install it and connect each repository again. To keep the App, set its keys in environment variables instead (section 2).
 
 Variables set in the environment (section 2) take precedence over the stored App, field by field. While `GITHUB_APP_ID` is set, the admin page shows that App and won't create another.
 

@@ -42,6 +42,7 @@ import { checklistFromRecord, loadActiveBaseline, saveChecklist } from "../lib/s
 import { GitHubReauthRequired, userGitHubToken } from "../lib/github-token.js";
 import { installUrl, listInstallationRepositories, listUserInstallations } from "../github/user-api.js";
 import { GitHubApiError } from "../github/github-http.js";
+import { runInBackground } from "../lib/background.js";
 import { ACCEPTED, WITHDRAWN, acceptanceFor, acceptancesFor, itemKey } from "../lib/acceptance.js";
 import { changeOrderPlan, isDecided, itemsOf, letterHash, letterUntouched } from "../lib/change-orders.js";
 
@@ -62,11 +63,12 @@ const gitHubLimiter = rateLimiter({ windowMs: 60_000, max: 30, message: "Too man
  * connected repository, a different policy or an approved change order.
  */
 function recheckLater(req: Request, projectId: string): void {
-  setImmediate(() => {
-    currentWebhookService()
+  runInBackground(
+    new Promise<void>((resolve) => setImmediate(resolve))
+      .then(() => currentWebhookService())
       .then((service) => service?.recheckOpenPullRequests(projectId))
-      .catch((err) => req.log.warn({ err, projectId }, "Re-checking open pull requests failed"));
-  });
+      .catch((err) => req.log.warn({ err, projectId }, "Re-checking open pull requests failed")),
+  );
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -453,10 +455,14 @@ router.get("/github/repositories", gitHubLimiter, async (_req, res): Promise<voi
   }
 
   const repositories = [];
+  // Accounts with more repositories than GitHub's list gives ScopeCI; the picker says so.
+  const truncatedAccounts: string[] = [];
   try {
     const installations = (await listUserInstallations(token)).slice(0, 20);
     for (const installation of installations) {
-      for (const repo of await listInstallationRepositories(token, installation.id)) {
+      const list = await listInstallationRepositories(token, installation.id);
+      if (list.truncated) truncatedAccounts.push(installation.accountLogin);
+      for (const repo of list) {
         repositories.push({
           installationId: installation.id,
           accountLogin: installation.accountLogin,
@@ -492,6 +498,7 @@ router.get("/github/repositories", gitHubLimiter, async (_req, res): Promise<voi
     ListGitHubRepositoriesResponse.parse({
       installUrl: await installUrl(),
       repositories: repositories.map((r) => ({ ...r, linkedProjectId: linkedBy.get(String(r.id)) ?? null })),
+      truncatedAccounts,
     }),
   );
 });
@@ -821,14 +828,15 @@ router.put("/projects/:projectId/change-order", async (req, res): Promise<void> 
     // Check again now, so GitHub reflects the approval without waiting for
     // another push: this pull request first, then the project's other open
     // ones, since the approved work is covered on them too.
-    setImmediate(() => {
-      currentWebhookService()
+    runInBackground(
+      new Promise<void>((resolve) => setImmediate(resolve))
+        .then(() => currentWebhookService())
         .then(async (service) => {
           await service?.reevaluatePullRequest(pr.id);
           await service?.recheckOpenPullRequests(project.id, [pr.number]);
         })
-        .catch((err) => req.log.warn({ err, pullRequestId: pr.id }, "Re-check after change order approval failed"));
-    });
+        .catch((err) => req.log.warn({ err, pullRequestId: pr.id }, "Re-check after change order approval failed")),
+    );
   }
 
   res.json(UpdateChangeOrderResponse.parse(toTracked(updated)));

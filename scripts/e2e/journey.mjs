@@ -168,6 +168,13 @@ export async function journey({ browser, app, github, fake, out, results, server
     const letter = drawer.locator("textarea");
     await until(async () => (await letter.inputValue()).includes("$1,500"), "the priced letter");
     await letter.fill(`${await letter.inputValue()}\n\nHappy to talk it through on Thursday.`);
+    // Closing with unsaved edits asks first; Cancel keeps them.
+    await page.keyboard.press("Escape");
+    const ask = page.getByRole("alertdialog");
+    await ask.getByText("Discard your edits to the letter?").waitFor();
+    await ask.getByRole("button", { name: "Cancel" }).click();
+    await ask.waitFor({ state: "detached" });
+    if (!(await letter.inputValue()).includes("Thursday")) throw new Error("the edit went on Cancel");
     await drawer.getByRole("button", { name: "Save draft" }).click();
     await drawer.getByText("Draft saved.").waitFor();
     await drawer.getByRole("button", { name: "Mark as sent" }).click();
@@ -228,8 +235,14 @@ export async function journey({ browser, app, github, fake, out, results, server
       files: [{ filename: "src/admin/orders-export.ts", status: "added", additions: 64, deletions: 0 }],
     });
     await resultAppears(page, ["#15", "Needs a decision"], "the review result");
-    await page.getByRole("button", { name: "Accept #15 without a change order" }).click();
     const dialog = page.getByTestId("accept-dialog");
+    // A reason typed and then cancelled doesn't come back next time.
+    await page.getByRole("button", { name: "Accept #15 without a change order" }).click();
+    await dialog.getByLabel("Why").fill("a reason meant for another pull request");
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "detached" });
+    await page.getByRole("button", { name: "Accept #15 without a change order" }).click();
+    if ((await dialog.getByLabel("Why").inputValue()) !== "") throw new Error("the cancelled reason came back");
     await dialog.getByRole("button", { name: "Accept", exact: true }).click();
     await dialog.getByText(/Say why/).waitFor();
     await dialog.getByLabel("Why").fill("Finance export was agreed as part of order history.");

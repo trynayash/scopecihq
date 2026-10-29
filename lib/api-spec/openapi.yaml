@@ -34,6 +34,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+        "503":
+          description: >-
+            Running, but the database schema hasn't been brought up to date since this instance started (status
+            schema_behind); it keeps retrying. A deploy in this state shouldn't take traffic.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
   /waitlist:
     post:
       operationId: createWaitlistSignup
@@ -921,7 +929,7 @@ components:
         clauses:
           type: array
           minItems: 1
-          maxItems: 60
+          maxItems: 200
           items:
             $ref: "#/components/schemas/DemoScopeClause"
       required:
@@ -977,6 +985,11 @@ components:
           maxItems: 300
           items:
             $ref: "#/components/schemas/DemoChangedFile"
+        totalFiles:
+          type: ["integer", "null"]
+          description: >-
+            How many files GitHub says the pull request changes, when loaded from GitHub; more than files.length when
+            the demo read only the first 300.
       required:
         - title
         - files
@@ -1528,6 +1541,13 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/GitHubRepository"
+        truncatedAccounts:
+          type: array
+          items:
+            type: string
+          description: >-
+            GitHub accounts whose installation has more repositories than ScopeCI lists (5,000); their list is cut
+            short.
       required:
         - installUrl
         - repositories

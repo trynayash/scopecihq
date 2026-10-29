@@ -100,6 +100,24 @@ export async function errorJourney({ browser, app, github, out, results }) {
     await page.unroute(`**/api/projects/${projectId}/pull-requests`);
   });
 
+  await step(page, "A failed refresh keeps the page and its unsaved edits", async () => {
+    await page.goto(`${app}/app/projects/${projectId}`);
+    await page.getByPlaceholder("Add excluded work").first().fill("push notifications");
+    await page.getByPlaceholder("Add excluded work").first().press("Enter");
+    await page.getByRole("button", { name: "Save as a new version" }).waitFor();
+    const route = `${app}/api/projects/${projectId}`;
+    await page.route(route, (r) => r.fulfill({ status: 503, contentType: "text/html", body: "<html>Service Unavailable</html>" }));
+    await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+    await page.getByText(/We couldn't refresh this project, so it may be out of date\./).waitFor({ timeout: 15_000 });
+    if (!(await page.getByText("push notifications", { exact: true }).isVisible())) throw new Error("the unsaved edit was lost");
+    if (await page.locator(".load-error").count()) throw new Error("the page was replaced by an error");
+    await page.screenshot({ path: path.join(out, "err-stale.png") });
+    await page.unroute(route);
+    await page.getByRole("button", { name: "Refresh" }).click();
+    await until(async () => (await page.locator(".stale-notice").count()) === 0, "the notice to leave");
+    await page.getByRole("button", { name: "Discard changes" }).click();
+  });
+
   await step(page, "A project that isn't there says so, with the way back", async () => {
     await page.goto(`${app}/app/projects/00000000-0000-4000-8000-000000000000`);
     await page.getByText(/No such project in this workspace/).waitFor();
@@ -119,8 +137,11 @@ export async function errorJourney({ browser, app, github, out, results }) {
       sha,
       files: [{ filename: "src/giftcards/balance.tsx", status: "added", additions: 80, deletions: 0 }],
     });
+    // The sweep may already have checked it again by the time this looks,
+    // updating the same run in place: what it said first is in its history.
     const run = await until(async () => (await ghState()).checkRuns.find((r) => r.head_sha === sha), "a check run");
-    if (run.output?.title !== "ScopeCI couldn't check this commit" || run.conclusion !== "neutral") {
+    const said = [...(run.history ?? []), { title: run.output?.title, conclusion: run.conclusion }];
+    if (!said.some((s) => s.title === "ScopeCI couldn't check this commit" && s.conclusion === "neutral")) {
       throw new Error(`check run was "${run.output?.title}" (${run.conclusion})`);
     }
     await page.goto(`${app}/app/projects/${projectId}`);

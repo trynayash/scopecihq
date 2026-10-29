@@ -29,7 +29,7 @@ Facts the interface must never contradict:
 | :-- | :-- |
 | The check is plain rules. No AI model reads the contract or the code. | README, evaluator |
 | It works with GitHub only. No GitLab, Bitbucket or Jira. | README, FAQ |
-| The Linear integration is built and tested but not connected per workspace, so live checks read no issues (`NoIssueProvider` in `routes/github.ts`). The site doesn't mention Linear. | README, `routes/github.ts` |
+| The Linear integration runs on stand-ins (no real token exchange): in production its connect, callback and sync routes answer 503, and live checks read no issues (`NoIssueProvider` in `routes/github.ts`). The site doesn't mention Linear. | README, `routes/github.ts` |
 | Hours and prices appear only when an estimate exists (from a linked issue or typed by a person). ScopeCI never invents one. | `docs/github-app.md` |
 | GitHub permissions: pull requests and checks (read and write), contents and metadata (read). | `docs/github-app.md` |
 | Status is a pilot: free, with no price yet, no customers to cite and no accuracy figures. | README, FAQ |
@@ -502,7 +502,7 @@ Shared rules for all components:
 - **Admin table:** the header row uses `--bg-sunken` and 13px `--fg-muted` 500. Rows are separated by `--line`. Emails use mono. Long referrers truncate with a `title`.
 - **Definition lists** (spec sheet, PR facts): term and value on one row, separated by a hairline. Terms in 600, values in `--fg-muted`.
 - **Member and repository lists:** hairline-separated rows with avatar or radio, name, mono metadata and a trailing action.
-  - **[Existing]** Owners see *Make owner* / *Make member* and *Remove* on other members; everyone sees *Leave workspace* on their own row. The last owner can't be demoted or leave, and nobody can leave their only workspace; the server refuses with a sentence that says why.
+  - **[Existing]** Owners see *Make owner* / *Make member* and *Remove* on other members; everyone sees *Leave workspace* on their own row. The last owner can't be demoted or leave, and nobody can leave their only workspace; the server refuses with a sentence that says why. An owner can remove someone whose only workspace it is; they get a new, empty workspace of their own, and the invite links they made stop working.
 - **[Existing] Archived projects:** under the project list, the *Archived projects* text link opens a hairline list of archived projects with their client and a *Restore* button. Restoring brings the project, its scope and its results back; archiving released the repository, so the status line says to connect it again.
 - **Rules:** numbers are tabular and right-aligned; no zebra stripes; hover uses `--bg-hover`.
 
@@ -582,7 +582,7 @@ ScopeCI reads **changed file names and per-file line counts, not code**, so it n
 | Empty | One sentence that says what will appear and what makes it appear ("Nothing checked yet. The next pull request opened or updated on northstar/portal shows up here.") | Always name the trigger. No illustrations of empty boxes. |
 | Loading | `Loading` (`src/components/loading.tsx`): "Loading the checked pull requests…", "Asking GitHub which repositories you can connect…" | Say what is loading. **[Existing]** For the first 300ms it holds an empty line (`role="status"`), so a fast load shows nothing and nothing jumps. No shimmering skeletons with invented shapes. |
 | Error | `form-error` box (`role="alert"`) with one actionable sentence ("We couldn't reach ScopeCI. Check your connection and try again.") | Say what failed and what to do. Never show a raw status code alone. An error that can pass offers the way out beside it: "Try again" and "Cancel", never a dead end. |
-| Failed load | **[Existing]** `LoadError` (`src/components/load-error.tsx`): the sentence from `errorMessage` and a *Try again* button that refetches. Used for the session, project list, project, results, team and invite. | Words come from `errorMessage` only: offline ("You're offline…"), session ended (back to sign-in, never an error page), server trouble ("ScopeCI is having trouble right now. Try again in a minute."), database away ("ScopeCI can't reach its database right now…"), GitHub not answering. A project that isn't there says so and links back to the list. |
+| Failed load | **[Existing]** `LoadError` (`src/components/load-error.tsx`): the sentence from `errorMessage` and a *Try again* button that refetches. Used for the session, project list, project, results, team and invite. | Words come from `errorMessage` only: offline ("You're offline…"), session ended (back to sign-in, never an error page), server trouble ("ScopeCI is having trouble right now. Try again in a minute."), database away ("ScopeCI can't reach its database right now…"), GitHub not answering. A project that isn't there says so and links back to the list. A refresh that fails while the page already shows data keeps the page and any unsaved edits, and shows `StaleNotice` (warning colour, `role="status"`, *Refresh*); `LoadError` replaces a page only when nothing has loaded yet. |
 | Offline | **[Existing]** `OfflineNotice`: a solid bar pinned to the bottom, "You're offline. Nothing can be saved until you reconnect." It leaves when the browser is back online. | Saves attempted while offline fail with the offline sentence, never a spinner. |
 | Success | Inline status line (`.app-status`, `role="status"`): "Saved as v3. Open pull requests are being checked against it now." The waitlist success panel uses a square tick. | Confirm what changed and what happens next. No toast pop-ups. **[Existing]** The status line stays in the page, empty, so a screen reader hears it when its text changes; it takes no space while empty. |
 | Notice | `.notice` (info wash and line, `--fg` text); `.notice.is-warning` when the user must fix something first ("GitHub access expired") | Use `--info` for neutral system notices, `--warning` only when the user should act, and `--success` only for completion. |
@@ -595,14 +595,14 @@ ScopeCI reads **changed file names and per-file line counts, not code**, so it n
 - **[Existing] Accepting work without a change order** opens a dialog that asks for the reason, which is required, kept in the project history and shown on the row and in the GitHub check ("Accepted without a change order by @dana-pm: …"). *Withdraw* asks first and puts the check back to what the scope says.
 - **[Existing] New work after a decision gets its own change order.** Once a change order is approved or declined, excluded work pushed later starts a new one (CO-2) listing only the new items, and its suggested letter names only those; the decided one is never reopened, and work it listed (declined included) is never raised again. The side panel starts afresh for the new one.
 - **[Existing] When GitHub doesn't take a decision at once** (accepting or withdrawing), the status line says the decision is recorded but the check needs *Re-check open pull requests*; it never claims the check was updated.
-- **Leaving unsaved scope edits** (closing or reloading the tab) asks first. Text typed into an add field but not added is pointed out ("Press Enter to add it to the list.").
+- **Leaving unsaved scope edits or an edited change order letter** (closing the panel, or closing or reloading the tab) asks first. Renaming the project keeps unsaved scope edits. Text typed into an add field but not added is pointed out ("Press Enter to add it to the list.").
 
 ### Dialogs, menus and tooltips
 
 - **Side panel (dialog)**
   - **[Existing]** Radix Dialog, slides in from the right, `min(580px, 100vw)` wide.
   - Layout: a header with the serif title, a mono reference and a close button; a scrolling body; a footer with pinned actions.
-  - Behaviour: the overlay dims the page, focus stays inside the panel, Escape closes it, and focus returns to the button that opened it.
+  - Behaviour: the overlay dims the page, focus stays inside the panel, Escape, a click beside it or its close button closes it (asking first, "Discard your edits to the letter?", when the letter has unsaved edits), and focus returns to the button that opened it.
   - Use a side panel for work that relates to one row of a list.
 - **Confirmations**
   - **[Existing]** `useConfirm()` from `src/components/confirm-dialog.tsx`: a centred Radix AlertDialog, 440px wide, on the panel's tokens. Used for archive project, remove member, make owner or member, leave workspace, withdraw an acceptance, forget the App and remove a signup; there is no `window.confirm` left.

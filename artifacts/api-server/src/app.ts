@@ -167,6 +167,12 @@ const DATABASE_UNAVAILABLE = new Set([
   "08003",
   "08004",
   "08006",
+  // A database TLS setup that doesn't verify (see DATABASE_CA_CERT).
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "CERT_HAS_EXPIRED",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
 ]);
 
 function databaseUnavailable(err: any): boolean {

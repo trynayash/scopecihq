@@ -205,6 +205,8 @@ export function startFakeGitHub({ port, appUrl, webhookSecret }) {
     if (mm && method === "PATCH") {
       const run = state.checkRuns.find((r) => r.id === Number(mm[1]));
       if (!run) return send(res, 404, {});
+      // What the run said before each update, for checks that look back.
+      run.history = [...(run.history ?? []), { title: run.output?.title, conclusion: run.conclusion }];
       Object.assign(run, body);
       return send(res, 200, { id: run.id, head_sha: run.head_sha, status: run.status, conclusion: run.conclusion });
     }

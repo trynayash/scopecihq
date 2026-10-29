@@ -11,4 +11,6 @@ export interface GitHubRepositoryList {
   /** @nullable */
   installUrl: string | null;
   repositories: GitHubRepository[];
+  /** GitHub accounts whose installation has more repositories than ScopeCI lists (5,000); their list is cut short. */
+  truncatedAccounts?: string[];
 }

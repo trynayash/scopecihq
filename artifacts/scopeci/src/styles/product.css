@@ -188,8 +188,8 @@ button.text-link { margin-right: var(--space-3); font-size: var(--t-ui); }
 .verdict-card.is-alert .verdict-card-label { color: var(--error); }
 .verdict-card.is-warn .verdict-card-label { color: var(--warning); }
 .verdict-card.is-ok .verdict-card-label { color: var(--success); }
-.verdict-card-reason { margin-top: var(--space-2); font-size: var(--t-body); line-height: 1.5; letter-spacing: -0.01em; }
-.verdict-card-clause { margin-top: var(--space-2); color: var(--fg-muted); font-size: var(--t-caption); }
+.verdict-card-reason { margin-top: var(--space-2); font-size: var(--t-body); line-height: 1.5; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.verdict-card-clause { margin-top: var(--space-2); color: var(--fg-muted); font-size: var(--t-caption); overflow-wrap: anywhere; }
 .verdict-card-delta { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--line); }
 .verdict-card-delta li {
   position: relative;

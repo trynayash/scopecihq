@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { z } from "zod";
 import type { ContractClause, Deliverable, ScopeBaseline } from "./types.js";
 import { SOW_DECOMPOSITION_PROMPT_V1 } from "./prompts/v1/sow-decomposition.js";
+import { EXCEPTION_MARKER } from "./contract-matcher.js";
 
 export const DecomposedClauseSchema = z.object({
   clauseRef: z.string(),
@@ -376,13 +377,48 @@ function cleanItem(item: string): string {
 /**
  * "A, B, and C" -> ["a", "b", "c"]. A trailing clause such as ", which shall
  * require a separate Change Order" is commentary on the list, not an item.
+ *
+ * An exception stays with its item: "integrations other than Stripe and
+ * SendGrid" is one exclusion, not three, and "social login (Google,
+ * Facebook)" keeps its examples. The matcher reads both forms.
  */
 function splitList(text: string): string[] {
-  return text
-    .split(/,\s*(?:which|unless|except|where|provided|because|but|as)\b/i)[0]
-    .split(/,|;|\band\b/i)
-    .map(cleanItem)
-    .filter((item) => item.length > 2);
+  const listed = text.split(/,\s*(?:which|unless|except|where|provided|because|but|as)\b/i)[0];
+  const marker = listed.search(EXCEPTION_MARKER);
+  const items = splitTopLevel(marker >= 0 ? listed.slice(0, marker) : listed);
+  if (marker >= 0) {
+    // The exception runs to the next semicolon; anything after it is listed as usual.
+    const rest = listed.slice(marker);
+    const stop = rest.indexOf(";");
+    const exception = stop >= 0 ? rest.slice(0, stop) : rest;
+    if (items.length > 0) items[items.length - 1] = `${items[items.length - 1].trimEnd()} ${exception.trim()}`;
+    else items.push(exception);
+    if (stop >= 0) items.push(...splitTopLevel(rest.slice(stop + 1)));
+  }
+  return items.map(cleanItem).filter((item) => item.length > 2);
+}
+
+/** Splits on commas, semicolons and "and" outside brackets, in one pass. */
+function splitTopLevel(text: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "(" || ch === "[") depth++;
+    else if ((ch === ")" || ch === "]") && depth > 0) depth--;
+    else if (depth > 0) continue;
+    else if (ch === "," || ch === ";") {
+      parts.push(text.slice(start, i));
+      start = i + 1;
+    } else if ((ch === "a" || ch === "A") && (i === 0 || /\W/.test(text[i - 1])) && /^and(?:\W|$)/i.test(text.slice(i, i + 4))) {
+      parts.push(text.slice(start, i));
+      start = i + 3;
+      i += 2;
+    }
+  }
+  parts.push(text.slice(start));
+  return parts;
 }
 
 /**

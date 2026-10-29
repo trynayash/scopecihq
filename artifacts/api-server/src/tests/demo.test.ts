@@ -259,18 +259,19 @@ async function run() {
     });
 
     await scenario("A long SOW keeps its late exclusions and says what it left out", async () => {
-      const sections = Array.from({ length: 8 }, (_, s) =>
+      // 208 work packages and the exclusions: past the 200 sections the demo reads.
+      const sections = Array.from({ length: 26 }, (_, s) =>
         Array.from({ length: 8 }, (_, p) => `${s + 1}.${p + 1} Work package ${s + 1}.${p + 1}\nThe Supplier shall carry out this work package.`).join("\n\n"),
       ).join("\n\n");
-      const markdown = `# Harbor & Pine\n\n${sections}\n\n## 9.1 Exclusions\nOut of scope: loyalty points programme, gift cards, multi-currency pricing.\n`;
+      const markdown = `# Harbor & Pine\n\n${sections}\n\n## 30.1 Exclusions\nOut of scope: loyalty points programme, gift cards, multi-currency pricing.\n`;
       const parsed = await call(server, "/api/demo/sow", { body: { markdown }, ip: "203.0.113.72" });
       assert.strictEqual(parsed.status, 200);
-      assert.strictEqual(parsed.body.clauses.length, 60);
-      const exclusions = parsed.body.clauses.find((c: any) => c.clauseRef === "§9.1");
-      assert.ok(exclusions, "§9.1 kept");
+      assert.strictEqual(parsed.body.clauses.length, 200);
+      const exclusions = parsed.body.clauses.find((c: any) => c.clauseRef === "§30.1");
+      assert.ok(exclusions, "§30.1 kept");
       assert.deepStrictEqual(exclusions.excluded, ["loyalty points programme", "gift cards", "multi-currency pricing"]);
       assert.ok(
-        parsed.body.warnings.some((w: string) => w.includes("has 65, so 5 were left out")),
+        parsed.body.warnings.some((w: string) => w.includes("has 209, so 9 were left out")),
         JSON.stringify(parsed.body.warnings),
       );
 
@@ -283,15 +284,15 @@ async function run() {
       });
       assert.strictEqual(checked.status, 200);
       assert.strictEqual(checked.body.state, "CHANGE_REQUIRED");
-      assert.strictEqual(checked.body.clause.clauseRef, "§9.1");
+      assert.strictEqual(checked.body.clause.clauseRef, "§30.1");
     });
 
     await scenario("Sections with items that don't fit are named in the warning", async () => {
-      const markdown = Array.from({ length: 62 }, (_, i) => `## 1.${i + 1} Feature ${i + 1}\nIncludes widget number ${i + 1}.`).join("\n");
+      const markdown = Array.from({ length: 202 }, (_, i) => `## 1.${i + 1} Feature ${i + 1}\nIncludes widget number ${i + 1}.`).join("\n");
       const res = await call(server, "/api/demo/sow", { body: { markdown }, ip: "203.0.113.73" });
       assert.strictEqual(res.status, 200);
-      assert.strictEqual(res.body.clauses.length, 60);
-      assert.ok(res.body.warnings.some((w: string) => w.includes("§1.61, §1.62")), JSON.stringify(res.body.warnings));
+      assert.strictEqual(res.body.clauses.length, 200);
+      assert.ok(res.body.warnings.some((w: string) => w.includes("§1.201, §1.202")), JSON.stringify(res.body.warnings));
     });
 
     await scenario("A scope too large to check is refused at once, and a parsed scope always fits", async () => {

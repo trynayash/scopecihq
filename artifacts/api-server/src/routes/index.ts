@@ -55,6 +55,9 @@ function mountIntegration(name: string, integration: IRouter, requiredEnv: strin
   router.use(integration);
 }
 
+if (isProduction && integrationRoutesEnabled) {
+  logger.warn({ integration: "linear" }, "Linear routes mounted, but connect, callback and sync answer 503 until a real token exchange is built");
+}
 if (!isProduction || integrationRoutesEnabled) {
   mountIntegration("linear", linearRouter, [
     "LINEAR_CLIENT_ID",

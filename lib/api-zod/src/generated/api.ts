@@ -103,7 +103,7 @@ export const evaluateDemoBodyScopeClausesItemExcludedItemMax = 300;
 
 export const evaluateDemoBodyScopeClausesItemExcludedMax = 100;
 
-export const evaluateDemoBodyScopeClausesMax = 60;
+export const evaluateDemoBodyScopeClausesMax = 200;
 
 export const evaluateDemoBodyPullRequestTitleMax = 300;
 
@@ -152,7 +152,8 @@ export const EvaluateDemoBody = zod.object({
   "files": zod.array(zod.object({
   "path": zod.string().min(1).max(evaluateDemoBodyPullRequestFilesItemPathMax),
   "status": zod.enum(['added', 'modified', 'deleted', 'renamed']).optional()
-})).min(1).max(evaluateDemoBodyPullRequestFilesMax)
+})).min(1).max(evaluateDemoBodyPullRequestFilesMax),
+  "totalFiles": zod.number().int().nullish().describe('How many files GitHub says the pull request changes, when loaded from GitHub; more than files.length when the demo read only the first 300.')
 }),
   "issue": zod.union([zod.object({
   "id": zod.string().min(1).max(evaluateDemoBodyIssueOneIdMax),
@@ -215,7 +216,8 @@ export const GetDemoGithubPrResponse = zod.object({
   "files": zod.array(zod.object({
   "path": zod.string().min(1).max(getDemoGithubPrResponseFilesItemPathMax),
   "status": zod.enum(['added', 'modified', 'deleted', 'renamed']).optional()
-})).min(1).max(getDemoGithubPrResponseFilesMax)
+})).min(1).max(getDemoGithubPrResponseFilesMax),
+  "totalFiles": zod.number().int().nullish().describe('How many files GitHub says the pull request changes, when loaded from GitHub; more than files.length when the demo read only the first 300.')
 })
 
 
@@ -719,7 +721,7 @@ export const saveProjectScopeBodyClausesItemExcludedItemMax = 300;
 
 export const saveProjectScopeBodyClausesItemExcludedMax = 100;
 
-export const saveProjectScopeBodyClausesMax = 60;
+export const saveProjectScopeBodyClausesMax = 200;
 
 
 
@@ -1055,7 +1057,8 @@ export const ListGitHubRepositoriesResponse = zod.object({
   "fullName": zod.string(),
   "private": zod.boolean(),
   "linkedProjectId": zod.string().nullable()
-}))
+})),
+  "truncatedAccounts": zod.array(zod.string()).optional().describe('GitHub accounts whose installation has more repositories than ScopeCI lists (5,000); their list is cut short.')
 })
 
 
