@@ -233,6 +233,158 @@ async function run() {
       assert.strictEqual(limited.status, 502);
       assert.ok(limited.body.error.includes("Paste the file list"));
     });
+
+    await scenario("Documents built to make the parser backtrack are answered at once", async () => {
+      const payloads = [
+        "Excluding:".repeat(60) + "a" + " ".repeat(25_000) + "b",
+        Array.from({ length: 39 }, () => "x" + " ".repeat(998) + "y").join("\n"),
+        "- Excluding:\n".repeat(3000),
+        "## Scope\nBudget:" + " ".repeat(39_000) + "x",
+      ];
+      for (const markdown of payloads) {
+        const started = Date.now();
+        const res = await call(server, "/api/demo/sow", { body: { markdown }, ip: "203.0.113.70" });
+        const elapsed = Date.now() - started;
+        assert.ok([200, 400].includes(res.status), `status ${res.status}`);
+        assert.ok(elapsed < 1000, `took ${elapsed}ms`);
+      }
+    });
+
+    await scenario("Out of scope headings are read as exclusions", async () => {
+      const markdown = "## In Scope\n- User login\n- Checkout\n\n## Out of Scope\n- Mobile apps\n- Gift cards\n";
+      const res = await call(server, "/api/demo/sow", { body: { markdown }, ip: "203.0.113.71" });
+      assert.strictEqual(res.status, 200);
+      assert.deepStrictEqual(res.body.clauses[0].included, ["user login", "checkout"]);
+      assert.deepStrictEqual(res.body.clauses[1].excluded, ["mobile apps", "gift cards"]);
+    });
+
+    await scenario("A long SOW keeps its late exclusions and says what it left out", async () => {
+      // 208 work packages and the exclusions: past the 200 sections the demo reads.
+      const sections = Array.from({ length: 26 }, (_, s) =>
+        Array.from({ length: 8 }, (_, p) => `${s + 1}.${p + 1} Work package ${s + 1}.${p + 1}\nThe Supplier shall carry out this work package.`).join("\n\n"),
+      ).join("\n\n");
+      const markdown = `# Harbor & Pine\n\n${sections}\n\n## 30.1 Exclusions\nOut of scope: loyalty points programme, gift cards, multi-currency pricing.\n`;
+      const parsed = await call(server, "/api/demo/sow", { body: { markdown }, ip: "203.0.113.72" });
+      assert.strictEqual(parsed.status, 200);
+      assert.strictEqual(parsed.body.clauses.length, 200);
+      const exclusions = parsed.body.clauses.find((c: any) => c.clauseRef === "§30.1");
+      assert.ok(exclusions, "§30.1 kept");
+      assert.deepStrictEqual(exclusions.excluded, ["loyalty points programme", "gift cards", "multi-currency pricing"]);
+      assert.ok(
+        parsed.body.warnings.some((w: string) => w.includes("has 209, so 9 were left out")),
+        JSON.stringify(parsed.body.warnings),
+      );
+
+      const checked = await call(server, "/api/demo/evaluate", {
+        body: {
+          scope: { title: parsed.body.title, clauses: parsed.body.clauses },
+          pullRequest: { title: "Add loyalty points at checkout", files: [{ path: "src/loyalty/points.ts", status: "added" }] },
+        },
+        ip: "203.0.113.72",
+      });
+      assert.strictEqual(checked.status, 200);
+      assert.strictEqual(checked.body.state, "CHANGE_REQUIRED");
+      assert.strictEqual(checked.body.clause.clauseRef, "§30.1");
+    });
+
+    await scenario("Sections with items that don't fit are named in the warning", async () => {
+      const markdown = Array.from({ length: 202 }, (_, i) => `## 1.${i + 1} Feature ${i + 1}\nIncludes widget number ${i + 1}.`).join("\n");
+      const res = await call(server, "/api/demo/sow", { body: { markdown }, ip: "203.0.113.73" });
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.clauses.length, 200);
+      assert.ok(res.body.warnings.some((w: string) => w.includes("§1.201, §1.202")), JSON.stringify(res.body.warnings));
+    });
+
+    await scenario("A scope too large to check is refused at once, and a parsed scope always fits", async () => {
+      const item = (i: number) => `excluded feature number ${i} with a long name`;
+      const huge = {
+        title: "Huge",
+        clauses: Array.from({ length: 60 }, (_, c) => ({
+          clauseRef: `§${c + 1}`,
+          title: `Clause ${c + 1}`,
+          included: [],
+          excluded: Array.from({ length: 20 }, (_, i) => item(c * 20 + i)),
+        })),
+      };
+      const started = Date.now();
+      const refused = await call(server, "/api/demo/evaluate", {
+        body: { scope: huge, pullRequest: { title: "x", files: [{ path: "src/a.ts" }] } },
+        ip: "203.0.113.74",
+      });
+      assert.strictEqual(refused.status, 400);
+      assert.ok(refused.body.error.includes("too large for the demo"), refused.body.error);
+      assert.ok(Date.now() - started < 1000, "refused before any checking");
+
+      // Twelve clauses of a hundred items each: more than the demo checks.
+      const markdown = Array.from(
+        { length: 12 },
+        (_, c) => `## 1.${c + 1} Part ${c + 1}\nExcluding: ${Array.from({ length: 100 }, (_, i) => `item${c}x${i}`).join(", ")}.`,
+      ).join("\n");
+      const parsed = await call(server, "/api/demo/sow", { body: { markdown }, ip: "203.0.113.74" });
+      assert.strictEqual(parsed.status, 200);
+      const items = parsed.body.clauses.reduce((n: number, c: any) => n + c.included.length + c.excluded.length, 0);
+      assert.strictEqual(items, 1000);
+      assert.ok(parsed.body.warnings.some((w: string) => w.includes("200 were left out")), JSON.stringify(parsed.body.warnings));
+      const checked = await call(server, "/api/demo/evaluate", {
+        body: { scope: { title: parsed.body.title, clauses: parsed.body.clauses }, pullRequest: { title: "x", files: [{ path: "src/a.ts" }] } },
+        ip: "203.0.113.74",
+      });
+      assert.strictEqual(checked.status, 200);
+    });
+
+    /** A fake GitHub serving a pull request with `total` changed files, 100 to a page. */
+    function pagedPullRequest(total: number, failPage?: number) {
+      const requested: number[] = [];
+      setDemoGitHubFetch(async (url) => {
+        const files = url.match(/\/files\?per_page=100(?:&page=(\d+))?$/);
+        if (!files) return Response.json({ number: 7, title: "Big change", head: { ref: "big" }, changed_files: total });
+        const page = Number(files[1] ?? 1);
+        requested.push(page);
+        if (page === failPage) return new Response("{}", { status: 500 });
+        const count = Math.max(0, Math.min(100, total - (page - 1) * 100));
+        return Response.json(Array.from({ length: count }, (_, i) => ({ filename: `src/f${(page - 1) * 100 + i}.ts`, status: "modified" })));
+      });
+      return requested;
+    }
+
+    await scenario("A public PR with more than 100 files is read in full", async () => {
+      const requested = pagedPullRequest(250);
+      const res = await call(server, `/api/demo/github-pr?url=${encodeURIComponent("https://github.com/harbor/store/pull/7")}`, {
+        ip: "203.0.113.75",
+      });
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.files.length, 250);
+      assert.strictEqual(res.body.files[249].path, "src/f249.ts");
+      assert.strictEqual(res.body.totalFiles, 250);
+      assert.deepStrictEqual(requested, [1, 2, 3]);
+    });
+
+    await scenario("A public PR with more files than a check takes reads the first 300 and gives the full count", async () => {
+      const requested = pagedPullRequest(412);
+      const res = await call(server, `/api/demo/github-pr?url=${encodeURIComponent("https://github.com/harbor/store/pull/8")}`, {
+        ip: "203.0.113.75",
+      });
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.files.length, 300);
+      assert.strictEqual(res.body.totalFiles, 412);
+      assert.deepStrictEqual(requested, [1, 2, 3], "no page past what a check takes");
+
+      const exact = pagedPullRequest(100);
+      const hundred = await call(server, `/api/demo/github-pr?url=${encodeURIComponent("https://github.com/harbor/store/pull/10")}`, {
+        ip: "203.0.113.75",
+      });
+      assert.strictEqual(hundred.body.files.length, 100);
+      assert.deepStrictEqual(exact, [1], "no empty second page asked for");
+    });
+
+    await scenario("A later page of files that fails gives a clear error, not a partial list", async () => {
+      pagedPullRequest(250, 2);
+      const res = await call(server, `/api/demo/github-pr?url=${encodeURIComponent("https://github.com/harbor/store/pull/9")}`, {
+        ip: "203.0.113.75",
+      });
+      assert.strictEqual(res.status, 502);
+      assert.ok(res.body.error.includes("whole file list"), res.body.error);
+    });
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

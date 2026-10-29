@@ -27,10 +27,11 @@ import type {
 import { DEFAULT_POLICY_CONFIG } from "./types.js";
 import { CapabilityExtractor } from "./capability-extractor.js";
 import {
+  capabilityNames,
   type ContractPhraseMatch,
   matchContractPhrases,
-  phraseNamesCapability,
   textCoversMatch,
+  tokenize,
 } from "./contract-matcher.js";
 import { isPullRequestWorkItem } from "./work-item.js";
 
@@ -48,7 +49,7 @@ export interface Phase4EvaluationInput {
   promptVersion?: string;
 }
 
-export const EVALUATOR_VERSION = "scopeci-evaluator-v4.1";
+export const EVALUATOR_VERSION = "scopeci-evaluator-v4.2";
 export const ESTIMATION_RULES_VERSION = "est_rules_2026_10_v2";
 export const SCOPE_TAXONOMY_VERSION = "scope_tax_2026_10_v2";
 
@@ -353,6 +354,21 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
   // The SOW's own wording, matched against paths, titles and the issue. This
   // is what catches work the capability vocabulary has no name for.
   const phraseMatches = matchContractPhrases({ baseline, pullRequest, issue, maintenanceOnly });
+  // Whether SOW wording names a built-in capability. A word that is only part
+  // of one ("team" in "Team Dashboard", "authentication" in "two-factor
+  // authentication") doesn't.
+  // What the pull request builds or names in a title, so an item's exception
+  // it names ("single sign-on except Google" for Google SSO) is left to the
+  // phrase matcher, which asks about it rather than drafting a change order.
+  const names = capabilityNames(() =>
+    tokenize(
+      [
+        pullRequest.title,
+        pullRequest.branch ?? pullRequest.headBranch ?? "",
+        ...pullRequest.changedFiles.filter((f) => f.status !== "deleted").map((f) => f.path),
+      ].join(" "),
+    ),
+  );
   // Best evidence first: it is the one named when the work is in scope.
   const inclusionMatches = phraseMatches
     .filter((m) => m.kind === "inclusion")
@@ -367,11 +383,13 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
       const k = kw.toLowerCase();
       const inTitle = issue?.title ? issue.title.toLowerCase().includes(k) : false;
       const inDesc = issue?.description ? issue.description.toLowerCase().includes(k) : false;
-      const inCap = detectedCapabilities.some((c) => c.name.toLowerCase().includes(k));
+      const inCap = detectedCapabilities.some((c) => names.wholly(kw, c.name));
       return inTitle || inDesc || inCap;
     });
+    // "Audit Logging" names audit_logging even though no single title word does.
+    const titleNamesCapability = detectedCapabilities.some((c) => names.wholly(deliv.title, c.name));
 
-    if (matchedKws.length > 0 || (issue?.deliverableId && issue.deliverableId === deliv.id)) {
+    if (matchedKws.length > 0 || titleNamesCapability || (issue?.deliverableId && issue.deliverableId === deliv.id)) {
       const conf = issue?.deliverableId === deliv.id ? 0.98 : Math.min(0.90, 0.60 + matchedKws.length * 0.15);
       candidateDeliverables.push({
         deliverableId: deliv.id,
@@ -394,19 +412,18 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
   // Locate associated clauses
   const contractEvidenceList: ContractEvidence[] = [];
   const relevantClauses: ContractClause[] = [];
+  // Clauses whose wording matched, looked up once rather than per clause: a
+  // numbered SOW can have a clause per line.
+  const excludedByWording = new Set(phraseMatches.filter((m) => m.kind === "exclusion").map((m) => m.clause.id));
+  const includedByWording = new Set(inclusionMatches.map((m) => m.clause.id));
 
   for (const clause of baseline.clauses) {
     // Check if deliverable references this clause
     const isDeliverableClause = primaryDeliverable?.clauseId === clause.id;
     // Check if clause mentions any detected capability, or its wording matched the PR
     const mentionsExclusion =
-      clause.exclusions.some((exc) => {
-        const e = normalizeKeyword(exc);
-        return detectedCapabilities.some((cap) => {
-          const c = normalizeKeyword(cap.name);
-          return e === c || e.includes(c) || c.includes(e);
-        });
-      }) || phraseMatches.some((m) => m.kind === "exclusion" && m.clause.id === clause.id);
+      clause.exclusions.some((exc) => detectedCapabilities.some((cap) => names.item("exclusion", exc, cap.name))) ||
+      excludedByWording.has(clause.id);
     const mentionsInclusion =
       clause.inclusions.some((inc) => {
         const i = normalizeKeyword(inc);
@@ -414,7 +431,7 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
           const c = normalizeKeyword(cap.name);
           return i === c || i.includes(c) || c.includes(i);
         });
-      }) || inclusionMatches.some((m) => m.clause.id === clause.id);
+      }) || includedByWording.has(clause.id);
 
     if (isDeliverableClause || mentionsExclusion || mentionsInclusion) {
       relevantClauses.push(clause);
@@ -439,32 +456,36 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
   const approvedCOs = approvedChangeOrders.filter((co) => co.status === "APPROVED");
   const changeOrderCoveredCapabilities: DetectedCapability[] = [];
   const explicitlyExcludedCapabilities: Array<{ capability: DetectedCapability; clause: ContractClause }> = [];
-  const weaklyExcludedCapabilities: Array<{ capability: DetectedCapability; clause: ContractClause }> = [];
+  // Excluded work nothing new shows: only described, only in tests or docs,
+  // its words only in separate places ("spread"), or matched without what
+  // makes it the excluded work (`match.missingHead`, `match.missingQualifier`).
+  const weaklyExcludedCapabilities: Array<{
+    capability: DetectedCapability;
+    clause: ContractClause;
+    spread?: boolean;
+    match?: ContractPhraseMatch;
+  }> = [];
   const clearlyInScopeCapabilities: DetectedCapability[] = [];
   const ambiguousCapabilities: DetectedCapability[] = [];
   const uncontractedCapabilities: DetectedCapability[] = [];
   // SOW items already accounted for by a capability, so phrase matching doesn't report them twice.
   const reportedExclusions = new Set<string>();
+  // SOW items the pull request matched strongly in their own words.
+  const strongPhraseExclusions = new Map(
+    phraseMatches.filter((m) => m.kind === "exclusion" && m.strong).map((m) => [`${m.clause.id}::${m.phrase}`, m]),
+  );
 
   for (const cap of detectedCapabilities) {
     // Hard Requirement 2: Check Explicit Exclusion (Stronger than absence)
     let explicitExclusion: { clause: ContractClause; exclusion: string } | undefined;
     for (const cl of baseline.clauses) {
-      const exclusion = cl.exclusions.find((exc) => {
-        const e = normalizeKeyword(exc);
-        const c = normalizeKeyword(cap.name);
-        if (e === c || e.includes(c) || c.includes(e)) return true;
-        const tokens = cap.name.toLowerCase().split(/[\s_\-]+/).filter((t) => t.length > 2);
-        return tokens.some((t) => e.includes(t) && (t === "rbac" || t === "roles" || t === "permissions" || t === "sso" || t === "saml" || t === "invitations"));
-      });
+      const exclusion = cl.exclusions.find((exc) => names.item("exclusion", exc, cap.name));
       if (exclusion) {
         explicitExclusion = { clause: cl, exclusion };
         break;
       }
     }
-    if (explicitExclusion) {
-      reportedExclusions.add(`${explicitExclusion.clause.id}::${explicitExclusion.exclusion}`);
-    }
+    const exclusionKey = explicitExclusion && `${explicitExclusion.clause.id}::${explicitExclusion.exclusion}`;
 
     // 1. Check Change Order coverage
     const coMatch = approvedCOs.find((co) =>
@@ -476,22 +497,31 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
     );
     if (coMatch) {
       changeOrderCoveredCapabilities.push(cap);
+      if (exclusionKey) reportedExclusions.add(exclusionKey);
       continue;
     }
 
-    // 2. Explicit exclusion
-    if (explicitExclusion) {
-      explicitlyExcludedCapabilities.push({ capability: cap, clause: explicitExclusion.clause });
+    // 2. Explicit exclusion. Tests, docs or build files that mention it build
+    // nothing new, so they are a question for a person, not a change order.
+    if (explicitExclusion && exclusionKey) {
+      // When the pull request matched other words of the same item, it is
+      // reported in those words below: "workspace member roles" reads better
+      // to a client than organization_rbac, which only "permissions" names.
+      const inOwnWords = strongPhraseExclusions.get(exclusionKey);
+      if (!inOwnWords || names.item("exclusion", inOwnWords.matchedPart, cap.name)) {
+        reportedExclusions.add(exclusionKey);
+        (maintenanceOnly ? weaklyExcludedCapabilities : explicitlyExcludedCapabilities).push({
+          capability: cap,
+          clause: explicitExclusion.clause,
+        });
+      }
       continue;
     }
 
     // 3. Check Explicit Inclusion in contract clauses or deliverable keywords
     const isExplicitlyIncluded =
-      primaryDeliverable?.keywords.some((kw) => {
-        const k = normalizeKeyword(kw);
-        const c = normalizeKeyword(cap.name);
-        return k === c || k.includes(c) || c.includes(k);
-      }) ||
+      (primaryDeliverable !== undefined &&
+        [primaryDeliverable.title, ...primaryDeliverable.keywords].some((kw) => names.wholly(kw, cap.name))) ||
       relevantClauses.some((cl) =>
         cl.inclusions.some((inc) => {
           const i = normalizeKeyword(inc);
@@ -499,8 +529,11 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
           return i === c || i.includes(c) || c.includes(i);
         })
       ) ||
-      // The SOW's wording for it, e.g. "member invitations" for team_invitations.
-      baseline.clauses.some((cl) => cl.inclusions.some((inc) => phraseNamesCapability(inc, cap.name)));
+      // The SOW's wording for it, e.g. "member invitations" for team_invitations,
+      // or "email and password login" for authentication.
+      baseline.clauses.some((cl) =>
+        cl.inclusions.some((inc) => names.partly(inc, cap.name) || names.item("inclusion", inc, cap.name)),
+      );
 
     if (isExplicitlyIncluded) {
       clearlyInScopeCapabilities.push(cap);
@@ -540,7 +573,9 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
     } else if (match.strong) {
       explicitlyExcludedCapabilities.push({ capability, clause: match.clause });
     } else {
-      weaklyExcludedCapabilities.push({ capability, clause: match.clause });
+      // Found in changed files or titles, but never together in one of them.
+      const spread = match.evidence.some((e) => e.strength !== "text");
+      weaklyExcludedCapabilities.push({ capability, clause: match.clause, spread, match });
     }
   }
   const allCapabilities = [...detectedCapabilities, ...phraseCapabilities];
@@ -596,11 +631,41 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
     recommendedAction = "MANUAL_PM_REVIEW";
 
     const reasons: string[] = [];
-    for (const { capability, clause } of weaklyExcludedCapabilities) {
-      const deltaMsg = `Only mentioned in ${capability.evidenceText}: ${capability.name}, which contract ${clause.clauseRef} excludes; no new code shows it`;
+    for (const { capability, clause, spread, match } of weaklyExcludedCapabilities) {
+      const where =
+        capability.extractionMethod === "CONTRACT_PHRASE_MATCH" ? capability.evidenceText : capability.evidenceLocation;
+      let deltaMsg: string;
+      let reason: string;
+      if (match?.missingQualifier) {
+        // "Currency switcher" against excluded "multi-currency pricing".
+        const { qualifier, plain } = match.missingQualifier;
+        deltaMsg = `Builds ${plain} (${where}); contract ${clause.clauseRef} excludes ${capability.name}, and nothing says whether this is the "${qualifier}" kind`;
+        reason = `${capability.name} is excluded by ${clause.clauseRef}, and this builds ${plain} without saying "${qualifier}"`;
+      } else if (match?.exceptionQuestion?.listedAfter) {
+        // "Payment providers other than Stripe, gift cards": gift cards may be excluded or excepted.
+        const { exception } = match.exceptionQuestion;
+        deltaMsg = `Names ${capability.name} (${where}), which contract ${clause.clauseRef} lists after its exception for ${exception}; nothing says whether it is excluded or part of that exception`;
+        reason = `${capability.name} is listed after the exception for ${exception} in ${clause.clauseRef}, so it may be excluded or allowed`;
+      } else if (match?.exceptionQuestion) {
+        // "Payment providers other than Stripe" with stripe.ts and providers/index.ts.
+        const { exception } = match.exceptionQuestion;
+        deltaMsg = `Builds ${capability.name} (${where}); contract ${clause.clauseRef} excludes it apart from ${exception}, and nothing says whether this is the ${exception} work it allows`;
+        reason = `${capability.name} is excluded by ${clause.clauseRef} apart from ${exception}, and nothing says whether this is that exception`;
+      } else if (match?.missingHead) {
+        // "Add PayPal" against excluded "additional payment providers (PayPal, Klarna)".
+        const head = match.missingHead;
+        deltaMsg = `Names ${capability.name} (${where}), which contract ${clause.clauseRef} excludes as an example of ${head}; nothing names ${head} itself`;
+        reason = `${capability.name} is excluded by ${clause.clauseRef} as an example of ${head}, but nothing names ${head}`;
+      } else if (spread) {
+        deltaMsg = `The words of ${capability.name}, which contract ${clause.clauseRef} excludes, appear only in separate places (${where}); no single changed file or title names it`;
+        reason = `${capability.name} is excluded by ${clause.clauseRef} but no single changed file or title names it`;
+      } else {
+        deltaMsg = `Only mentioned in ${where}: ${capability.name}, which contract ${clause.clauseRef} excludes; no new code shows it`;
+        reason = `${capability.name} is excluded by ${clause.clauseRef} but no new code shows it`;
+      }
       detectedDelta.push(deltaMsg);
       scopeDeltaStatements.push({ statement: deltaMsg, evidenceIdRefs: [capability.id, clause.id], nature: "AMBIGUITY" });
-      reasons.push(`${capability.name} is excluded by ${clause.clauseRef} but no new code shows it`);
+      reasons.push(reason);
     }
     for (const cap of uncontractedCapabilities) {
       const deltaMsg = `Not mentioned in the SOW: ${cap.name}`;

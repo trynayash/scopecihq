@@ -25,7 +25,15 @@ interface AdminStats {
   recent: number;
 }
 
-type AdminView = 'checking' | 'signed-out' | 'ready';
+type AdminView = 'checking' | 'signed-out' | 'ready' | 'unavailable';
+
+/** The API answered, but couldn't load the page's data. */
+class LoadError extends Error {}
+
+/** A fetch that got no answer at all throws a TypeError, not a LoadError. */
+function loadErrorMessage(err: unknown): string {
+  return err instanceof LoadError ? err.message : "Couldn't reach the API. Check your connection and try again.";
+}
 
 /** Same-origin requests carry the httpOnly session cookie set at sign-in. */
 async function adminFetch(path: string, init?: RequestInit) {
@@ -52,6 +60,8 @@ interface GitHubAppStatus {
   webhooksReady: boolean;
   encryptionReady: boolean;
   baseUrl: string;
+  /** An App saved here whose keys no longer decrypt (GITHUB_TOKEN_ENCRYPTION_KEY changed). */
+  storedUnreadable?: { slug: string; owner: string; htmlUrl: string } | null;
 }
 
 const SETUP_RESULTS: Record<string, string> = {
@@ -84,6 +94,16 @@ function GitHubAppPanel({ onSignedOut }: { onSignedOut: () => void }) {
     if (window.location.search.includes('github=')) window.history.replaceState(null, '', window.location.pathname);
     load().catch(() => setError("Couldn't load the GitHub App's status."));
   }, [load]);
+
+  // Going Back from GitHub (a mistyped organization, say) restores this page
+  // from the browser's cache as it was left: busy, with the button disabled.
+  useEffect(() => {
+    const onShow = (event: PageTransitionEvent) => {
+      if (event.persisted) setBusy(false);
+    };
+    window.addEventListener('pageshow', onShow);
+    return () => window.removeEventListener('pageshow', onShow);
+  }, []);
 
   const create = async (event: FormEvent) => {
     event.preventDefault();
@@ -124,7 +144,11 @@ function GitHubAppPanel({ onSignedOut }: { onSignedOut: () => void }) {
   const forget = async () => {
     const confirmed = await confirm({
       title: 'Forget this GitHub App?',
-      description: 'Sign-in and pull request checks stop until you create one again. The App stays on GitHub until you delete it there.',
+      description:
+        "ScopeCI deletes this App's private key and secrets, and this page can't add them back. Sign-in and pull " +
+        "request checks stop. A new App doesn't bring checks back for anyone who installed this one: each of them " +
+        'has to install the new App and connect each repository again. To keep this App, set its keys in ' +
+        'environment variables instead (docs/github-app.md). The App stays on GitHub until you delete it there.',
       confirmLabel: 'Forget the App',
       danger: true,
     });
@@ -172,6 +196,18 @@ function GitHubAppPanel({ onSignedOut }: { onSignedOut: () => void }) {
             {status.source === 'admin' && (
               <button type="button" className="button button-quiet button-danger" onClick={forget}>Forget this App</button>
             )}
+          </div>
+        </>
+      ) : status.storedUnreadable ? (
+        <>
+          <p className="form-error">
+            A GitHub App ({status.storedUnreadable.slug}) is saved but can't be decrypted with the current
+            GITHUB_TOKEN_ENCRYPTION_KEY. Restore the key it was saved with. Creating a new App means every customer
+            has to install it and connect their repositories again.
+          </p>
+          <div className="row-actions">
+            <a className="button button-quiet" href={status.storedUnreadable.htmlUrl}>App on GitHub</a>
+            <button type="button" className="button button-quiet button-danger" onClick={forget}>Forget this App</button>
           </div>
         </>
       ) : (
@@ -256,16 +292,22 @@ export default function AdminWaitlist() {
       setView('signed-out');
       return;
     }
-    if (!signupsRes.ok || !statsRes.ok) throw new Error('load failed');
+    if (!signupsRes.ok || !statsRes.ok) {
+      const failed = signupsRes.ok ? statsRes : signupsRes;
+      const body = await failed.json().catch(() => ({}));
+      throw new LoadError(typeof body.error === 'string' ? body.error : 'The server had a problem. Try again in a minute.');
+    }
     setSignups(await signupsRes.json());
     setStats(await statsRes.json());
     setView('ready');
   }, []);
 
+  // The session may well be fine, so a failed load doesn't send the admin
+  // back to the key form, where retrying would use up sign-in attempts.
   useEffect(() => {
-    load().catch(() => {
-      setView('signed-out');
-      setError("Couldn't reach the API.");
+    load().catch((err) => {
+      setError(loadErrorMessage(err));
+      setView('unavailable');
     });
   }, [load]);
 
@@ -282,11 +324,18 @@ export default function AdminWaitlist() {
       });
       if (res.status === 204) {
         setKey('');
-        await load();
+        try {
+          await load();
+        } catch (err) {
+          setError(loadErrorMessage(err));
+          setView('unavailable');
+        }
       } else if (res.status === 429) {
         setError('Too many attempts. Wait 15 minutes and try again.');
       } else if (res.status === 401) {
-        setError('That key is not right.');
+        // A wrong key, or no ADMIN_SECRET on the server: the server says which.
+        const body = await res.json().catch(() => ({}));
+        setError(typeof body.error === 'string' ? body.error : 'That key is not right.');
       } else {
         setError("Couldn't sign in. Try again.");
       }
@@ -303,6 +352,7 @@ export default function AdminWaitlist() {
     await adminFetch('/session', { method: 'DELETE' }).catch(() => {});
     setSignups([]);
     setStats(null);
+    setError('');
     setView('signed-out');
   };
 
@@ -313,6 +363,18 @@ export default function AdminWaitlist() {
       await load();
     } catch {
       setError("Couldn't refresh. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const retry = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await load();
+    } catch (err) {
+      setError(loadErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -354,6 +416,28 @@ export default function AdminWaitlist() {
     return (
       <AdminShell>
         <Loading className="admin-empty">Checking your session…</Loading>
+      </AdminShell>
+    );
+  }
+
+  if (view === 'unavailable') {
+    return (
+      <AdminShell
+        actions={
+          <button type="button" className="button button-quiet button-sm" onClick={signOut}>
+            <Icon icon={SignOutIcon} size={14} />
+            Sign out
+          </button>
+        }
+      >
+        <div className="panel admin-gate">
+          <h1>Couldn't load signups</h1>
+          {error && <p className="form-error" role="alert">{error}</p>}
+          <button type="button" className="button button-primary" onClick={retry} disabled={busy}>
+            <Icon icon={ReloadIcon} size={14} />
+            {busy ? 'Trying again…' : 'Try again'}
+          </button>
+        </div>
       </AdminShell>
     );
   }

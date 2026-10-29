@@ -37,6 +37,12 @@ jobs:
       - name: Phase 0 Deterministic Alpha Simulator
         run: pnpm run simulate
 
+      - name: SOW parser tests
+        run: pnpm run test:engine-sow
+
+      - name: Contract matcher tests
+        run: pnpm run test:matcher
+
       - name: Build production bundles
         run: pnpm run build
 

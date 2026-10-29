@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { appSettingsTable } from "@workspace/db/schema";
 import { decryptToken, encryptToken, type EncryptedPayload } from "../linear/crypto.js";
@@ -31,6 +31,12 @@ export interface GitHubAppSettings {
   htmlUrl?: string;
   owner?: string;
   source: "environment" | "admin" | null;
+  /**
+   * An App made on the admin page is saved but can't be decrypted (most likely
+   * GITHUB_TOKEN_ENCRYPTION_KEY changed). Restoring the key brings it back;
+   * creating another App would make every customer install that one instead.
+   */
+  storedUnreadable?: { slug: string; owner: string; htmlUrl: string };
 }
 
 interface StoredApp {
@@ -52,17 +58,20 @@ type DecryptedApp = Omit<StoredApp, "clientSecret" | "privateKey" | "webhookSecr
   webhookSecret: string;
 };
 
-let cache: { at: number; app: DecryptedApp | null } | undefined;
+type Cached = { at: number; app: DecryptedApp | null; unreadable?: GitHubAppSettings["storedUnreadable"] };
+
+let cache: Cached | undefined;
 
 /** Drops the cached App, so the next request reads what was just saved or removed. */
 export function forgetGitHubAppSettings(): void {
   cache = undefined;
 }
 
-async function storedApp(): Promise<DecryptedApp | null> {
-  if (cache && Date.now() - cache.at < CACHE_MS) return cache.app;
+async function storedApp(): Promise<Cached> {
+  if (cache && Date.now() - cache.at < CACHE_MS) return cache;
   const row = await db.query.appSettingsTable.findFirst({ where: eq(appSettingsTable.key, APP_KEY) });
   let app: DecryptedApp | null = null;
+  let unreadable: GitHubAppSettings["storedUnreadable"];
   if (row) {
     const stored = row.valueJson as StoredApp;
     try {
@@ -74,18 +83,23 @@ async function storedApp(): Promise<DecryptedApp | null> {
       };
     } catch (err) {
       // Most likely GITHUB_TOKEN_ENCRYPTION_KEY changed since the App was saved.
-      logger.error({ err }, "The stored GitHub App can't be decrypted; create it again from the admin page");
+      unreadable = { slug: stored.slug ?? "", owner: stored.owner ?? "", htmlUrl: stored.htmlUrl ?? "" };
+      logger.error(
+        { err, slug: stored.slug },
+        "The stored GitHub App can't be decrypted. Restore the GITHUB_TOKEN_ENCRYPTION_KEY it was saved with: a new App would need every customer to install it again",
+      );
     }
   }
-  cache = { at: Date.now(), app };
-  return app;
+  cache = { at: Date.now(), app, unreadable };
+  return cache;
 }
 
 export async function gitHubAppSettings(): Promise<GitHubAppSettings> {
   const env = process.env;
   let stored: DecryptedApp | null = null;
+  let storedUnreadable: GitHubAppSettings["storedUnreadable"];
   try {
-    stored = await storedApp();
+    ({ app: stored, unreadable: storedUnreadable } = await storedApp());
   } catch (err) {
     logger.warn({ err }, "Couldn't read the stored GitHub App");
   }
@@ -99,6 +113,7 @@ export async function gitHubAppSettings(): Promise<GitHubAppSettings> {
     htmlUrl: stored?.htmlUrl,
     owner: stored?.owner,
     source: env.GITHUB_APP_ID ? "environment" : stored ? "admin" : null,
+    storedUnreadable,
   };
 }
 
@@ -145,15 +160,18 @@ export async function beginAppSetup(): Promise<string> {
   return state;
 }
 
-/** True once for the state of the setup in progress; using it ends that setup. */
+/**
+ * True once for the state of the setup in progress; using it ends that setup.
+ * Only the matching state removes it: the callback is public, and a made-up
+ * state must not cancel an admin's setup halfway through on GitHub.
+ */
 export async function claimAppSetup(state: string): Promise<boolean> {
   const [row] = await db
     .delete(appSettingsTable)
-    .where(eq(appSettingsTable.key, SETUP_KEY))
+    .where(and(eq(appSettingsTable.key, SETUP_KEY), sql`${appSettingsTable.valueJson}->>'stateHash' = ${hash(state)}`))
     .returning({ valueJson: appSettingsTable.valueJson });
-  const pending = row?.valueJson as { stateHash?: string; expiresAt?: number } | undefined;
-  if (!pending?.stateHash || !pending.expiresAt || pending.expiresAt < Date.now()) return false;
-  return crypto.timingSafeEqual(Buffer.from(hash(state)), Buffer.from(pending.stateHash));
+  const pending = row?.valueJson as { expiresAt?: number } | undefined;
+  return Boolean(pending?.expiresAt && pending.expiresAt >= Date.now());
 }
 
 /** Swaps the code GitHub sends back for the new App's credentials, and keeps them. */

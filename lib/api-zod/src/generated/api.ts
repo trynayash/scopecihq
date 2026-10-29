@@ -103,7 +103,7 @@ export const evaluateDemoBodyScopeClausesItemExcludedItemMax = 300;
 
 export const evaluateDemoBodyScopeClausesItemExcludedMax = 100;
 
-export const evaluateDemoBodyScopeClausesMax = 60;
+export const evaluateDemoBodyScopeClausesMax = 200;
 
 export const evaluateDemoBodyPullRequestTitleMax = 300;
 
@@ -152,7 +152,8 @@ export const EvaluateDemoBody = zod.object({
   "files": zod.array(zod.object({
   "path": zod.string().min(1).max(evaluateDemoBodyPullRequestFilesItemPathMax),
   "status": zod.enum(['added', 'modified', 'deleted', 'renamed']).optional()
-})).min(1).max(evaluateDemoBodyPullRequestFilesMax)
+})).min(1).max(evaluateDemoBodyPullRequestFilesMax),
+  "totalFiles": zod.number().int().nullish().describe('How many files GitHub says the pull request changes, when loaded from GitHub; more than files.length when the demo read only the first 300.')
 }),
   "issue": zod.union([zod.object({
   "id": zod.string().min(1).max(evaluateDemoBodyIssueOneIdMax),
@@ -215,7 +216,8 @@ export const GetDemoGithubPrResponse = zod.object({
   "files": zod.array(zod.object({
   "path": zod.string().min(1).max(getDemoGithubPrResponseFilesItemPathMax),
   "status": zod.enum(['added', 'modified', 'deleted', 'renamed']).optional()
-})).min(1).max(getDemoGithubPrResponseFilesMax)
+})).min(1).max(getDemoGithubPrResponseFilesMax),
+  "totalFiles": zod.number().int().nullish().describe('How many files GitHub says the pull request changes, when loaded from GitHub; more than files.length when the demo read only the first 300.')
 })
 
 
@@ -719,7 +721,7 @@ export const saveProjectScopeBodyClausesItemExcludedItemMax = 300;
 
 export const saveProjectScopeBodyClausesItemExcludedMax = 100;
 
-export const saveProjectScopeBodyClausesMax = 60;
+export const saveProjectScopeBodyClausesMax = 200;
 
 
 
@@ -862,6 +864,10 @@ export const updateChangeOrderBodySubjectMax = 300;
 
 export const updateChangeOrderBodyBodyMax = 10000;
 
+export const updateChangeOrderBodyItemsItemMax = 300;
+
+export const updateChangeOrderBodyItemsMax = 200;
+
 
 
 export const UpdateChangeOrderBody = zod.object({
@@ -869,7 +875,8 @@ export const UpdateChangeOrderBody = zod.object({
   "hours": zod.number().int().min(updateChangeOrderBodyHoursMin).max(updateChangeOrderBodyHoursMax).nullish(),
   "status": zod.enum(['SENT', 'APPROVED', 'DECLINED']).optional(),
   "subject": zod.string().max(updateChangeOrderBodySubjectMax).optional(),
-  "body": zod.string().max(updateChangeOrderBodyBodyMax).optional()
+  "body": zod.string().max(updateChangeOrderBodyBodyMax).optional(),
+  "items": zod.array(zod.string().max(updateChangeOrderBodyItemsItemMax)).max(updateChangeOrderBodyItemsMax).optional().describe('The change order\'s items as the PM saw them. With status SENT or APPROVED, if the change order now lists different items (a push added work since the page loaded) the answer is 409, so nothing is sent or approved that the PM hasn\'t seen.')
 })
 
 export const UpdateChangeOrderResponse = zod.object({
@@ -902,10 +909,13 @@ export const AcceptPullRequestParams = zod.object({
 
 export const acceptPullRequestBodyReasonMax = 500;
 
+export const acceptPullRequestBodyEvaluationIdMax = 36;
+
 
 
 export const AcceptPullRequestBody = zod.object({
-  "reason": zod.string().min(1).max(acceptPullRequestBodyReasonMax)
+  "reason": zod.string().min(1).max(acceptPullRequestBodyReasonMax),
+  "evaluationId": zod.string().max(acceptPullRequestBodyEvaluationIdMax).optional().describe('The result the PM accepted (PullRequestResult.evaluationId). Names the exact pull request when a project\'s results hold two with the same number (it moved to another repository); 409 if it isn\'t that pull request\'s latest result.')
 })
 
 export const AcceptPullRequestResponse = zod.object({
@@ -926,6 +936,14 @@ export const withdrawPullRequestAcceptancePathProjectIdMax = 36;
 export const WithdrawPullRequestAcceptanceParams = zod.object({
   "projectId": zod.coerce.string().max(withdrawPullRequestAcceptancePathProjectIdMax),
   "number": zod.coerce.number().int()
+})
+
+export const withdrawPullRequestAcceptanceQueryEvaluationIdMax = 36;
+
+
+
+export const WithdrawPullRequestAcceptanceQueryParams = zod.object({
+  "evaluationId": zod.coerce.string().max(withdrawPullRequestAcceptanceQueryEvaluationIdMax).optional().describe('The result shown (PullRequestResult.evaluationId), naming the exact pull request as for accepting.')
 })
 
 export const WithdrawPullRequestAcceptanceResponse = zod.object({
@@ -1022,6 +1040,7 @@ export const ListProjectPullRequestsResponse = zod.object({
   "sentAt": zod.coerce.date().nullable(),
   "decidedAt": zod.coerce.date().nullable()
 }),zod.null()]).describe('An earlier change order on this pull request that the client already decided, when a later push added excluded work it doesn\'t cover. That new work is the current draft; this one is for reference.'),
+  "newItems": zod.array(zod.string()).describe('The excluded work a new change order would list: what no decided change order on this pull request lists. Empty when trackedChangeOrder is set (its items are the list).'),
   "checkedAt": zod.coerce.date()
 }))
 })
@@ -1039,7 +1058,8 @@ export const ListGitHubRepositoriesResponse = zod.object({
   "fullName": zod.string(),
   "private": zod.boolean(),
   "linkedProjectId": zod.string().nullable()
-}))
+})),
+  "truncatedAccounts": zod.array(zod.string()).optional().describe('GitHub accounts whose installation has more repositories than ScopeCI lists (5,000); their list is cut short.')
 })
 
 

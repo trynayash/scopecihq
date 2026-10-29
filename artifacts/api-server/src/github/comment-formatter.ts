@@ -41,6 +41,19 @@ export function sanitizeMarkdown(input: string): string {
     .replace(/`/g, "&#96;");
 }
 
+/**
+ * Text as GitHub should show it in the comment: escaped as above, on one
+ * line (a line break would end a table row or start a new list item), with
+ * backslashes, asterisks and word-edge underscores escaped so a file name
+ * like src/gift/__init__.py isn't turned into bold text. Kept out of code
+ * spans, where GitHub would show the escapes themselves.
+ */
+function inline(input: string): string {
+  return sanitizeMarkdown(input.replace(/\s*[\r\n]+\s*/g, " ").replace(/\\/g, "\\\\"))
+    .replace(/\*/g, "\\*")
+    .replace(/(?<![A-Za-z0-9])_|_(?![A-Za-z0-9])/g, "\\_");
+}
+
 /** The same words the ScopeCI app uses for each answer. */
 export const VERDICT_LABELS: Record<CommercialEvaluation["state"], string> = {
   IN_SCOPE: "In scope",
@@ -68,22 +81,22 @@ export function formatScopeCIComment(input: CommentFormatInput): string {
   const estimate = projectEstimate(evaluation);
 
   const facts = [
-    `| Project | ${sanitizeMarkdown(projectName)} |`,
+    `| Project | ${inline(projectName)} |`,
     `| Pull request | #${prNumber}${headSha ? ` (\`${sanitizeMarkdown(headSha.substring(0, 7))}\`)` : ""} |`,
-    ...(issueIdentifier ? [`| Linked issue | ${sanitizeMarkdown(issueIdentifier)} |`] : []),
-    ...(scopeVersion ? [`| Scope version | ${sanitizeMarkdown(scopeVersion)} |`] : []),
-    ...(estimate ? [`| Estimated impact | ${sanitizeMarkdown(estimate)} |`] : []),
+    ...(issueIdentifier ? [`| Linked issue | ${inline(issueIdentifier)} |`] : []),
+    ...(scopeVersion ? [`| Scope version | ${inline(scopeVersion)} |`] : []),
+    ...(estimate ? [`| Estimated impact | ${inline(estimate)} |`] : []),
   ];
 
   const found =
     evaluation.detectedDelta.length > 0
-      ? `\n**What ScopeCI found**\n${evaluation.detectedDelta.map((d) => `- ${sanitizeMarkdown(d)}`).join("\n")}\n`
+      ? `\n**What ScopeCI found**\n${evaluation.detectedDelta.map((d) => `- ${inline(d)}`).join("\n")}\n`
       : "";
 
   const evidence =
     evaluation.evidence.length > 0
       ? `\n<details>\n<summary>Evidence</summary>\n\n| Source | Reference | Result |\n|---|---|---|\n${evaluation.evidence
-          .map((e) => `| ${sanitizeMarkdown(e.source)} | \`${sanitizeMarkdown(e.value)}\` | ${sanitizeMarkdown(e.result)} |`)
+          .map((e) => `| ${inline(e.source)} | ${inline(e.value)} | ${inline(e.result)} |`)
           .join("\n")}\n\n</details>\n`
       : "";
 
@@ -94,7 +107,7 @@ export function formatScopeCIComment(input: CommentFormatInput): string {
   return `${COMMENT_MARKER}
 ### ScopeCI: ${VERDICT_LABELS[evaluation.state] ?? evaluation.state}
 
-${reason ? `${sanitizeMarkdown(reason)}\n` : ""}${note ? `\n_${sanitizeMarkdown(note)}_\n` : ""}
+${reason ? `${inline(reason)}\n` : ""}${note ? `\n_${inline(note)}_\n` : ""}
 | | |
 |---|---|
 ${facts.join("\n")}

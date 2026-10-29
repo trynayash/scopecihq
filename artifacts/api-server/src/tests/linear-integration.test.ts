@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import { and, eq } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
@@ -700,6 +702,171 @@ async function runPhase3TestSuite(): Promise<void> {
     ),
   });
   assert(!crossTenantConn, "Tenant B has no access to Tenant A's Linear connection");
+
+  /* ==================================================================
+     Scenarios 24-25 run against the real routes. The router reads its
+     webhook secret when it loads, so set it before importing the app.
+     ================================================================== */
+  process.env.LINEAR_WEBHOOK_SECRET = TEST_SECRET;
+  const { default: app } = await import("../app.js");
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+
+  async function call(
+    path: string,
+    options: { method?: string; headers?: Record<string, string>; rawBody?: string } = {},
+  ): Promise<{ status: number; body: any }> {
+    const res = await new Promise<http.IncomingMessage & { text: string }>((resolve, reject) => {
+      const req = http.request(
+        {
+          host: "127.0.0.1",
+          port,
+          path,
+          method: options.method ?? "GET",
+          headers: {
+            accept: "application/json",
+            ...(options.rawBody !== undefined
+              ? { "content-type": "application/json", "content-length": String(Buffer.byteLength(options.rawBody)) }
+              : {}),
+            ...options.headers,
+          },
+        },
+        (incoming) => {
+          let text = "";
+          incoming.on("data", (chunk) => (text += chunk));
+          incoming.on("end", () => resolve(Object.assign(incoming, { text })));
+        },
+      );
+      req.on("error", reject);
+      if (options.rawBody !== undefined) req.write(options.rawBody);
+      req.end();
+    });
+    let body: any = null;
+    try {
+      body = JSON.parse(res.text);
+    } catch {
+      body = res.text;
+    }
+    return { status: res.statusCode ?? 0, body };
+  }
+
+  function sendLinearWebhook(payload: Record<string, unknown>) {
+    const rawBody = JSON.stringify(payload);
+    const signature = crypto.createHmac("sha256", TEST_SECRET).update(rawBody).digest("hex");
+    return call("/api/webhooks/linear", {
+      method: "POST",
+      rawBody,
+      headers: {
+        "linear-signature": signature,
+        "linear-delivery": `lin_del_retry_${crypto.randomBytes(6).toString("hex")}`,
+      },
+    });
+  }
+
+  /* ==================================================================
+     Scenario 24: Webhook replay check reads webhookTimestamp, not createdAt
+     ================================================================== */
+  console.log("\n▶ Scenario 24: Webhook replay check reads webhookTimestamp, not createdAt");
+  // Linear retries a failed delivery about an hour later. The issue change
+  // (createdAt) is an hour old, but webhookTimestamp is the time of this send.
+  const anHourAgo = new Date(Date.now() - 3600 * 1000).toISOString();
+  const retriedIssueId = `lin_iss_retry_${crypto.randomBytes(6).toString("hex")}`;
+  const lateRetry = {
+    action: "update",
+    type: "Issue",
+    createdAt: anHourAgo,
+    organizationId: workspace.id,
+    data: {
+      id: retriedIssueId,
+      identifier: "ENG-777",
+      title: "ENG-777 · Delivered by a late retry",
+      state: { name: "Todo" },
+      createdAt: anHourAgo,
+      updatedAt: anHourAgo,
+    },
+  };
+
+  const retryRes = await sendLinearWebhook({ ...lateRetry, webhookTimestamp: Date.now() });
+  assert(retryRes.status === 200, `A retry an hour after the change is accepted (got ${retryRes.status})`);
+  assert(retryRes.body?.status === "processed", "The retried Issue update is processed");
+  const retriedIssue = await db.query.issuesTable.findFirst({
+    where: eq(issuesTable.externalId, retriedIssueId),
+  });
+  assert(retriedIssue?.organizationId === org.id, "The retried issue is stored for the connected organization");
+
+  const replayRes = await sendLinearWebhook({ ...lateRetry, webhookTimestamp: Date.now() - 3600 * 1000 });
+  assert(replayRes.status === 401, `A delivery sent an hour ago is refused as a replay (got ${replayRes.status})`);
+  assert(
+    typeof replayRes.body?.error === "string" && replayRes.body.error.includes("webhookTimestamp"),
+    "The replay refusal says which timestamp was refused",
+  );
+
+  // A fresh createdAt is no stand-in for the send time.
+  const unstampedRes = await sendLinearWebhook({ ...lateRetry, createdAt: new Date().toISOString() });
+  assert(unstampedRes.status === 401, `A signed delivery with no webhookTimestamp is refused (got ${unstampedRes.status})`);
+
+  /* ==================================================================
+     Scenario 25: In production, connecting and syncing refuse the stand-ins
+     ================================================================== */
+  console.log("\n▶ Scenario 25: In production, connecting and syncing refuse the stand-ins");
+  const prodState = generateOAuthState();
+  await db.insert(linearOAuthStatesTable).values({
+    state: prodState,
+    organizationId: org.id,
+    userId: "user_pm_prod",
+    redirectUrl: (process.env.APP_BASE_URL || "http://localhost:3000") + "/settings/integrations/linear",
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+  });
+
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousApiKey = process.env.SCOPECI_API_KEY;
+  const apiKey = "test_linear_operator_key";
+  process.env.NODE_ENV = "production";
+  process.env.SCOPECI_API_KEY = apiKey;
+  try {
+    const prodCallback = await call(
+      `/api/integrations/linear/callback?code=anything_at_all&state=${prodState}`,
+    );
+    assert(prodCallback.status === 503, `Production callback refuses the sample code exchange (got ${prodCallback.status})`);
+    assert(
+      typeof prodCallback.body?.error === "string" && prodCallback.body.error.includes("Linear isn't set up on this server"),
+      "Production callback says Linear isn't set up on this server",
+    );
+
+    const prodConnect = await call(`/api/integrations/linear/connect?organizationId=${org.id}`, {
+      headers: { authorization: `Bearer ${apiKey}` },
+    });
+    assert(prodConnect.status === 503, `Production connect refuses to start a sign-in it can't finish (got ${prodConnect.status})`);
+
+    const prodSync = await call("/api/integrations/linear/projects/lin_proj_api/sync", {
+      method: "POST",
+      rawBody: JSON.stringify({ organizationId: org.id }),
+      headers: { authorization: `Bearer ${apiKey}` },
+    });
+    assert(prodSync.status === 503, `Production sync refuses to import sample issues (got ${prodSync.status})`);
+
+    const anonymousConnect = await call(`/api/integrations/linear/connect?organizationId=${org.id}`);
+    assert(anonymousConnect.status === 401, "Production connect still asks for the API key first");
+  } finally {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+    if (previousApiKey === undefined) delete process.env.SCOPECI_API_KEY;
+    else process.env.SCOPECI_API_KEY = previousApiKey;
+  }
+
+  const untouchedState = await db.query.linearOAuthStatesTable.findFirst({
+    where: eq(linearOAuthStatesTable.state, prodState),
+  });
+  assert(untouchedState?.usedAt === null, "The refused callback did not use up the sign-in state");
+
+  // Outside production the stand-ins keep working, so local runs and these
+  // suites need no Linear account.
+  const devCallback = await call(`/api/integrations/linear/callback?code=anything_at_all&state=${prodState}`);
+  assert(devCallback.status === 200, `Outside production the callback runs on the stand-ins (got ${devCallback.status})`);
+  assert(devCallback.body?.status === "connected", "Outside production the sample workspace connects");
+
+  await new Promise<void>((resolve) => server.close(() => resolve()));
 
   console.log("\n================================================================");
   console.log(` PHASE 3 TEST RESULTS: ${passed} PASSED / ${failed} FAILED`);

@@ -30,4 +30,9 @@ export interface DemoPullRequest {
      * @maxItems 300
      */
   files: DemoChangedFile[];
+  /**
+     * How many files GitHub says the pull request changes, when loaded from GitHub; more than files.length when the demo read only the first 300.
+     * @nullable
+     */
+  totalFiles?: number | null;
 }

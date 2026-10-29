@@ -20,6 +20,12 @@ export async function ensureSchema(pool: Pool): Promise<{ warnings: string[] }> 
     // One start at a time: two instances booting together wait for each other.
     await client.query("SELECT pg_advisory_lock(hashtext('scopeci_schema'))");
     try {
+      // The batch locks every table it touches. Behind a long transaction on
+      // the instance being replaced it gives up after 5 seconds, releasing
+      // what it holds, rather than stall that instance's traffic; the server
+      // tries the sync again.
+      await client.query("SET lock_timeout = '5s'");
+
       // A single batch runs as one transaction: all of it applies, or none.
       await client.query(SCHEMA_STATEMENTS.join("\n"));
 
@@ -27,6 +33,13 @@ export async function ensureSchema(pool: Pool): Promise<{ warnings: string[] }> 
       // 2026; now later excluded work gets its own. This is the one index
       // the schema has ever given up, so it is dropped by name here.
       await client.query('DROP INDEX IF EXISTS "co_pull_request_uidx"');
+
+      // Until 29 October 2026 there was one open change order per pull
+      // request; now one per pull request per project. The replacement,
+      // created above, is looser, so existing rows already satisfy it. The
+      // code being replaced never relied on this index, so it goes now.
+      // (Its pull request index waits: see dropRetiredIndexes.)
+      await client.query('DROP INDEX IF EXISTS "co_pull_request_open_uidx"');
 
       // Until 28 October 2026 each changed file's diff text was stored with
       // its name. The check only ever read the names, so drop what was kept.
@@ -66,10 +79,44 @@ export async function ensureSchema(pool: Pool): Promise<{ warnings: string[] }> 
         }
       }
     } finally {
+      // The connection goes back to the pool: queries there wait as long as they need.
+      await client.query("RESET lock_timeout").catch(() => undefined);
       await client.query("SELECT pg_advisory_unlock(hashtext('scopeci_schema'))");
     }
   } finally {
     client.release();
   }
   return { warnings };
+}
+
+/**
+ * Until 29 October 2026 a pull request had one row whatever project checked
+ * it, so connecting its repository to another project (or another workspace)
+ * moved the row there, change orders and all. Now each project keeps its own
+ * row, under a looser unique index created by ensureSchema.
+ *
+ * The old index is dropped only after the instance being replaced has gone:
+ * its pull request upsert names the old index's columns, and fails without
+ * it. The server calls this a few minutes after it starts listening. Until
+ * then, a pull request moving to another project can't be checked there yet
+ * (the sweep checks it once this has run).
+ *
+ * Before rolling back past this change, delete the extra per-project
+ * pull_requests rows and open change orders, or the older code's schema
+ * sync and pull request upserts fail.
+ */
+export async function dropRetiredIndexes(pool: Pool): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("SELECT pg_advisory_lock(hashtext('scopeci_schema'))");
+    try {
+      await client.query("SET lock_timeout = '5s'");
+      await client.query('DROP INDEX IF EXISTS "pr_provider_external_uidx"');
+    } finally {
+      await client.query("RESET lock_timeout").catch(() => undefined);
+      await client.query("SELECT pg_advisory_unlock(hashtext('scopeci_schema'))");
+    }
+  } finally {
+    client.release();
+  }
 }

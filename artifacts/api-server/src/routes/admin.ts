@@ -4,7 +4,7 @@ import { db, waitlistSignupsTable } from "@workspace/db";
 import { desc, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
-import { timingSafeCompare } from "../middlewares/auth.js";
+import { refuseGuessing, secretGuesses, timingSafeCompare } from "../middlewares/auth.js";
 import { rateLimiter } from "../middlewares/rate-limit.js";
 
 const router: IRouter = Router();
@@ -70,6 +70,8 @@ function sessionCookie(value: string, maxAgeSeconds: number): string {
  * Accepts the session cookie, or ADMIN_SECRET itself as `Authorization:
  * Bearer <key>` / `x-admin-key` for scripts. Uses constant-time comparison.
  * Returns 401 if the secret is not configured or nothing valid was sent.
+ * Wrong keys count towards the same limit as the sign-in form, so sending the
+ * key as a header is not an unlimited way to guess it.
  */
 export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
   // Everything behind this carries signup emails; keep it out of any cache.
@@ -77,7 +79,7 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
 
   const secret = process.env.ADMIN_SECRET;
   if (!secret) {
-    res.status(401).json({ error: "Admin access is not configured." });
+    res.status(401).json({ error: "Admin access is not set up. Set ADMIN_SECRET on the server and redeploy." });
     return;
   }
 
@@ -96,7 +98,16 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
     provided = req.headers["x-admin-key"];
   }
 
-  if (!provided || !timingSafeCompare(provided, secret)) {
+  if (!provided) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  if (secretGuesses.blocked(req)) {
+    refuseGuessing(res);
+    return;
+  }
+  if (!timingSafeCompare(provided, secret)) {
+    secretGuesses.record(req);
     res.status(401).json({ error: "Unauthorized." });
     return;
   }
@@ -119,10 +130,15 @@ router.post("/admin/session", signInRateLimiter, (req, res): void => {
   const provided = typeof req.body?.key === "string" ? req.body.key.trim() : "";
 
   if (!secret) {
-    res.status(401).json({ error: "Admin access is not configured." });
+    res.status(401).json({ error: "Admin access is not set up. Set ADMIN_SECRET on the server and redeploy." });
+    return;
+  }
+  if (provided && secretGuesses.blocked(req)) {
+    refuseGuessing(res);
     return;
   }
   if (!provided || !timingSafeCompare(provided, secret)) {
+    if (provided) secretGuesses.record(req);
     res.status(401).json({ error: "That key is not right." });
     return;
   }
@@ -152,7 +168,7 @@ router.get("/admin/session", (_req, res): void => {
 /**
  * GET /admin/waitlist — returns all signups as JSON.
  */
-router.get("/admin/waitlist", async (req, res): Promise<void> => {
+router.get("/admin/waitlist", async (req, res, next): Promise<void> => {
   try {
     const signups = await db
       .select()
@@ -162,14 +178,14 @@ router.get("/admin/waitlist", async (req, res): Promise<void> => {
     res.json(signups);
   } catch (error) {
     req.log.error({ err: error }, "Failed to fetch waitlist");
-    res.status(500).json({ error: "Internal server error." });
+    next(error);
   }
 });
 
 /**
  * GET /admin/waitlist/stats — returns aggregate counts.
  */
-router.get("/admin/waitlist/stats", async (req, res): Promise<void> => {
+router.get("/admin/waitlist/stats", async (req, res, next): Promise<void> => {
   try {
     const [stats] = await db
       .select({
@@ -182,15 +198,36 @@ router.get("/admin/waitlist/stats", async (req, res): Promise<void> => {
     res.json(stats);
   } catch (error) {
     req.log.error({ err: error }, "Failed to fetch waitlist stats");
-    res.status(500).json({ error: "Internal server error." });
+    next(error);
   }
 });
 
 /**
- * GET /admin/waitlist/csv — downloads signups as CSV.
- * Sanitizes against CSV Formula Injection (OWASP A05).
+ * One CSV cell. Sanitizes against CSV Formula Injection (OWASP A05): a value
+ * starting with a formula character gets a ' in front, and any value with a
+ * comma, quote or line break (CR as well as LF: spreadsheets end a row at a
+ * bare CR too) is quoted, so nothing after it can start a cell of its own.
  */
-router.get("/admin/waitlist/csv", async (req, res): Promise<void> => {
+export function csvCell(val: unknown): string {
+  if (val === null || val === undefined) return "";
+  // "2026-10-29 06:58:54" (UTC): the form spreadsheets read as a date.
+  let str = val instanceof Date ? val.toISOString().replace("T", " ").slice(0, 19) : String(val);
+
+  // Prevent CSV Formula Injection: Prefix dangerous characters with single quote
+  if (/^[=+\-@\t\r]/.test(str)) {
+    str = `'${str}`;
+  }
+
+  if (/[",\r\n]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+/**
+ * GET /admin/waitlist/csv — downloads signups as CSV, created_at in UTC.
+ */
+router.get("/admin/waitlist/csv", async (req, res, next): Promise<void> => {
   try {
     const signups = await db
       .select()
@@ -202,27 +239,12 @@ router.get("/admin/waitlist/csv", async (req, res): Promise<void> => {
       "utm_campaign", "utm_content", "utm_term", "referrer", "created_at",
     ];
 
-    const escape = (val: unknown): string => {
-      if (val === null || val === undefined) return "";
-      let str = String(val);
-
-      // Prevent CSV Formula Injection: Prefix dangerous characters with single quote
-      if (/^[=+\-@\t\r]/.test(str)) {
-        str = `'${str}`;
-      }
-
-      if (str.includes(",") || str.includes('"') || str.includes("\n")) {
-        return `"${str.replace(/"/g, '""')}"`;
-      }
-      return str;
-    };
-
     const rows = signups.map((s) =>
       [
         s.id, s.email, s.agency, s.utmSource, s.utmMedium,
         s.utmCampaign, s.utmContent, s.utmTerm, s.referrer, s.createdAt,
       ]
-        .map(escape)
+        .map(csvCell)
         .join(","),
     );
 
@@ -233,7 +255,7 @@ router.get("/admin/waitlist/csv", async (req, res): Promise<void> => {
     res.send(csv);
   } catch (error) {
     req.log.error({ err: error }, "Failed to export waitlist CSV");
-    res.status(500).json({ error: "Internal server error." });
+    next(error);
   }
 });
 
@@ -241,7 +263,7 @@ router.get("/admin/waitlist/csv", async (req, res): Promise<void> => {
  * DELETE /admin/waitlist/:id — removes one signup. The privacy policy
  * promises removal on request; this is how that promise is kept.
  */
-router.delete("/admin/waitlist/:id", async (req, res): Promise<void> => {
+router.delete("/admin/waitlist/:id", async (req, res, next): Promise<void> => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
     res.status(400).json({ error: "Invalid signup id." });
@@ -262,7 +284,7 @@ router.delete("/admin/waitlist/:id", async (req, res): Promise<void> => {
     res.status(204).end();
   } catch (error) {
     req.log.error({ err: error }, "Failed to delete waitlist signup");
-    res.status(500).json({ error: "Internal server error." });
+    next(error);
   }
 });
 

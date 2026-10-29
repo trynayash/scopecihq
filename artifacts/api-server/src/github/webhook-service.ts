@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   changeOrdersTable,
@@ -9,6 +9,7 @@ import {
   githubInstallationsTable,
   contractsTable,
   issuesTable,
+  linearWebhookDeliveriesTable,
   prDiffAnalysesTable,
   prIssueLinksTable,
   projectLinksTable,
@@ -35,7 +36,7 @@ import { VERDICT_LABELS, formatScopeCIComment, projectEstimate } from "./comment
 import { logger } from "../lib/logger.js";
 import { loadActiveBaseline, toDomainBaseline } from "../lib/scope-store.js";
 import { acceptanceFor, covers } from "../lib/acceptance.js";
-import { changeOrderPlan, itemsOf } from "../lib/change-orders.js";
+import { changeOrderPlan, itemsOf, letterHash, letterUntouched } from "../lib/change-orders.js";
 
 export interface GitHubWebhookHeaders {
   deliveryId: string;
@@ -174,7 +175,8 @@ export class WebhookService {
       return { shouldProcess: true };
     }
 
-    // 4. Persist delivery record with trimmed metadata & 30-day retention policy
+    // 4. Persist delivery record with trimmed metadata & 30-day retention
+    // policy (purgeExpiredDeliveries removes it after that)
     const retentionDays = 30;
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + retentionDays);
@@ -278,7 +280,8 @@ export class WebhookService {
       return { deliveryId, status: "ignored" };
     }
     // A pull request from a repository the project was connected to before
-    // can't be checked through the one connected now.
+    // can't be checked through the one connected now. (A rename of the
+    // connected one moves its pull requests' links along: followRename.)
     if (!pr.url.toLowerCase().includes(`/${project.repositoryFullName.toLowerCase()}/pull/`)) {
       return { deliveryId, status: "ignored" };
     }
@@ -386,17 +389,22 @@ export class WebhookService {
         for (const { number, headSha } of heads) {
           const key = `${project.repositoryFullName}#${number}@${headSha}`;
           if ((this.sweepTries.get(key) ?? 0) >= 3) continue;
+          // Done only once GitHub has the verdict: a check run recorded with
+          // the result it shows. A saved result whose check run never got
+          // posted (GitHub failed, a deploy cut the work off), or a "couldn't
+          // check" run, is checked again.
           const checkedAlready = async () =>
             (
               await db
-                .select({ id: commercialEvaluationsTable.id })
-                .from(commercialEvaluationsTable)
-                .innerJoin(pullRequestsTable, eq(pullRequestsTable.id, commercialEvaluationsTable.pullRequestId))
+                .select({ id: githubCheckRunsTable.id })
+                .from(githubCheckRunsTable)
+                .innerJoin(pullRequestsTable, eq(pullRequestsTable.id, githubCheckRunsTable.pullRequestId))
                 .where(
                   and(
                     eq(pullRequestsTable.projectId, project.id),
                     eq(pullRequestsTable.number, number),
-                    eq(commercialEvaluationsTable.headSha, headSha),
+                    eq(githubCheckRunsTable.headSha, headSha),
+                    isNotNull(githubCheckRunsTable.latestEvaluationId),
                   ),
                 )
                 .limit(1)
@@ -405,7 +413,7 @@ export class WebhookService {
           try {
             // In the pull request's queue, and asked again there: a webhook
             // for the same commit may have arrived since, and then it's done.
-            const result = await this.inPullRequestQueue(`${project.repositoryFullName}#${number}`, async () => {
+            const result = await this.inPullRequestQueue(`${project.repositoryExternalId}#${number}`, async () => {
               if (await checkedAlready()) return null;
               this.sweepTries.set(key, (this.sweepTries.get(key) ?? 0) + 1);
               const pullRequest = await this.gitHubClient.getPullRequest!(project.githubInstallationId!, owner, name, number);
@@ -434,7 +442,11 @@ export class WebhookService {
     }
   }
 
-  /** The last piece of work queued for each pull request, keyed by repository and number. */
+  /**
+   * The last piece of work queued for each pull request, keyed by repository
+   * id and number: the id survives a rename, so a webhook carrying the new
+   * name and a re-check carrying the old one still wait for each other.
+   */
   private pullRequestQueues = new Map<string, Promise<unknown>>();
 
   /**
@@ -444,12 +456,12 @@ export class WebhookService {
    * together would each post their own comment and check run.
    */
   async processPullRequestEvent(deliveryId: string, payload: any): Promise<WebhookProcessResult> {
-    return this.inPullRequestQueue(`${payload?.repository?.full_name}#${payload?.pull_request?.number}`, () =>
+    return this.inPullRequestQueue(`${payload?.repository?.id}#${payload?.pull_request?.number}`, () =>
       this.handlePullRequestEvent(deliveryId, payload),
     );
   }
 
-  /** Runs `work` after everything already queued for the pull request `key` (repository#number). */
+  /** Runs `work` after everything already queued for the pull request `key` (repository id#number). */
   private async inPullRequestQueue<T>(key: string, work: () => Promise<T>): Promise<T> {
     const previous = this.pullRequestQueues.get(key) ?? Promise.resolve();
     const run = previous.catch(() => undefined).then(work);
@@ -501,6 +513,11 @@ export class WebhookService {
     // Set once the pull request is known to belong to a project, so a
     // failure can still be reported on it.
     let failureCheck: { installationId: string; owner: string; repo: string; detailsUrl?: string } | null = null;
+    // The project the failed check belongs to: a pull request has a row per project.
+    let failureProjectId = "";
+    // Set once GitHub has the verdict's check run: a later failure (the
+    // comment, the audit record) must not cover it with "couldn't check".
+    let checkPosted = false;
 
     try {
       // 1. Resolve GitHub App Installation -> ScopeCI Organization
@@ -571,6 +588,18 @@ export class WebhookService {
         return { deliveryId, status: "unmapped", action, prNumber };
       }
 
+      // A repository keeps its id through a rename or a transfer, and the
+      // project is found by that id. Its stored name, and the links of the
+      // pull requests already checked, follow the new name, so re-checks
+      // still recognise them. The pull request's own base repository says
+      // so too when the event is ScopeCI's (a sweep or a re-check).
+      const baseRepo = prData.base?.repo;
+      const currentName: string =
+        baseRepo?.full_name && String(baseRepo.id) === String(repoData.id) ? baseRepo.full_name : repositoryFullName;
+      if (project?.repositoryFullName && currentName && project.repositoryFullName !== currentName) {
+        await this.followRename(project.id, project.repositoryFullName, currentName);
+      }
+
       // Where results go, worked out as soon as the project is known, so a
       // failure in any later step can still be reported on the pull request.
       const owner = repoData.owner?.login || repositoryFullName.split("/")[0];
@@ -578,11 +607,23 @@ export class WebhookService {
       const detailsUrl = project && process.env.APP_BASE_URL
         ? `${process.env.APP_BASE_URL.replace(/\/+$/, "")}/app/projects/${project.id}`
         : undefined;
-      if (project && installationId && headSha && action !== "closed") failureCheck = { installationId, owner, repo, detailsUrl };
+      if (project && installationId && headSha && action !== "closed") {
+        failureCheck = { installationId, owner, repo, detailsUrl };
+        failureProjectId = project.id;
+      }
 
       // 2. Persist / Upsert Pull Request into Provenance Graph
       const externalPrId = `gh_pr_${prData.id}`;
       const prState = prData.merged ? "MERGED" : prData.state === "closed" ? "CLOSED" : "OPEN";
+      // GitHub stamps each pull request event with updated_at. An event older
+      // than the one stored (a failed delivery sent again, two arriving out of
+      // order, or a bulk re-check's list read before a merge) would put back
+      // an old title, state and verdict, so it changes nothing. A re-check
+      // built from the stored row carries no updated_at and always goes
+      // through; one read from GitHub with the same updated_at does too.
+      const stamped = prData.updated_at ? new Date(prData.updated_at) : null;
+      const providerUpdatedAt = stamped && !Number.isNaN(stamped.getTime()) ? stamped : null;
+      const guardOrder = providerUpdatedAt !== null;
 
       const [prRecord] = await db
         .insert(pullRequestsTable)
@@ -607,10 +648,17 @@ export class WebhookService {
           commitsCount: prData.commits || 1,
           openedAt: new Date(prData.created_at || Date.now()),
           mergedAt: prData.merged_at ? new Date(prData.merged_at) : null,
+          providerUpdatedAt,
           lastSeenAt: new Date(),
         })
         .onConflictDoUpdate({
-          target: [pullRequestsTable.externalProvider, pullRequestsTable.externalId],
+          // One row per pull request in each project, so a repository moved to
+          // another project (or workspace) starts afresh there and never takes
+          // the old project's results, change orders or acceptances with it.
+          target: project
+            ? [pullRequestsTable.externalProvider, pullRequestsTable.externalId, pullRequestsTable.projectId]
+            : [pullRequestsTable.externalProvider, pullRequestsTable.externalId],
+          targetWhere: project ? undefined : sql`project_id is null`,
           set: {
             title: prData.title || "",
             body: prData.body || "",
@@ -623,12 +671,23 @@ export class WebhookService {
             changedFiles: prData.changed_files || 0,
             commitsCount: prData.commits || 1,
             mergedAt: prData.merged_at ? new Date(prData.merged_at) : null,
-            projectId: project?.id ?? null,
+            providerUpdatedAt: sql`greatest(${pullRequestsTable.providerUpdatedAt}, excluded.provider_updated_at)`,
             lastSeenAt: new Date(),
             updatedAt: new Date(),
           },
+          setWhere: guardOrder
+            ? sql`${pullRequestsTable.providerUpdatedAt} is null or ${pullRequestsTable.providerUpdatedAt} <= ${providerUpdatedAt}`
+            : undefined,
         })
         .returning();
+
+      if (!prRecord) {
+        await db
+          .update(webhookDeliveriesTable)
+          .set({ status: "IGNORED", errorMessage: "Superseded by a newer pull request event" })
+          .where(eq(webhookDeliveriesTable.deliveryId, deliveryId));
+        return { deliveryId, status: "ignored", action, prNumber };
+      }
 
       // If PR is closed/merged and not a synchronize, record event and finish
       if (action === "closed") {
@@ -849,7 +908,10 @@ export class WebhookService {
       // accepted on later pushes, as long as nothing new is excluded.
       let evaluation = checked;
       let changeOrder = drafted;
-      const accepted = project ? await acceptanceFor(prRecord.id) : null;
+      // Only a decision made in this project counts.
+      const accepted = project
+        ? await acceptanceFor(prRecord.id, { organizationId: project.organizationId, projectId: project.id })
+        : null;
       if (
         accepted &&
         (checked.state === "CHANGE_REQUIRED" || checked.state === "REVIEW_REQUIRED") &&
@@ -914,10 +976,10 @@ export class WebhookService {
       // excluded work on a later push joins its items, except work a decided
       // change order already listed (approved or declined, it isn't raised
       // again). The letter is redrawn only if nobody edited it; an edited
-      // letter is the PM's to change.
+      // letter is the PM's to change. Only this project's change orders.
       if (project && changeOrder && changeOrder.items.length > 0) {
         const orders = await db.query.changeOrdersTable.findMany({
-          where: eq(changeOrdersTable.pullRequestId, prRecord.id),
+          where: and(eq(changeOrdersTable.pullRequestId, prRecord.id), eq(changeOrdersTable.projectId, project.id)),
           orderBy: [changeOrdersTable.createdAt],
         });
         const plan = changeOrderPlan(orders, changeOrder.items);
@@ -934,15 +996,18 @@ export class WebhookService {
               hours: draft.hours ?? undefined,
               hourlyRate: project.hourlyRate ?? undefined,
             });
-          const before = letterFor(oldItems);
-          const untouched = draft.messageSubject === before.subject && draft.messageBody === before.body;
+          // The stored hash says whether the letter is still ScopeCI's, so a
+          // renamed pull request or a new client name doesn't read as an edit.
+          const untouched = letterUntouched(draft, () => letterFor(oldItems));
           const after = untouched ? letterFor(plan.fresh) : null;
           await db
             .update(changeOrdersTable)
             .set({
               itemsJson: plan.fresh,
               title: plan.fresh.map((i) => i.item).join(", ").slice(0, 255),
-              ...(after ? { messageSubject: after.subject, messageBody: after.body } : {}),
+              ...(after
+                ? { messageSubject: after.subject, messageBody: after.body, letterHash: letterHash(after.subject, after.body) }
+                : {}),
               updatedAt: new Date(),
             })
             // Still a draft: a letter marked as sent meanwhile is kept as sent.
@@ -971,23 +1036,33 @@ export class WebhookService {
         ),
       });
 
+      const verdictRun = {
+        installationId: installationId || "mock_install",
+        owner,
+        repo,
+        status: "completed" as const,
+        conclusion: evaluation.checkConclusion,
+        title: checkTitle,
+        summary: checkSummary,
+        detailsUrl,
+      };
       let checkRunResult;
       if (existingCheckRun) {
-        checkRunResult = await this.gitHubClient.updateCheckRun({
-          installationId: installationId || "mock_install",
-          owner,
-          repo,
-          checkRunId: existingCheckRun.githubCheckRunId,
-          status: "completed",
-          conclusion: evaluation.checkConclusion,
-          title: checkTitle,
-          summary: checkSummary,
-          detailsUrl,
-        });
+        try {
+          checkRunResult = await this.gitHubClient.updateCheckRun({ ...verdictRun, checkRunId: existingCheckRun.githubCheckRunId });
+        } catch (err) {
+          // A run GitHub won't let this App edit (it belongs to an App that
+          // was replaced, or is gone): post a new one and record that, or
+          // every later check of this commit would fail the same way.
+          if (!cannotEditCheckRun(err)) throw err;
+          checkRunResult = await this.gitHubClient.createCheckRun({ ...verdictRun, headSha, name: CHECK_NAME });
+        }
+        checkPosted = true;
 
         await db
           .update(githubCheckRunsTable)
           .set({
+            githubCheckRunId: checkRunResult.id,
             headSha,
             status: "completed",
             conclusion: evaluation.checkConclusion,
@@ -998,23 +1073,13 @@ export class WebhookService {
           })
           .where(eq(githubCheckRunsTable.id, existingCheckRun.id));
       } else {
-        checkRunResult = await this.gitHubClient.createCheckRun({
-          installationId: installationId || "mock_install",
-          owner,
-          repo,
-          headSha,
-          name: "scopeci / commercial",
-          status: "completed",
-          conclusion: evaluation.checkConclusion,
-          title: checkTitle,
-          summary: checkSummary,
-          detailsUrl,
-        });
+        checkRunResult = await this.gitHubClient.createCheckRun({ ...verdictRun, headSha, name: CHECK_NAME });
+        checkPosted = true;
 
         await db.insert(githubCheckRunsTable).values({
           pullRequestId: prRecord.id,
           githubCheckRunId: checkRunResult.id,
-          checkName: "scopeci / commercial",
+          checkName: CHECK_NAME,
           headSha,
           status: "completed",
           conclusion: evaluation.checkConclusion,
@@ -1086,24 +1151,19 @@ export class WebhookService {
     } catch (err: any) {
       logger.error({ deliveryId, err: err.message, stack: err.stack }, "Error processing GitHub webhook event");
 
+      // The database may be what failed; the pull request still hears about it.
       await db
         .update(webhookDeliveriesTable)
         .set({ status: "FAILED", errorMessage: err.message || "Processing error" })
-        .where(eq(webhookDeliveriesTable.deliveryId, deliveryId));
+        .where(eq(webhookDeliveriesTable.deliveryId, deliveryId))
+        .catch((dbErr: any) => logger.warn({ deliveryId, err: dbErr.message }, "Couldn't mark the delivery as failed"));
 
       // Say so on the pull request rather than leave it with no result. A
       // neutral check doesn't block a merge, even where the check is required.
-      if (failureCheck) {
+      // Not once the verdict is on GitHub: only a later step failed then.
+      if (failureCheck && !checkPosted) {
         try {
-          await this.gitHubClient.createCheckRun({
-            ...failureCheck,
-            headSha,
-            name: "scopeci / commercial",
-            status: "completed",
-            conclusion: "neutral",
-            title: "ScopeCI couldn't check this commit",
-            summary: "Something went wrong while checking this commit, so it has no verdict. Push again, or use Re-check on the pull request in ScopeCI.",
-          });
+          await this.reportCouldNotCheck(failureCheck, failureProjectId, `gh_pr_${prData.id}`, headSha);
         } catch (reportErr: any) {
           logger.warn({ deliveryId, err: reportErr.message }, "Couldn't report the failed check on the pull request");
         }
@@ -1118,4 +1178,114 @@ export class WebhookService {
       };
     }
   }
+
+  /**
+   * Puts "couldn't check" on a commit, on the check run already recorded for
+   * it when there is one, so GitHub shows one ScopeCI run per commit. The run
+   * is recorded without an evaluation: the next successful check edits this
+   * same run, and the sweep knows the commit still needs a verdict.
+   */
+  private async reportCouldNotCheck(
+    target: { installationId: string; owner: string; repo: string; detailsUrl?: string },
+    projectId: string,
+    pullRequestExternalId: string,
+    headSha: string,
+  ): Promise<void> {
+    const failure = {
+      status: "completed" as const,
+      conclusion: "neutral" as const,
+      title: "ScopeCI couldn't check this commit",
+      summary: "Something went wrong while checking this commit, so it has no verdict. Push again, or use Re-check on the pull request in ScopeCI.",
+    };
+    // The database may be what failed: then the run is posted, not recorded.
+    const pr = await db.query.pullRequestsTable
+      .findFirst({
+        where: and(
+          eq(pullRequestsTable.externalProvider, "GITHUB"),
+          eq(pullRequestsTable.externalId, pullRequestExternalId),
+          eq(pullRequestsTable.projectId, projectId),
+        ),
+      })
+      .catch(() => undefined);
+    const recorded = pr
+      ? await db.query.githubCheckRunsTable
+          .findFirst({ where: and(eq(githubCheckRunsTable.pullRequestId, pr.id), eq(githubCheckRunsTable.headSha, headSha)) })
+          .catch(() => undefined)
+      : undefined;
+
+    let runId: string | undefined;
+    if (recorded) {
+      try {
+        await this.gitHubClient.updateCheckRun({ ...target, checkRunId: recorded.githubCheckRunId, ...failure });
+        runId = recorded.githubCheckRunId;
+      } catch (err) {
+        if (!cannotEditCheckRun(err)) throw err;
+      }
+    }
+    runId ??= (await this.gitHubClient.createCheckRun({ ...target, headSha, name: CHECK_NAME, ...failure })).id;
+
+    if (!pr) return;
+    const row = { ...failure, githubCheckRunId: runId, latestEvaluationId: null, updatedAt: new Date() };
+    if (recorded) {
+      await db.update(githubCheckRunsTable).set(row).where(eq(githubCheckRunsTable.id, recorded.id));
+    } else {
+      await db.insert(githubCheckRunsTable).values({
+        ...row,
+        pullRequestId: pr.id,
+        checkName: CHECK_NAME,
+        headSha,
+        detailsUrl: target.detailsUrl ?? null,
+      });
+    }
+  }
+
+  /**
+   * The project's repository was renamed or transferred on GitHub: store the
+   * new name, and point the links of its pull requests checked under the old
+   * one at the new one. Pull requests from a repository the project was
+   * connected to before keep their own links.
+   */
+  private async followRename(projectId: string, from: string, to: string): Promise<void> {
+    logger.info({ projectId, from, to }, "The project's repository was renamed on GitHub; following it");
+    await db.update(projectsTable).set({ repositoryFullName: to, updatedAt: new Date() }).where(eq(projectsTable.id, projectId));
+    const oldPath = `/${from}/pull/`.toLowerCase();
+    const at = sql`position(${oldPath} in lower(${pullRequestsTable.url}))`;
+    await db
+      .update(pullRequestsTable)
+      .set({ url: sql`overlay(${pullRequestsTable.url} placing ${`/${to}/pull/`} from ${at} for ${oldPath.length})` })
+      .where(and(eq(pullRequestsTable.projectId, projectId), sql`${at} > 0`));
+  }
+}
+
+/** The name ScopeCI's check run has on every commit. */
+const CHECK_NAME = "scopeci / commercial";
+
+/**
+ * GitHub refusing to edit a check run for good: it's gone, or it belongs to
+ * another App (one replaced on the admin page). A rate limit isn't that.
+ */
+function cannotEditCheckRun(err: unknown): boolean {
+  const e = err as { status?: number; rateLimited?: boolean } | null;
+  return e?.status === 404 || (e?.status === 403 && !e.rateLimited);
+}
+
+/**
+ * Deletes webhook deliveries past their 30-day expiry, GitHub's and
+ * Linear's, a batch at a time so a large backlog never holds a long lock.
+ * Nothing reads a delivery after GitHub or Linear could resend it, which is
+ * days at most. Returns how many were deleted.
+ */
+export async function purgeExpiredDeliveries(batchSize = 5000): Promise<number> {
+  let deleted = 0;
+  for (const table of [webhookDeliveriesTable, linearWebhookDeliveriesTable]) {
+    for (;;) {
+      const result = await db.execute(
+        sql`DELETE FROM ${table} WHERE ${table.id} IN (SELECT ${table.id} FROM ${table} WHERE ${table.expiresAt} < now() LIMIT ${batchSize})`,
+      );
+      const count = result.rowCount ?? 0;
+      deleted += count;
+      if (count < batchSize) break;
+    }
+  }
+  return deleted;
 }

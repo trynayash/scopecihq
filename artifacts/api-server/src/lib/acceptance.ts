@@ -22,14 +22,27 @@ export interface Acceptance {
 
 export const itemKey = (item: string) => item.trim().toLowerCase();
 
-/** The standing acceptance for each pull request that has one. */
-export async function acceptancesFor(pullRequestIds: string[]): Promise<Map<string, Acceptance>> {
+/** The project a decision was made in. Recorded with each acceptance and withdrawal. */
+export interface AcceptanceScope {
+  organizationId: string;
+  projectId: string;
+}
+
+/**
+ * The standing acceptance for each pull request that has one, in this
+ * project. A decision made in another project or workspace never applies
+ * here, even on the same pull request. Events recorded before decisions
+ * named their project carry none: they count in the workspace they were
+ * made in, which is as much as anyone can tell of where they belong.
+ */
+export async function acceptancesFor(pullRequestIds: string[], scope: AcceptanceScope): Promise<Map<string, Acceptance>> {
   if (pullRequestIds.length === 0) return new Map();
   const events = await db
     .select()
     .from(commercialEventsTable)
     .where(
       and(
+        eq(commercialEventsTable.organizationId, scope.organizationId),
         eq(commercialEventsTable.entityType, "PULL_REQUEST"),
         inArray(commercialEventsTable.entityId, pullRequestIds),
         inArray(commercialEventsTable.eventType, [ACCEPTED, WITHDRAWN]),
@@ -39,10 +52,11 @@ export async function acceptancesFor(pullRequestIds: string[]): Promise<Map<stri
   const found = new Map<string, Acceptance>();
   const seen = new Set<string>();
   for (const event of events) {
+    const meta = (event.metadataJson ?? {}) as { reason?: string; items?: string[]; projectId?: string };
+    if (meta.projectId !== undefined && meta.projectId !== scope.projectId) continue;
     if (seen.has(event.entityId)) continue;
     seen.add(event.entityId);
     if (event.eventType !== ACCEPTED) continue;
-    const meta = (event.metadataJson ?? {}) as { reason?: string; items?: string[] };
     found.set(event.entityId, {
       reason: meta.reason ?? "",
       items: meta.items ?? [],
@@ -53,8 +67,8 @@ export async function acceptancesFor(pullRequestIds: string[]): Promise<Map<stri
   return found;
 }
 
-export async function acceptanceFor(pullRequestId: string): Promise<Acceptance | null> {
-  return (await acceptancesFor([pullRequestId])).get(pullRequestId) ?? null;
+export async function acceptanceFor(pullRequestId: string, scope: AcceptanceScope): Promise<Acceptance | null> {
+  return (await acceptancesFor([pullRequestId], scope)).get(pullRequestId) ?? null;
 }
 
 /** Whether an acceptance covers every excluded item a result flags. */

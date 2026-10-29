@@ -12,7 +12,7 @@ export interface DemoScopeInput {
   title: string;
   /**
      * @minItems 1
-     * @maxItems 60
+     * @maxItems 200
      */
   clauses: DemoScopeClause[];
 }

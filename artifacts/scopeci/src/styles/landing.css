@@ -356,7 +356,10 @@
   pointer-events: none;
   transition: opacity var(--slow) var(--ease), color var(--fast) var(--ease), background-color var(--fast) var(--ease);
 }
-.stage-replay.is-shown { opacity: 1; pointer-events: auto; }
+/* Shown while it has keyboard focus too: tabbing onto it before the run
+   ends, or pressing it to replay, mustn't leave focus on something invisible. */
+.stage-replay.is-shown,
+.stage-replay:focus-visible { opacity: 1; pointer-events: auto; }
 .stage-replay:hover { color: var(--fg); background: var(--bg-hover); }
 
 /* ==================================================================

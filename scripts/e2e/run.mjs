@@ -113,7 +113,7 @@ const failed = results.filter((r) => !r.ok).length;
 console.log(`\n${results.length - failed} passed, ${failed} failed. Screenshots: ${OUT}`);
 if (failed) {
   code = 1;
-  const errors = (server?.log ?? []).join("").split("\n").filter((l) => /"level":(50|60)/.test(l));
-  if (errors.length) console.log(`\nServer errors:\n${errors.slice(0, 10).join("\n")}`);
+  const errors = (server?.log ?? []).join("").split("\n").filter((l) => /"level":(40|50|60)/.test(l));
+  if (errors.length) console.log(`\nServer warnings and errors:\n${errors.slice(0, 20).join("\n")}`);
 }
 process.exit(code);

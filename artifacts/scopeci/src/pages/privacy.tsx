@@ -3,51 +3,100 @@ import { ArrowLeftIcon, Icon } from '../icons';
 
 const PRIVACY_TITLE = 'Privacy Policy — ScopeCI';
 const PRIVACY_DESCRIPTION =
-  'What ScopeCI collects through its early-access waitlist, why, and how to have it removed.';
+  'What ScopeCI stores when you join the waitlist, sign in with GitHub or connect a repository, why, and how to have it removed.';
 
 /**
- * Describes only what the site actually does today: one waitlist form, no
- * accounts, no analytics. Nothing here asserts a company entity, address or
- * jurisdiction, because none is established yet.
+ * Describes what the site and app actually store. Check it against the
+ * tables in lib/db/src/schema and the routes that write them whenever either
+ * changes. Nothing here asserts a company entity, address or jurisdiction,
+ * because none is established yet, and no contact address is given because
+ * none is published yet.
  */
 const PRIVACY_SECTIONS: ReadonlyArray<{ id: string; heading: string; body: readonly string[] }> = [
   {
     id: 'collect',
     heading: 'What we collect',
     body: [
-      'When you submit the early-access form we store the work email address you enter, the agency or company name if you choose to add one, and the date the request was made.',
-      'If you arrive through a campaign link, the URL may contain standard marketing parameters such as utm_source and utm_campaign. We store these alongside your signup so we can understand which channels bring us the most relevant users.',
-      'That is the only information you give us. There is no account to create and no product to sign into yet, and no client, contract, issue-tracker or repository data is collected through this site.',
+      'What ScopeCI stores depends on how you use it: joining the early-access list, signing in to the app with GitHub, or connecting a repository to a project. The sections below list each in turn.',
+      'The demo at /try saves nothing you paste into it: it reads your statement of work and pull request in memory and does not write them anywhere. A public pull request it looks up from a link is held in server memory for up to ten minutes, so repeat lookups don\'t use up GitHub\'s rate limit, and is then dropped.',
+    ],
+  },
+  {
+    id: 'waitlist',
+    heading: 'Early-access requests',
+    body: [
+      'When you submit the early-access form we store the work email address you enter, the agency or company name if you add one, and the date.',
+      'If you arrived through a campaign link, we also store its marketing tags (utm_source, utm_medium, utm_campaign, utm_content and utm_term), and the address of the page that linked you to this site, without its query string. We use these to see which channels bring us relevant agencies.',
+    ],
+  },
+  {
+    id: 'account',
+    heading: 'Your account',
+    body: [
+      'Signing in with GitHub creates a ScopeCI account. From GitHub we store your user ID, username, display name, the public email address on your profile if it shows one, the address of your profile picture, and when you last signed in.',
+      'We also store the access and refresh tokens GitHub issues when you sign in, encrypted before they reach the database. ScopeCI uses them only to ask GitHub which repositories you can connect.',
+      'Each browser you sign in on gets a session. The database keeps a hash of its token (never the token itself), which workspace it has open and when it was last used. Signing out deletes it.',
+    ],
+  },
+  {
+    id: 'workspace',
+    heading: 'Workspaces and projects',
+    body: [
+      'What you add to a workspace is stored so the app can show it to you and your team: the workspace name, its members and their roles, and open invite links, kept as a hash of the link.',
+      'For each project we store its name, the client name, your hourly rate and currency, and the policy you chose. When you paste a statement of work, ScopeCI reads it in memory and keeps only the scope checklist you confirm: its section titles and the included and excluded items, along with each earlier version you saved.',
+      'If a workspace is connected to Linear, we also store the Linear workspace name, its access tokens (encrypted), and the issues ScopeCI reads: their identifier, title, description, status and estimate.',
+    ],
+  },
+  {
+    id: 'pull-requests',
+    heading: 'Repositories and pull requests',
+    body: [
+      'When you connect a repository we store its name and the GitHub App installation it belongs to. For each pull request ScopeCI checks, we store its number, title, description, branch names, link and state, the GitHub username of its author, the commit that was checked, and the names of the changed files with how many lines each added and removed. ScopeCI never uses or stores the code itself or the diff; it reads only file names and line counts.',
+      'With each check we store the result, its reason and any estimate. For change orders we store the items they cover, the hours, the subject and text of the letter, and whether it was sent, approved or declined. We also keep a log of who did what (who approved a change order, for example), and a short record of each notification GitHub sends us about a pull request, including the GitHub username that triggered it.',
+      'Pull requests can be opened by people who never use ScopeCI. About them we keep only what is listed above: their GitHub username, alongside their pull request.',
+      'ScopeCI posts its result on each pull request as a check and a comment, which anyone who can see the repository on GitHub can read.',
     ],
   },
   {
     id: 'analytics',
     heading: 'First-party analytics',
     body: [
-      'This site records a small number of first-party analytics events — page views, scroll depth, and form interactions — to understand how visitors use the site. These events are sent to our own server, not to a third-party analytics service.',
-      'No cookies are set for analytics. No personal information is included in the events.',
+      'This site records a small number of first-party events, such as page views, scroll depth, steps in the demo and form interactions, to understand how visitors use it. They are sent to our own server, not to a third-party analytics service.',
+      'Each event stores its name, the path of the page on this site, the campaign tags of the link you followed, and the address of the page that linked you here, without its query string. It stores no IP address, cookie or account. Events are deleted after 90 days.',
+    ],
+  },
+  {
+    id: 'cookies',
+    heading: 'Cookies and browser storage',
+    body: [
+      'ScopeCI sets only the cookies the app needs to work. scopeci_session keeps you signed in for up to 30 days. scopeci_oauth lasts ten minutes while you sign in with GitHub, so ScopeCI can check that GitHub\'s reply belongs to the sign-in you started. Scripts on the page can\'t read either one.',
+      'Your browser also keeps your light or dark theme choice, and during sign-in, which app page to return to. No advertising or tracking cookies are set.',
     ],
   },
   {
     id: 'technical',
     heading: 'Technical information',
     body: [
-      'As with any website, requests to ScopeCI are handled by our hosting and database providers, whose logs record standard technical details such as IP address, browser type and the pages requested. These logs exist to run, debug and secure the service.',
-      'This site sets no advertising or tracking cookies.',
+      'As with any website, requests to ScopeCI pass through our hosting and database providers, whose logs record standard technical details such as IP address, browser type and the pages requested. These logs exist to run, debug and secure the service.',
+      'ScopeCI\'s own server logs record each request\'s method, path and result, without query strings or cookies. To limit abuse, the server counts recent requests from each IP address in memory; those counts are never written to the database.',
     ],
   },
   {
     id: 'use',
     heading: 'How we use it',
     body: [
-      'Your email address is used to contact you about ScopeCI early access and occasional product updates — nothing else. We do not sell or rent early-access details, and we do not share them with third parties for their own marketing.',
+      'Early-access email addresses are used to contact you about ScopeCI early access and occasional product updates.',
+      'Account, workspace and repository data is used only to run ScopeCI for you: to sign you in, show a workspace to its members, check pull requests against the scope you confirmed, and draft the change orders you ask for.',
+      'We do not sell or rent any of it, we do not use it for advertising, and we do not share it with third parties for their own marketing.',
     ],
   },
   {
     id: 'processors',
     heading: 'Who else processes it',
     body: [
-      'Waitlist entries are held in a hosted database, and the site is served by our hosting provider. Both process this information on our behalf so that the service can run.',
+      'The site and app are served by our hosting provider, and the data above is held in a hosted database. Both process it on our behalf so that the service can run.',
+      'GitHub handles sign-in. Through the ScopeCI GitHub App it sends us notifications about pull requests in connected repositories and receives the checks and comments ScopeCI posts. Profile pictures in the app load straight from GitHub. GitHub\'s own privacy terms cover what you do there.',
+      'If a workspace is connected to Linear, ScopeCI reads issues from Linear.',
       'The site loads its typefaces from Google Fonts, so your browser requests those files from Google when a page loads.',
     ],
   },
@@ -55,28 +104,32 @@ const PRIVACY_SECTIONS: ReadonlyArray<{ id: string; heading: string; body: reado
     id: 'retention',
     heading: 'How long we keep it',
     body: [
-      'We keep early-access requests until early access closes or you ask us to remove yours, whichever happens first.',
+      'Early-access requests: until early access closes or you ask us to remove yours, whichever happens first.',
+      'Analytics events: 90 days. Sessions: 30 days at most, and signing out ends one at once.',
+      'Account, workspace and repository data: for as long as the account or workspace exists, until you ask us to delete it. Archiving a project stops its checks and hides it but keeps its data, so it can be restored. Disconnecting a repository stops new checks and keeps past results.',
     ],
   },
   {
     id: 'choices',
     heading: 'Your choices',
     body: [
-      'You can ask us to remove your details from the early-access list at any time and we will delete the record. Depending on where you live, you may also have rights to access or correct the information we hold about you.',
+      'You can sign out at any time. A workspace owner can remove members and cancel invites, and members can leave a workspace. Disconnecting a repository, or uninstalling the ScopeCI GitHub App on GitHub, stops ScopeCI from reading its pull requests.',
+      'You can ask us to remove your early-access request, or to delete your account or a workspace you own with everything in it, and we will. Depending on where you live, you may also have rights to access or correct the information we hold about you.',
     ],
   },
   {
     id: 'contact',
     heading: 'Contact',
     body: [
-      'We do not publish a dedicated privacy address yet. Until we do, reply to any email you receive from us about ScopeCI early access and we will handle access or removal requests from there.',
+      'We do not publish a dedicated privacy address yet. To make a request, reply to any email you have had from us about ScopeCI. If we have never written to you, leave your work email through the early-access form on the home page and we will write to you so you can make it there.',
+      'If you are a member of a workspace someone else set up, its owner can also remove you from it straight away.',
     ],
   },
   {
     id: 'changes',
     heading: 'Changes to this policy',
     body: [
-      'If this policy changes we will update the date at the top of this page. ScopeCI is still being built, so we expect to expand this policy as the product itself launches.',
+      'If this policy changes we will update the date at the top of this page. ScopeCI is in early access, and this policy will grow with the product.',
     ],
   },
 ];
@@ -98,11 +151,11 @@ export default function Privacy() {
                 Legal
               </p>
               <h1 className="legal-title display" id="privacy-title">Privacy Policy</h1>
-              <p className="legal-meta mono">Last updated 10 September 2026 · Early access</p>
+              <p className="legal-meta mono">Last updated 29 October 2026 · Early access</p>
               <p className="legal-lede">
-                ScopeCI is not generally available yet. Today this site does two things: it describes the product, and
-                it collects early-access requests. This policy covers what that form collects, and what is processed
-                to keep the site running.
+                ScopeCI checks agency pull requests against the client's statement of work. This site describes the
+                product, runs a free demo, takes early-access requests, and runs the ScopeCI app for anyone who signs in
+                with GitHub. This policy says what each of those stores, why, and how to have it removed.
               </p>
             </header>
 

@@ -1,8 +1,32 @@
+import crypto from "node:crypto";
 import type { changeOrdersTable } from "@workspace/db/schema";
 import type { ChangeOrderItem } from "@workspace/commercial-engine";
 import { itemKey } from "./acceptance.js";
 
 type ChangeOrderRow = typeof changeOrdersTable.$inferSelect;
+
+/**
+ * Identifies a letter ScopeCI wrote. Stored with the change order whenever
+ * ScopeCI writes its letter; a stored letter that no longer matches was
+ * edited by the PM and is theirs, never redrawn.
+ */
+export const letterHash = (subject: string, body: string) =>
+  crypto.createHash("sha256").update(`${subject}\n\n${body}`).digest("hex");
+
+/**
+ * Whether a change order's letter is still the one ScopeCI wrote, so it may
+ * be redrawn. Change orders drafted before the hash was kept have none:
+ * theirs is compared with `drafted()`, the letter ScopeCI would write for
+ * them today, which reads a renamed pull request as an edit.
+ */
+export function letterUntouched(row: ChangeOrderRow, drafted: () => { subject: string; body: string }): boolean {
+  if (row.messageSubject === null && row.messageBody === null) return true;
+  const subject = row.messageSubject ?? "";
+  const body = row.messageBody ?? "";
+  if (row.letterHash) return letterHash(subject, body) === row.letterHash;
+  const before = drafted();
+  return subject === before.subject && body === before.body;
+}
 
 export const isDecided = (status: string) => status === "APPROVED" || status === "REJECTED";
 

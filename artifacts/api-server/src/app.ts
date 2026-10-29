@@ -8,6 +8,7 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 
 import { securityHeaders } from "./middlewares/security-headers";
+import { databaseUnavailable } from "./lib/database-errors";
 
 const app: Express = express();
 
@@ -151,32 +152,6 @@ if (fs.existsSync(publicDir)) {
   logger.warn({ publicDir }, "Frontend build not found; serving API only.");
 }
 
-/** Postgres and network codes that mean the database is unreachable or busy, not that the query was wrong. */
-const DATABASE_UNAVAILABLE = new Set([
-  "ECONNREFUSED",
-  "ECONNRESET",
-  "ENOTFOUND",
-  "ETIMEDOUT",
-  "EAI_AGAIN",
-  "57P01", // admin shutdown
-  "57P02", // crash shutdown
-  "57P03", // cannot connect now
-  "53300", // too many connections
-  "08000",
-  "08001",
-  "08003",
-  "08004",
-  "08006",
-]);
-
-function databaseUnavailable(err: any): boolean {
-  for (let e = err, depth = 0; e && depth < 4; e = e.cause, depth++) {
-    if (DATABASE_UNAVAILABLE.has(e.code)) return true;
-    if (typeof e.message === "string" && /Connection terminated|timeout exceeded when trying to connect/i.test(e.message)) return true;
-  }
-  return false;
-}
-
 /**
  * Last-resort error handler. Without it, a malformed JSON body or a rejected
  * CORS origin reaches Express's default handler, which answers 500 with an
@@ -218,6 +193,27 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
     (req.log ?? logger).error({ err }, "Database unavailable");
     res.setHeader("Retry-After", "30");
     res.status(503).json({ error: "ScopeCI can't reach its database right now. Try again in a minute." });
+    return;
+  }
+  // Express couldn't decode a path parameter: a mangled link such as /api/invites/abc%zz.
+  if (err instanceof URIError) {
+    (req.log ?? logger).warn({ err }, "Malformed request path");
+    res.status(400).json({ error: "That link isn't valid. Check it and try again." });
+    return;
+  }
+  // The client's own mistake, as Express and body-parser report it: an unsupported
+  // charset or encoding (415), an aborted or short body (400). Only errors marked
+  // `expose`, so a status some library put on its own error is never passed on.
+  const status = err?.status ?? err?.statusCode;
+  if (err?.expose === true && Number.isInteger(status) && status >= 400 && status < 500) {
+    (req.log ?? logger).warn({ err }, "Rejected request");
+    const message =
+      status === 415
+        ? "Send the request as JSON in UTF-8."
+        : status === 404
+          ? "Not found."
+          : "The request couldn't be read. Check it and try again.";
+    res.status(status).json({ error: message });
     return;
   }
   (req.log ?? logger).error({ err }, "Unhandled request error");

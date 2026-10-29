@@ -6,6 +6,7 @@ import { GitHubAppClient } from "../github/app-client.js";
 import { gitHubAppSettings } from "../github/app-settings.js";
 import { MockIssueProvider, NoIssueProvider } from "../github/issue-provider.js";
 import { logger } from "../lib/logger.js";
+import { runInBackground } from "../lib/background.js";
 
 const router: IRouter = Router();
 
@@ -96,14 +97,15 @@ router.post("/webhooks/github", async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    // Genuinely asynchronous processing: dispatch in background, respond 202 Accepted
-    setImmediate(() => {
-      service
-        .processPullRequestEvent(deliveryId, req.body)
+    // Genuinely asynchronous processing: dispatch in background, respond 202
+    // Accepted. Tracked from now, so a shutdown waits for it to finish.
+    runInBackground(
+      new Promise<void>((resolve) => setImmediate(resolve))
+        .then(() => service.processPullRequestEvent(deliveryId, req.body))
         .catch((err) => {
           logger.error({ deliveryId, err: err.message }, "Background webhook processing failed");
-        });
-    });
+        }),
+    );
 
     res.status(202).json({
       status: "accepted",

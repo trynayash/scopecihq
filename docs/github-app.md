@@ -5,7 +5,7 @@ ScopeCI uses one GitHub App for two things:
 - **Sign in with GitHub.** The App's OAuth credentials identify the person and let ScopeCI ask GitHub which of the App's installations and repositories they can see. That is how a repository is linked to a project without trusting anything the browser sends.
 - **Checking pull requests.** When a pull request on a connected repository is opened, reopened, marked ready for review, gets new commits, or has its title, description or base branch changed, ScopeCI reads its title, branch, description and the names of its changed files (never their contents), checks them against the project's confirmed scope, and posts a check run (`scopeci / commercial`) and one comment, which it updates on every push. Labels, assignees and review requests don't start a check. Events for the same pull request are handled one at a time.
 - **Re-checking.** The project page's *Re-check open pull requests* checks the repository's open pull requests (newest 30) against the current scope. It also runs by itself after the scope is saved, the repository is connected, the policy changes or a change order is approved, so pull requests opened before setup get a result.
-- **When something fails.** GitHub rate limits and server errors on reads are retried with backoff. If a check still can't finish, the commit gets a neutral "ScopeCI couldn't check this commit" check run, which never blocks a merge. GitHub lists at most 3,000 files per pull request; when a pull request changes more, the check says the rest weren't read.
+- **When something fails.** GitHub rate limits and server errors on reads are retried with backoff. If a check still can't finish before its verdict is posted, the commit gets a neutral "ScopeCI couldn't check this commit" check run, which never blocks a merge; the next successful check of that commit edits the same run. A failure after the verdict is posted (the comment, say) leaves the verdict showing. GitHub lists at most 3,000 files per pull request; when a pull request changes more, the check says the rest weren't read.
 
 The real client lives in `artifacts/api-server/src/github/app-client.ts`. Without an App the server falls back to an in-memory client, which is what the test suites use; production answers webhooks with `503` in that state.
 
@@ -18,7 +18,7 @@ The server needs `ADMIN_SECRET`, `GITHUB_TOKEN_ENCRYPTION_KEY` (`openssl rand -h
 3. GitHub shows the App with every setting below already filled in. Confirm it. GitHub sends you back to the admin page, and the server stores the App's ID, client secret, private key and webhook secret, encrypted, in the database.
 4. Choose **Install on a repository**.
 
-Sign-in and pull request checks work from that moment; there is nothing to copy into environment variables and no restart. **Forget this App** on the same page removes the stored credentials (the App stays on GitHub until you delete it there).
+Sign-in and pull request checks work from that moment; there is nothing to copy into environment variables and no restart. **Forget this App** on the same page removes the stored credentials (the App stays on GitHub until you delete it there). Forgetting can't be undone from the page. Installations and linked repositories belong to that App, so a newly created App only works for a customer after they install it and connect each repository again. To keep the App, set its keys in environment variables instead (section 2).
 
 Variables set in the environment (section 2) take precedence over the stored App, field by field. While `GITHUB_APP_ID` is set, the admin page shows that App and won't create another.
 
@@ -73,7 +73,9 @@ Only needed for an App registered by hand.
 
 `GITHUB_API_URL` and `GITHUB_WEB_URL` default to `https://api.github.com` and `https://github.com`; set them for GitHub Enterprise Server.
 
-There is no database step: on every start the server creates any missing tables, columns, constraints and indexes, and never drops or changes anything (`lib/db/src/ensure-schema.ts`; run it alone with `pnpm run db:ensure`). It also keeps row level security on for every ScopeCI table, so Supabase's public API can't read them. Set `SCOPECI_SCHEMA_SYNC=off` to turn this off.
+There is no database step: on every start the server creates any missing tables, columns, constraints and indexes (`lib/db/src/ensure-schema.ts`; run it alone with `pnpm run db:ensure`). It changes nothing else, apart from a few retired indexes it names; one of those, which the instance being replaced still needs, is dropped four minutes after the new one starts listening. Before rolling back past 29 October 2026, delete the extra per-project `pull_requests` rows and open change orders, or the older code's schema update and pull request upserts fail. It also keeps row level security on for every ScopeCI table, so Supabase's public API can't read them. If the update fails (a dropped connection, or a table busy for more than 5 seconds on the instance being replaced), it is tried three times before the server starts listening, then again in the background, with growing waits, until it works. Set `SCOPECI_SCHEMA_SYNC=off` to turn this off; then run `pnpm run db:ensure` yourself on each release, and `pnpm run db:retire` once the previous release has stopped (it drops the indexes that release still needed).
+
+On SIGTERM (Render sends one on every deploy) the server stops taking requests and lets checks already under way finish, for up to 20 seconds, before it exits.
 
 ## 3. Check it works
 
@@ -82,7 +84,9 @@ There is no database step: on every start the server creates any missing tables,
 3. Under **Repository**, choose **Choose a repository**. If the list is empty, use **Install the GitHub App** and pick the repository; you come back to the project afterwards.
 4. Open a pull request on that repository. Within a few seconds it shows a `scopeci / commercial` check and a ScopeCI comment, and the project page lists the result. If the scope isn't saved yet, the check says so instead.
 
-The webhook delivery log on the App's settings page shows each delivery and ScopeCI's response (`202` when accepted). The server logs each pull request it processes, and the `webhook_deliveries` table records why a delivery was ignored (an unclaimed installation, a repository not connected to a project, no confirmed scope).
+The webhook delivery log on the App's settings page shows each delivery and ScopeCI's response (`202` when accepted). The server logs each pull request it processes, and the `webhook_deliveries` table records why a delivery was ignored (an unclaimed installation, a repository not connected to a project, no confirmed scope). Deliveries are kept for 30 days, then deleted.
+
+The repository picker lists up to 5,000 repositories per installation. An organization with more that installed the App on "All repositories" should limit it to selected repositories on GitHub; the server logs a warning when a list is cut short.
 
 ## How results are decided and reported
 
@@ -94,7 +98,8 @@ The webhook delivery log on the App's settings page shows each delivery and Scop
   - *Fail the check*: the check fails on excluded work. With branch protection requiring it, merging waits for approval.
 - **One check run per commit.** A new push gets a new check run on its head commit; a redelivered webhook for the same commit updates the existing run.
 - **One comment per pull request.** ScopeCI edits only its own bot comment, never a person's comment that happens to quote it.
-- **A commit it can't check is never left hanging.** If reading the pull request fails after retries (GitHub errors, a timeout), the check run ends neutral as "ScopeCI couldn't check this commit" and says to re-check. *Re-check open pull requests* on the project page, or the next push, checks it again.
-- **Missed webhooks are caught.** Every 10 minutes the server lists the open pull requests of each connected repository and checks any head commit it has no result for (at most three tries per commit). `SCOPECI_SWEEP_MS` changes the interval; `0` turns it off.
+- **A commit it can't check is never left hanging.** If reading the pull request fails after retries (GitHub errors, a timeout), the check run ends neutral as "ScopeCI couldn't check this commit" and says to re-check. The sweep below, *Re-check open pull requests* on the project page, or the next push checks it again, and the verdict replaces that run.
+- **Missed webhooks are caught.** Every 10 minutes the server lists the open pull requests of each connected repository and checks any head commit whose verdict isn't on GitHub yet: no webhook arrived, the check failed, or its check run never got posted (at most three tries per commit). `SCOPECI_SWEEP_MS` changes the interval; `0` turns it off.
+- **Renamed repositories.** A project follows its repository through a rename or a transfer on GitHub (it is matched by the repository's id), and re-checks keep working for pull requests checked under the old name.
 - **Accepting without a change order.** On the project page, *Accept without a change order…* records who accepted the flagged work and why. The check then reads "Accepted without a change order by @login: reason" and stops asking for action; later pushes stay accepted unless they add excluded work the acceptance didn't cover, which can then be accepted too. *Withdraw* puts the check back. If GitHub doesn't answer at that moment, the decision is still recorded and the app says the check needs a re-check.
 - **Change orders follow the work.** A pull request has at most one open change order. Once it is approved or declined, new excluded work pushed to the pull request gets a new change order (CO-2) for just the new items; work a decided change order already listed, approved or declined, is never raised again.

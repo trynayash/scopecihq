@@ -62,6 +62,7 @@ export * from './trackedChangeOrder';
 export * from './trackedChangeOrderStatus';
 export * from './waitlistSignup';
 export * from './waitlistSignupInput';
+export * from './withdrawPullRequestAcceptanceParams';
 export * from './workspaceInfo';
 export * from './workspaceInfoRole';
 export * from './workspaceInvite';

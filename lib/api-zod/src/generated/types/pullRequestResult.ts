@@ -44,5 +44,7 @@ export interface PullRequestResult {
   acceptance: Acceptance | null;
   /** An earlier change order on this pull request that the client already decided, when a later push added excluded work it doesn't cover. That new work is the current draft; this one is for reference. */
   previousChangeOrder: TrackedChangeOrder | null;
+  /** The excluded work a new change order would list: what no decided change order on this pull request lists. Empty when trackedChangeOrder is set (its items are the list). */
+  newItems: string[];
   checkedAt: Date;
 }

@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { db, waitlistSignupsTable } from "@workspace/db";
 import { CreateWaitlistSignupBody, CreateWaitlistSignupResponse } from "@workspace/api-zod";
 import { rateLimiter } from "../middlewares/rate-limit.js";
+import { clipTag, referringPage } from "./events.js";
 
 const router: IRouter = Router();
 
@@ -47,7 +48,8 @@ router.post("/waitlist", waitlistRateLimiter, async (req, res): Promise<void> =>
   }
 
   // Attribution is captured by the site from the landing URL. It is never
-  // allowed to fail a signup, so over-long values are truncated, not refused.
+  // allowed to fail a signup, so over-long values are truncated, not refused,
+  // and the referrer keeps only the linking page, not its query string.
   const {
     utmSource, utmMedium, utmCampaign, utmContent, utmTerm, referrer,
   } = parsed.data;
@@ -58,12 +60,12 @@ router.post("/waitlist", waitlistRateLimiter, async (req, res): Promise<void> =>
       .values({
         email: parsed.data.email.trim().toLowerCase(),
         agency: parsed.data.agency?.trim() || null,
-        utmSource: utmSource?.slice(0, 100) || null,
-        utmMedium: utmMedium?.slice(0, 100) || null,
-        utmCampaign: utmCampaign?.slice(0, 200) || null,
-        utmContent: utmContent?.slice(0, 200) || null,
-        utmTerm: utmTerm?.slice(0, 200) || null,
-        referrer: referrer?.slice(0, 2000) || null,
+        utmSource: clipTag(utmSource),
+        utmMedium: clipTag(utmMedium),
+        utmCampaign: clipTag(utmCampaign),
+        utmContent: clipTag(utmContent),
+        utmTerm: clipTag(utmTerm),
+        referrer: referringPage(referrer),
       })
       .returning();
 

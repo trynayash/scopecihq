@@ -81,7 +81,7 @@ export interface DemoScopeInput {
   title: string;
   /**
      * @minItems 1
-     * @maxItems 60
+     * @maxItems 200
      */
   clauses: DemoScopeClause[];
 }
@@ -134,6 +134,11 @@ export interface DemoPullRequest {
      * @maxItems 300
      */
   files: DemoChangedFile[];
+  /**
+     * How many files GitHub says the pull request changes, when loaded from GitHub; more than files.length when the demo read only the first 300.
+     * @nullable
+     */
+  totalFiles?: number | null;
 }
 
 export interface DemoIssue {
@@ -393,6 +398,11 @@ export interface AcceptanceInput {
      * @maxLength 500
      */
   reason: string;
+  /**
+     * The result the PM accepted (PullRequestResult.evaluationId). Names the exact pull request when a project's results hold two with the same number (it moved to another repository); 409 if it isn't that pull request's latest result.
+     * @maxLength 36
+     */
+  evaluationId?: string;
 }
 
 export interface RecheckStarted {
@@ -507,6 +517,8 @@ export interface PullRequestResult {
   acceptance: Acceptance | null;
   /** An earlier change order on this pull request that the client already decided, when a later push added excluded work it doesn't cover. That new work is the current draft; this one is for reference. */
   previousChangeOrder: TrackedChangeOrder | null;
+  /** The excluded work a new change order would list: what no decided change order on this pull request lists. Empty when trackedChangeOrder is set (its items are the list). */
+  newItems: string[];
   checkedAt: string;
 }
 
@@ -528,6 +540,8 @@ export interface GitHubRepositoryList {
   /** @nullable */
   installUrl: string | null;
   repositories: GitHubRepository[];
+  /** GitHub accounts whose installation has more repositories than ScopeCI lists (5,000); their list is cut short. */
+  truncatedAccounts?: string[];
 }
 
 export type ChangeOrderUpdateInputStatus = typeof ChangeOrderUpdateInputStatus[keyof typeof ChangeOrderUpdateInputStatus];
@@ -553,6 +567,12 @@ export interface ChangeOrderUpdateInput {
   subject?: string;
   /** @maxLength 10000 */
   body?: string;
+  /**
+     * The change order's items as the PM saw them. With status SENT or APPROVED, if the change order now lists different items (a push added work since the page loaded) the answer is 409, so nothing is sent or approved that the PM hasn't seen.
+     * @maxItems 200
+     * @items.maxLength 300
+     */
+  items?: string[];
 }
 
 export interface SwitchWorkspaceInput {
@@ -644,5 +664,13 @@ export type GetDemoGithubPrParams = {
  * @maxLength 300
  */
 url: string;
+};
+
+export type WithdrawPullRequestAcceptanceParams = {
+/**
+ * The result shown (PullRequestResult.evaluationId), naming the exact pull request as for accepting.
+ * @maxLength 36
+ */
+evaluationId?: string;
 };
 

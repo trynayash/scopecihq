@@ -829,6 +829,171 @@ async function run() {
       assert.strictEqual(again.checked, 0, "nothing left to check");
     });
 
+    // GitHub failing part-way through a check, and a repository renamed on
+    // GitHub. Faults are injected on the way to the fake GitHub.
+    {
+      const { githubCheckRunsTable, pullRequestsTable, linearWebhookDeliveriesTable } = await import("@workspace/db/schema");
+      const { purgeExpiredDeliveries } = await import("../github/webhook-service.js");
+      let fault: ((method: string, path: string, body: any) => Response | undefined) | null = null;
+      setGitHubFetch(async (url, init) => {
+        const body = init.body ? JSON.parse(String(init.body)) : undefined;
+        return fault?.((init.method ?? "GET").toUpperCase(), url.replace(API, ""), body) ?? fakeGitHub(url, init);
+      });
+      const openBefore = [...(fake.open["harbor-agency/storefront"] ?? [])];
+      const runsOn = (sha: string) => fake.checkRuns.filter((r) => r.body.head_sha === sha);
+      const recordedOn = (sha: string) => db.select().from(githubCheckRunsTable).where(eq(githubCheckRunsTable.headSha, sha));
+      const projectPr = async (number: number) =>
+        (await db.query.pullRequestsTable.findFirst({
+          where: and(eq(pullRequestsTable.projectId, projectId), eq(pullRequestsTable.number, number)),
+        }))!;
+      const openOnGitHub = (number: number, sha: string) =>
+        fake.open["harbor-agency/storefront"].push({ ...prPayload(storefront, number, sha).pull_request });
+      const giftCards = (file: string) => [[{ filename: file, status: "added", additions: 20, deletions: 0 }]];
+
+      await scenario("A comment GitHub refuses after the verdict leaves the verdict showing, not a 'couldn't check' run", async () => {
+        fake.files["harbor-agency/storefront#20"] = giftCards("src/giftcards/card-list.tsx");
+        const sha = "a1".repeat(20);
+        fault = (_method, path) =>
+          path.startsWith("/repos/harbor-agency/storefront/issues/20/comments") ? json({ message: "Server Error" }, 502) : undefined;
+        try {
+          const result: any = await deliver(prPayload(storefront, 20, sha));
+          assert.strictEqual(result.status, "error", JSON.stringify(result));
+        } finally {
+          fault = null;
+        }
+        const runs = runsOn(sha);
+        assert.strictEqual(runs.length, 1, "no second run over the verdict");
+        assert.strictEqual(runs[0].body.output.title, "ScopeCI: Change order needed");
+        const [row] = await recordedOn(sha);
+        assert.ok(row?.latestEvaluationId, "the verdict's run is recorded with its result");
+      });
+
+      await scenario("A commit that couldn't be checked gets one recorded run, which the sweep turns into the verdict", async () => {
+        fake.files["harbor-agency/storefront#21"] = giftCards("src/giftcards/balance.ts");
+        const sha = "b2".repeat(20);
+        fault = (_method, path) => (path.startsWith("/repos/harbor-agency/storefront/pulls/21/files") ? json({ message: "Server Error" }, 500) : undefined);
+        try {
+          const result: any = await deliver(prPayload(storefront, 21, sha));
+          assert.strictEqual(result.status, "error", JSON.stringify(result));
+        } finally {
+          fault = null;
+        }
+        let runs = runsOn(sha);
+        assert.strictEqual(runs.length, 1);
+        assert.strictEqual(runs[0].body.output.title, "ScopeCI couldn't check this commit");
+        assert.strictEqual(runs[0].body.conclusion, "neutral");
+        let [row] = await recordedOn(sha);
+        assert.strictEqual(row?.githubCheckRunId, String(runs[0].id), "the 'couldn't check' run is recorded");
+        assert.strictEqual(row?.latestEvaluationId, null, "with no result behind it");
+
+        openOnGitHub(20, "a1".repeat(20));
+        openOnGitHub(21, sha);
+        const swept = await service.sweepMissedPullRequests();
+        assert.strictEqual(swept.checked, 1, "only the commit without a verdict; #20's verdict is on GitHub");
+        runs = runsOn(sha);
+        assert.strictEqual(runs.length, 1, "the same run now shows the verdict");
+        assert.strictEqual(runs[0].body.output.title, "ScopeCI: Change order needed");
+        [row] = await recordedOn(sha);
+        assert.ok(row?.latestEvaluationId);
+      });
+
+      await scenario("The sweep checks again a commit whose result was saved but whose check run never reached GitHub", async () => {
+        fake.files["harbor-agency/storefront#22"] = giftCards("src/giftcards/gift-wrap.ts");
+        const sha = "c2".repeat(20);
+        // Creating any check run on this commit fails, the "couldn't check" one too.
+        fault = (method, path, body) =>
+          method === "POST" && path === "/repos/harbor-agency/storefront/check-runs" && body?.head_sha === sha
+            ? json({ message: "Server Error" }, 502)
+            : undefined;
+        try {
+          const result: any = await deliver(prPayload(storefront, 22, sha));
+          assert.strictEqual(result.status, "error", JSON.stringify(result));
+        } finally {
+          fault = null;
+        }
+        const saved = await db.query.commercialEvaluationsTable.findFirst({ where: eq(commercialEvaluationsTable.headSha, sha) });
+        assert.strictEqual(saved?.state, "CHANGE_REQUIRED", "the result was saved");
+        assert.strictEqual(runsOn(sha).length, 0, "GitHub has nothing for the commit");
+
+        openOnGitHub(22, sha);
+        assert.strictEqual((await service.sweepMissedPullRequests()).checked, 1);
+        const runs = runsOn(sha);
+        assert.strictEqual(runs.length, 1);
+        assert.strictEqual(runs[0].body.output.title, "ScopeCI: Change order needed");
+        assert.strictEqual((await service.sweepMissedPullRequests()).checked, 0, "and only once");
+      });
+
+      await scenario("A check run this App can no longer edit is replaced by a new one, which later checks edit", async () => {
+        const sha = "a1".repeat(20);
+        const [before] = await recordedOn(sha);
+        fault = (method, path) =>
+          method === "PATCH" && path === `/repos/harbor-agency/storefront/check-runs/${before.githubCheckRunId}` ? json({ message: "Not Found" }, 404) : undefined;
+        const pr20 = await projectPr(20);
+        try {
+          const result = await service.reevaluatePullRequest(pr20.id);
+          assert.strictEqual(result.status, "processed", JSON.stringify(result));
+        } finally {
+          fault = null;
+        }
+        let runs = runsOn(sha);
+        assert.strictEqual(runs.length, 2);
+        assert.strictEqual(runs[1].body.output.title, "ScopeCI: Change order needed");
+        const [after] = await recordedOn(sha);
+        assert.strictEqual(after.githubCheckRunId, String(runs[1].id), "the new run is the one recorded");
+        await service.reevaluatePullRequest(pr20.id);
+        runs = runsOn(sha);
+        assert.strictEqual(runs.length, 2, "the next check edits the new run");
+      });
+
+      await scenario("After the repository is renamed on GitHub, re-checks still reach its pull requests, old and new", async () => {
+        const renamed = { id: 7001, full_name: "harbor-agency/shopfront" };
+        fake.files["harbor-agency/shopfront#23"] = [[{ filename: "src/cart/coupon.ts", status: "added", additions: 12, deletions: 0 }]];
+        fake.files["harbor-agency/shopfront#20"] = fake.files["harbor-agency/storefront#20"];
+        const opened: any = await deliver(prPayload(renamed, 23, "c3".repeat(20)));
+        assert.strictEqual(opened.status, "processed", JSON.stringify(opened));
+        let project = await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) });
+        assert.strictEqual(project?.repositoryFullName, "harbor-agency/shopfront", "the project follows the new name");
+        assert.strictEqual((await projectPr(12)).url, "https://github.com/harbor-agency/shopfront/pull/12", "older links follow it too");
+
+        const pr23 = await projectPr(23);
+        assert.strictEqual((await service.reevaluatePullRequest(pr23.id)).status, "processed", "a pull request opened after the rename");
+        assert.strictEqual((await service.reevaluatePullRequest((await projectPr(20)).id)).status, "processed", "and one checked before it");
+
+        // And back, so the scenarios after these find the repository as they left it.
+        fake.files["harbor-agency/storefront#23"] = fake.files["harbor-agency/shopfront#23"];
+        const back: any = await deliver(prPayload(storefront, 23, "c4".repeat(20), "synchronize"));
+        assert.strictEqual(back.status, "processed", JSON.stringify(back));
+        project = await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) });
+        assert.strictEqual(project?.repositoryFullName, "harbor-agency/storefront");
+        assert.strictEqual((await projectPr(12)).url, "https://github.com/harbor-agency/storefront/pull/12");
+        assert.strictEqual((await projectPr(23)).url, "https://github.com/harbor-agency/storefront/pull/23");
+      });
+
+      await scenario("Webhook deliveries past their 30 days are deleted, a batch at a time", async () => {
+        const past = new Date(Date.now() - 24 * 3600_000);
+        const future = new Date(Date.now() + 24 * 3600_000);
+        const tag = crypto.randomUUID();
+        await db.insert(webhookDeliveriesTable).values([
+          ...[1, 2, 3].map((i) => ({ deliveryId: `old_${i}_${tag}`, eventType: "pull_request", status: "PROCESSED", expiresAt: past })),
+          { deliveryId: `new_${tag}`, eventType: "pull_request", status: "PROCESSED", expiresAt: future },
+        ]);
+        await db.insert(linearWebhookDeliveriesTable).values([
+          { deliveryId: `old_${tag}`, eventType: "Issue", status: "PROCESSED", expiresAt: past },
+          { deliveryId: `new_${tag}`, eventType: "Issue", status: "PROCESSED", expiresAt: future },
+        ]);
+        const deleted = await purgeExpiredDeliveries(2);
+        assert.ok(deleted >= 4, `deleted ${deleted}`);
+        const github = await db.select({ id: webhookDeliveriesTable.deliveryId }).from(webhookDeliveriesTable);
+        const linear = await db.select({ id: linearWebhookDeliveriesTable.deliveryId }).from(linearWebhookDeliveriesTable);
+        assert.ok(!github.some((d) => d.id.startsWith("old_")) && github.some((d) => d.id === `new_${tag}`));
+        assert.ok(!linear.some((d) => d.id.startsWith("old_")) && linear.some((d) => d.id === `new_${tag}`));
+        assert.ok(github.length > 1, "the product's own deliveries, still within 30 days, are kept");
+      });
+
+      fake.open["harbor-agency/storefront"] = openBefore;
+      setGitHubFetch(fakeGitHub);
+    }
+
     await scenario("A PM accepts a pull request that needs a decision; it stays accepted on a push; withdrawing it brings the flag back", async () => {
       const sha = "2".repeat(40);
       const empty = await call(server, `/api/projects/${projectId}/pull-requests/18/acceptance`, {
@@ -950,6 +1115,359 @@ async function run() {
         ["Wishlist"],
         "a later push doesn't add declined work to the draft",
       );
+    });
+
+    await scenario("A draft's letter follows new work even after a rename; a letter the PM edited is kept, also when hours are saved", async () => {
+      const giftCards = { filename: "src/giftcards/balance.ts", status: "added", additions: 30, deletions: 0 };
+      const wishlist = { filename: "src/wishlist/list.tsx", status: "added", additions: 30, deletions: 0 };
+      let title = "Checkout polish";
+      const push = async (sha: string, files: object[], action = "synchronize") => {
+        fake.files["harbor-agency/storefront#21"] = [files];
+        const payload = prPayload(storefront, 21, sha, action);
+        payload.pull_request.title = title;
+        const result: any = await deliver(payload);
+        assert.strictEqual(result.evaluationState, "CHANGE_REQUIRED", JSON.stringify(result));
+        const list = await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana });
+        return list.body.pullRequests.find((p: any) => p.number === 21);
+      };
+      const update = (body: object) => call(server, `/api/projects/${projectId}/change-order`, { method: "PUT", body, cookie: dana });
+
+      let pr21 = await push("a1".repeat(20), [giftCards], "opened");
+      const priced = await update({ evaluationId: pr21.evaluationId, hours: 4 });
+      assert.strictEqual(priced.status, 200, JSON.stringify(priced.body));
+      assert.deepStrictEqual(priced.body.items, ["Gift cards"]);
+      assert.ok(priced.body.body.includes("$600"), priced.body.body);
+
+      // Renamed, then a push adds the wishlist: the letter nobody edited is
+      // redrawn with both, at the same price. Before, the rename made it look
+      // edited, so it kept naming gift cards alone.
+      title = "Checkout polish, round two";
+      pr21 = await push("a2".repeat(20), [giftCards, wishlist]);
+      assert.deepStrictEqual([...pr21.trackedChangeOrder.items].sort(), ["Gift cards", "Wishlist"]);
+      assert.match(pr21.trackedChangeOrder.subject, /wishlist/);
+      assert.match(pr21.trackedChangeOrder.body, /^- Wishlist/m);
+      assert.ok(pr21.trackedChangeOrder.body.includes('"Checkout polish, round two"'), pr21.trackedChangeOrder.body);
+      assert.ok(pr21.trackedChangeOrder.body.includes("$600"), "the price stays");
+
+      // The PM writes their own letter, then saves hours: the letter stays theirs.
+      const own = { subject: "Gift cards and a wishlist", body: "Hi Harbor & Pine,\n\nAs agreed on Tuesday's call, here is the extra work." };
+      assert.strictEqual((await update({ evaluationId: pr21.evaluationId, ...own })).status, 200);
+      const hours = await update({ evaluationId: pr21.evaluationId, hours: 8 });
+      assert.strictEqual(hours.status, 200, JSON.stringify(hours.body));
+      assert.strictEqual(hours.body.subject, own.subject, "saving hours keeps the PM's letter");
+      assert.strictEqual(hours.body.body, own.body);
+      assert.strictEqual(hours.body.amount, 1200);
+
+      // A push changes the items; the edited letter still isn't redrawn.
+      pr21 = await push("a3".repeat(20), [giftCards]);
+      assert.deepStrictEqual(pr21.trackedChangeOrder.items, ["Gift cards"]);
+      assert.strictEqual(pr21.trackedChangeOrder.subject, own.subject);
+      assert.strictEqual(pr21.trackedChangeOrder.body, own.body);
+
+      // Nothing is sent with items the PM hasn't seen.
+      const removed = await update({ evaluationId: pr21.evaluationId, status: "SENT", items: ["Gift cards", "Wishlist"] });
+      assert.strictEqual(removed.status, 409, JSON.stringify(removed.body));
+      assert.match(removed.body.error, /now lists Gift cards\. Review the letter/);
+      pr21 = await push("a4".repeat(20), [giftCards, wishlist]);
+      const added = await update({ evaluationId: pr21.evaluationId, status: "SENT", items: ["Gift cards"] });
+      assert.strictEqual(added.status, 409, JSON.stringify(added.body));
+      assert.match(added.body.error, /now also lists Wishlist\. Review the letter/);
+      const [unsent] = await db.select().from(changeOrdersTable).where(eq(changeOrdersTable.id, priced.body.id));
+      assert.strictEqual(unsent.status, "DRAFT", "it wasn't sent");
+      const sent = await update({ evaluationId: pr21.evaluationId, status: "SENT", items: ["wishlist", "GIFT CARDS"] });
+      assert.strictEqual(sent.status, 200, JSON.stringify(sent.body));
+      assert.strictEqual(sent.body.status, "SENT");
+      assert.strictEqual(sent.body.subject, own.subject);
+    });
+
+    await scenario("A change order is raised only from the pull request's latest result", async () => {
+      const list = async () =>
+        (await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana })).body.pullRequests.find((p: any) => p.number === 19);
+      const before = await list();
+      assert.strictEqual(before.trackedChangeOrder, null);
+      fake.files["harbor-agency/storefront#19"] = [
+        [
+          { filename: "src/giftcards/apply.ts", status: "added", additions: 22, deletions: 0 },
+          { filename: "src/wishlist/list.tsx", status: "added", additions: 12, deletions: 0 },
+        ],
+      ];
+      const pushed = prPayload(storefront, 19, "b1".repeat(20), "synchronize");
+      pushed.pull_request.title = "Apply gift cards at checkout";
+      assert.strictEqual(((await deliver(pushed)) as any).evaluationState, "CHANGE_REQUIRED");
+
+      // The page still shows the result from before the push.
+      const price = (evaluationId: string) =>
+        call(server, `/api/projects/${projectId}/change-order`, { method: "PUT", body: { evaluationId, hours: 2 }, cookie: dana });
+      const stale = await price(before.evaluationId);
+      assert.strictEqual(stale.status, 409, JSON.stringify(stale.body));
+      assert.match(stale.body.error, /checked again since the page loaded\. Reload/);
+      const after = await list();
+      assert.strictEqual(after.trackedChangeOrder, null, "nothing was raised from the old result");
+      const raised = await price(after.evaluationId);
+      assert.strictEqual(raised.status, 200, JSON.stringify(raised.body));
+      assert.deepStrictEqual([...raised.body.items].sort(), ["Gift cards", "Wishlist"], "the new work is on it");
+      assert.strictEqual((await price(before.evaluationId)).status, 200, "an open change order stands whichever result the page showed");
+    });
+
+    const marketing = { id: 7002, full_name: "harbor-agency/marketing" };
+    const admin = { id: 7003, full_name: "harbor-agency/admin" };
+    let phaseOne = "";
+    await scenario("Two pull requests with one number in a project: accepting and withdrawing act on the one shown", async () => {
+      phaseOne = (
+        await call(server, "/api/projects", { body: { name: "Harbor admin, phase one", clientName: "Harbor & Pine", hourlyRate: 100 }, cookie: dana })
+      ).body.id;
+      assert.strictEqual((await call(server, `/api/projects/${phaseOne}/scope`, { method: "PUT", body: SCOPE, cookie: dana })).status, 200);
+      const link = (repositoryId: number) =>
+        call(server, `/api/projects/${phaseOne}/repository`, { method: "PUT", body: { installationId: 501, repositoryId }, cookie: dana });
+      assert.strictEqual((await link(marketing.id)).status, 200);
+      fake.files["harbor-agency/marketing#5"] = [[{ filename: "src/giftcards/redeem.ts", status: "added", additions: 20, deletions: 0 }]];
+      assert.strictEqual(((await deliver(prPayload(marketing, 5, "c1".repeat(20)))) as any).evaluationState, "CHANGE_REQUIRED");
+
+      // The project moves to another repository, whose #5 is flagged too.
+      assert.strictEqual((await call(server, `/api/projects/${phaseOne}/repository`, { method: "DELETE", cookie: dana })).status, 200);
+      fake.repos[501].push({ id: admin.id, full_name: admin.full_name, private: true });
+      assert.strictEqual((await link(admin.id)).status, 200);
+      fake.files["harbor-agency/admin#5"] = [[{ filename: "src/loyalty/points.ts", status: "added", additions: 30, deletions: 0 }]];
+      assert.strictEqual(((await deliver(prPayload(admin, 5, "c2".repeat(20)))) as any).evaluationState, "CHANGE_REQUIRED");
+
+      const byRepo = async (repo: string) =>
+        (await call(server, `/api/projects/${phaseOne}/pull-requests`, { cookie: dana })).body.pullRequests.find(
+          (p: any) => p.number === 5 && p.url.includes(`/${repo}/pull/`),
+        );
+      let fromMarketing = await byRepo(marketing.full_name);
+      let fromAdmin = await byRepo(admin.full_name);
+      assert.ok(fromMarketing && fromAdmin, "both are listed");
+
+      const accept = (number: number, evaluationId: string) =>
+        call(server, `/api/projects/${phaseOne}/pull-requests/${number}/acceptance`, {
+          method: "PUT",
+          body: { reason: "Absorbed as goodwill", evaluationId },
+          cookie: dana,
+        });
+      const accepted = await accept(5, fromMarketing.evaluationId);
+      assert.strictEqual(accepted.status, 200, JSON.stringify(accepted.body));
+      fromMarketing = await byRepo(marketing.full_name);
+      fromAdmin = await byRepo(admin.full_name);
+      assert.strictEqual(fromMarketing.acceptance?.acceptedBy, "dana", "the pull request shown is the one accepted");
+      assert.strictEqual(fromAdmin.acceptance, null, "not the connected repository's #5");
+      assert.strictEqual(fromAdmin.verdict, "CHANGE_REQUIRED");
+
+      const withdraw = (evaluationId: string) =>
+        call(server, `/api/projects/${phaseOne}/pull-requests/5/acceptance?evaluationId=${evaluationId}`, { method: "DELETE", cookie: dana });
+      assert.strictEqual((await withdraw(fromAdmin.evaluationId)).status, 404, "that one isn't accepted");
+      assert.strictEqual((await withdraw(fromMarketing.evaluationId)).status, 200);
+      assert.strictEqual((await byRepo(marketing.full_name)).acceptance, null);
+      assert.strictEqual((await withdraw("not-a-uuid")).status, 404);
+
+      // A result that isn't the latest is refused, as is one from another
+      // number or another project.
+      await deliver(prPayload(admin, 5, "c3".repeat(20), "synchronize"));
+      const outdated = await accept(5, fromAdmin.evaluationId);
+      assert.strictEqual(outdated.status, 409, JSON.stringify(outdated.body));
+      assert.match(outdated.body.error, /^The page is out of date/);
+      fromAdmin = await byRepo(admin.full_name);
+      assert.strictEqual((await accept(6, fromAdmin.evaluationId)).status, 404);
+      const elsewhere = (await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana })).body.pullRequests[0];
+      assert.strictEqual((await accept(elsewhere.number, elsewhere.evaluationId)).status, 404);
+      assert.strictEqual(fromAdmin.acceptance, null);
+    });
+
+    await scenario("A repository moved to another project starts afresh there; the old project keeps its change orders and acceptances", async () => {
+      const { pullRequestsTable, commercialEventsTable } = await import("@workspace/db/schema");
+      const { acceptancesFor } = await import("../lib/acceptance.js");
+      const adminFive = async (id: string) =>
+        (await call(server, `/api/projects/${id}/pull-requests`, { cookie: dana })).body.pullRequests.find(
+          (p: any) => p.number === 5 && p.url.includes(`/${admin.full_name}/pull/`),
+        );
+
+      // Phase one prices a change order for admin #5, then accepts it.
+      const ours = await adminFive(phaseOne);
+      const priced = await call(server, `/api/projects/${phaseOne}/change-order`, {
+        method: "PUT",
+        body: { evaluationId: ours.evaluationId, hours: 5 },
+        cookie: dana,
+      });
+      assert.strictEqual(priced.status, 200, JSON.stringify(priced.body));
+      const accepted = await call(server, `/api/projects/${phaseOne}/pull-requests/5/acceptance`, {
+        method: "PUT",
+        body: { reason: "Goodwill for phase one" },
+        cookie: dana,
+      });
+      assert.strictEqual(accepted.status, 200, JSON.stringify(accepted.body));
+      assert.strictEqual(accepted.body.checkUpdated, true);
+
+      // Phase one is archived and phase two takes the repository; its open
+      // pull requests are checked once the scope is confirmed.
+      fake.open["harbor-agency/admin"] = [prPayload(admin, 5, "c3".repeat(20)).pull_request];
+      assert.strictEqual((await call(server, `/api/projects/${phaseOne}`, { method: "DELETE", cookie: dana })).status, 204);
+      const phaseTwo = (
+        await call(server, "/api/projects", { body: { name: "Harbor admin, phase two", clientName: "Harbor & Pine", hourlyRate: 100 }, cookie: dana })
+      ).body.id;
+      const linked = await call(server, `/api/projects/${phaseTwo}/repository`, {
+        method: "PUT",
+        body: { installationId: 501, repositoryId: admin.id },
+        cookie: dana,
+      });
+      assert.strictEqual(linked.status, 200, JSON.stringify(linked.body));
+      assert.strictEqual((await call(server, `/api/projects/${phaseTwo}/scope`, { method: "PUT", body: SCOPE, cookie: dana })).status, 200);
+      let theirs: any;
+      for (let i = 0; i < 50 && !theirs; i++) {
+        theirs = await adminFive(phaseTwo);
+        if (!theirs) await new Promise((r) => setTimeout(r, 100));
+      }
+      assert.ok(theirs, "phase two checked the open pull request");
+      assert.strictEqual(theirs.verdict, "CHANGE_REQUIRED", "phase one's acceptance doesn't carry over");
+      assert.strictEqual(theirs.acceptance, null);
+      assert.strictEqual(theirs.trackedChangeOrder, null, "nor its change order");
+      assert.strictEqual(theirs.previousChangeOrder, null);
+
+      // Phase two raises and approves its own change order, which clears its check.
+      const own = await call(server, `/api/projects/${phaseTwo}/change-order`, {
+        method: "PUT",
+        body: { evaluationId: theirs.evaluationId, hours: 3 },
+        cookie: dana,
+      });
+      assert.strictEqual(own.status, 200, JSON.stringify(own.body));
+      assert.strictEqual(own.body.reference, "CO-1", "numbered in phase two's own contract");
+      assert.notStrictEqual(own.body.id, priced.body.id);
+      const approved = await call(server, `/api/projects/${phaseTwo}/change-order`, {
+        method: "PUT",
+        body: { evaluationId: theirs.evaluationId, status: "APPROVED" },
+        cookie: dana,
+      });
+      assert.strictEqual(approved.status, 200, JSON.stringify(approved.body));
+      let verdict = "";
+      for (let i = 0; i < 50 && verdict !== "APPROVED_CHANGE"; i++) {
+        verdict = (await adminFive(phaseTwo)).verdict;
+        if (verdict !== "APPROVED_CHANGE") await new Promise((r) => setTimeout(r, 100));
+      }
+      assert.strictEqual(verdict, "APPROVED_CHANGE", "the approval in phase two covers the work there");
+
+      // A re-check of phase two's commit that fails is reported on phase
+      // two's own check run, never on phase one's row for the same pull request.
+      {
+        const { githubCheckRunsTable } = await import("@workspace/db/schema");
+        const [twoRow] = await db
+          .select()
+          .from(pullRequestsTable)
+          .where(and(eq(pullRequestsTable.externalId, `gh_pr_${admin.id * 1000 + 5}`), eq(pullRequestsTable.projectId, phaseTwo)));
+        // Phase one checked the same commit before it was archived: its run stays as it was.
+        const runsOnCommit = () => db.select().from(githubCheckRunsTable).where(eq(githubCheckRunsTable.headSha, "c3".repeat(20)));
+        const othersOf = (rows: Awaited<ReturnType<typeof runsOnCommit>>) =>
+          rows.filter((r) => r.pullRequestId !== twoRow.id).map((r) => `${r.id}:${r.latestEvaluationId}:${r.updatedAt.getTime()}`);
+        const before = await runsOnCommit();
+        setGitHubFetch(async (url, init) =>
+          url.includes("/repos/harbor-agency/admin/pulls/5/files") ? json({ message: "Server Error" }, 500) : fakeGitHub(url, init),
+        );
+        try {
+          const failed: any = await service.reevaluatePullRequest(twoRow.id);
+          assert.strictEqual(failed.status, "error", JSON.stringify(failed));
+        } finally {
+          setGitHubFetch(fakeGitHub);
+        }
+        const after = await runsOnCommit();
+        const mine = after.filter((r) => r.pullRequestId === twoRow.id);
+        assert.strictEqual(mine.length, 1, "phase two's own run is updated, not a new one added");
+        assert.strictEqual(mine[0].latestEvaluationId, null, "and says it couldn't check");
+        assert.deepStrictEqual(othersOf(after), othersOf(before), "no other project's run changed");
+      }
+
+      // Restored, phase one still has its results, change order and acceptance.
+      assert.strictEqual((await call(server, `/api/projects/${phaseOne}/restore`, { method: "POST", cookie: dana })).status, 200);
+      const kept = await adminFive(phaseOne);
+      assert.ok(kept, "phase one's results are still there");
+      assert.strictEqual(kept.verdict, "OVERRIDDEN");
+      assert.strictEqual(kept.acceptance?.reason, "Goodwill for phase one");
+      assert.strictEqual(kept.trackedChangeOrder?.id, priced.body.id);
+      assert.strictEqual(kept.trackedChangeOrder?.status, "DRAFT");
+
+      // One row per project, and a decision applies only where it was made.
+      const rows = await db.select().from(pullRequestsTable).where(eq(pullRequestsTable.externalId, `gh_pr_${admin.id * 1000 + 5}`));
+      assert.deepStrictEqual(rows.map((r) => r.projectId).sort(), [phaseOne, phaseTwo].sort());
+      const one = rows.find((r) => r.projectId === phaseOne)!;
+      const two = rows.find((r) => r.projectId === phaseTwo)!;
+      const danaOrg = one.organizationId;
+      const eveOrg = (await call(server, "/api/session", { cookie: eve })).body.organization.id;
+      assert.notStrictEqual(eveOrg, danaOrg);
+      assert.ok((await acceptancesFor([one.id], { organizationId: danaOrg, projectId: phaseOne })).has(one.id));
+      assert.ok(!(await acceptancesFor([one.id], { organizationId: danaOrg, projectId: phaseTwo })).has(one.id), "not in another project");
+      assert.ok(!(await acceptancesFor([one.id], { organizationId: eveOrg, projectId: phaseOne })).has(one.id), "not in another workspace");
+
+      // An acceptance recorded before decisions named their project counts
+      // in its own workspace only.
+      const [legacy] = await db
+        .insert(commercialEventsTable)
+        .values({
+          organizationId: danaOrg,
+          entityType: "PULL_REQUEST",
+          entityId: two.id,
+          eventType: "PR_ACCEPTED",
+          actorType: "PM",
+          actorId: "dana",
+          metadataJson: { reason: "Recorded before projects were named", items: ["Loyalty points programme"] },
+        })
+        .returning();
+      assert.strictEqual(
+        (await acceptancesFor([two.id], { organizationId: danaOrg, projectId: phaseTwo })).get(two.id)?.reason,
+        "Recorded before projects were named",
+      );
+      assert.ok(!(await acceptancesFor([two.id], { organizationId: eveOrg, projectId: phaseTwo })).has(two.id));
+      await db.delete(commercialEventsTable).where(eq(commercialEventsTable.id, legacy.id));
+
+      // Leave the workspace as the next scenarios expect it.
+      assert.strictEqual((await call(server, `/api/projects/${phaseTwo}`, { method: "DELETE", cookie: dana })).status, 204);
+      assert.strictEqual((await call(server, `/api/projects/${phaseOne}`, { method: "DELETE", cookie: dana })).status, 204);
+      fake.repos[501] = fake.repos[501].filter((r) => r.id !== admin.id);
+      delete fake.open["harbor-agency/admin"];
+    });
+
+    await scenario("An older pull request event arriving late changes nothing; a merged pull request stays merged", async () => {
+      const { pullRequestsTable } = await import("@workspace/db/schema");
+      fake.files["harbor-agency/storefront#23"] = [[{ filename: "src/cart/coupon.ts", status: "added", additions: 12, deletions: 0 }]];
+      const event = (sha: string, action: string, updatedAt: string, title: string) => {
+        const payload: any = prPayload(storefront, 23, sha, action);
+        payload.pull_request.title = title;
+        payload.pull_request.updated_at = updatedAt;
+        return payload;
+      };
+      const row = async () =>
+        (await db.select().from(pullRequestsTable).where(and(eq(pullRequestsTable.projectId, projectId), eq(pullRequestsTable.number, 23))))[0];
+      const first = event("d1".repeat(20), "opened", "2026-10-01T10:00:00Z", "Cart coupons");
+      const second = event("d2".repeat(20), "synchronize", "2026-10-01T11:00:00Z", "Cart coupons, tidied");
+
+      // Two pushes delivered out of order: the older one, arriving second, is skipped.
+      assert.strictEqual(((await deliver(second)) as any).status, "processed");
+      const late: any = await deliver(first);
+      assert.strictEqual(late.status, "ignored", JSON.stringify(late));
+      const comment = () => fake.comments["harbor-agency/storefront#23"].at(-1)!.body;
+      assert.ok(comment().includes("d2d2d2d") && !comment().includes("d1d1d1d"), "the comment stays on the newer commit");
+      assert.strictEqual((await row()).title, "Cart coupons, tidied");
+
+      // An old delivery sent again after the merge doesn't reopen it.
+      const merged = event("d2".repeat(20), "closed", "2026-10-01T12:00:00Z", "Cart coupons, tidied");
+      Object.assign(merged.pull_request, { state: "closed", merged: true, merged_at: "2026-10-01T12:00:00Z" });
+      assert.strictEqual(((await deliver(merged)) as any).status, "processed");
+      const redelivered: any = await deliver(first);
+      assert.strictEqual(redelivered.status, "ignored", JSON.stringify(redelivered));
+      assert.strictEqual((await row()).state, "MERGED");
+      const listed = (await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana })).body.pullRequests.find(
+        (p: any) => p.number === 23,
+      );
+      assert.strictEqual(listed.prState, "MERGED");
+      assert.strictEqual(listed.headSha, "d2".repeat(20), "the latest result is still the newer commit's");
+      const [delivery] = await db.select().from(webhookDeliveriesTable).where(eq(webhookDeliveriesTable.deliveryId, redelivered.deliveryId));
+      assert.strictEqual(delivery?.status, "IGNORED");
+      assert.strictEqual(delivery?.errorMessage, "Superseded by a newer pull request event");
+
+      // A bulk re-check's list, read from GitHub before the merge, doesn't reopen it either.
+      const snapshot = event("d2".repeat(20), "rechecked", "2026-10-01T11:00:00Z", "Cart coupons, tidied");
+      assert.strictEqual(((await deliver(snapshot)) as any).status, "ignored");
+      assert.strictEqual((await row()).state, "MERGED");
+
+      // A newer event still applies.
+      const reopened = event("d2".repeat(20), "reopened", "2026-10-01T13:00:00Z", "Cart coupons, tidied");
+      assert.strictEqual(((await deliver(reopened)) as any).status, "processed");
+      assert.strictEqual((await row()).state, "OPEN");
     });
 
     let eveWorkspace = "";
@@ -1078,6 +1596,318 @@ async function run() {
       assert.strictEqual(now.body.organization.id, eveWorkspace);
       const only = await call(server, `/api/workspace/members/${eveId}`, { method: "DELETE", cookie: eve });
       assert.strictEqual(only.status, 409, "their own, only workspace stays");
+    });
+
+    /* Accounts: removal, sign-in, stale pages, limits and failures (audit fixes). */
+
+    // Two more people, signing in from their own address so the shared sign-in
+    // limit the earlier scenarios use is left alone.
+    fake.users["frank-token"] = { id: 7003, login: "frank", name: "Frank Founder", email: null, avatar_url: null };
+    fake.codes["frank-code"] = "frank-token";
+    fake.users["gus-token"] = { id: 7004, login: "gus", name: null, email: null, avatar_url: null };
+    fake.codes["gus-code"] = "gus-token";
+    const accountsIp = { "x-forwarded-for": "203.0.113.90" };
+    // Every call here comes from that address too, so these scenarios don't use
+    // up the invite and project limits the scenarios around them rely on.
+    const at = (path: string, options: Parameters<typeof call>[2] = {}) =>
+      call(server, path, { ...options, headers: { ...accountsIp, ...options.headers } });
+    const signInAs = async (code: string) => {
+      const start = await at("/api/auth/github?next=/app");
+      const state = new URL(String(start.headers.location)).searchParams.get("state");
+      const done = await at(`/api/auth/github/callback?code=${code}&state=${state}`, {
+        cookie: cookieFrom(start, "scopeci_oauth"),
+      });
+      const session = cookieFrom(done, "scopeci_session");
+      assert.ok(session, `${code} signs in (went to ${done.headers.location})`);
+      return session!;
+    };
+    let frank = "";
+    let gus = "";
+    let studio = "";
+    let gusHome = "";
+    let frankId = "";
+    let gusId = "";
+
+    await scenario("Someone removed from their only workspace gets a new one, and signing in again never puts them back", async () => {
+      frank = await signInAs("frank-code");
+      const home = (await at("/api/session", { cookie: frank })).body.organization;
+      assert.deepStrictEqual([home.name, home.role], ["Frank Founder", "OWNER"]);
+      studio = home.id;
+      await at("/api/workspace", { method: "PATCH", body: { name: "Frank Studio" }, cookie: frank });
+      const clientProject = await at("/api/projects", { body: { name: "Frank's client" }, cookie: frank });
+      assert.strictEqual(clientProject.status, 201);
+
+      gus = await signInAs("gus-code");
+      gusHome = (await at("/api/session", { cookie: gus })).body.organization.id;
+      const invite = await at("/api/workspace/invites", { method: "POST", cookie: frank });
+      assert.strictEqual((await at(`/api/invites/${invite.body.url.split("/").pop()}/accept`, { method: "POST", cookie: gus })).status, 200);
+      const team = (await at("/api/workspace", { cookie: frank })).body.members;
+      frankId = team.find((m: any) => m.login === "frank").userId;
+      gusId = team.find((m: any) => m.login === "gus").userId;
+      const member = (id: string, role: string, cookie: string) =>
+        at(`/api/workspace/members/${id}`, { method: "PATCH", body: { role }, cookie });
+      assert.strictEqual((await member(gusId, "OWNER", frank)).status, 200);
+      // The creator is made a member, then removed by the owner who is left.
+      assert.strictEqual((await member(frankId, "MEMBER", gus)).status, 200);
+      assert.strictEqual((await at(`/api/workspace/members/${frankId}`, { method: "DELETE", cookie: gus })).status, 204);
+
+      const after = (await at("/api/session", { cookie: frank })).body;
+      assert.ok(after.user, "still signed in, not shown as signed out");
+      assert.notStrictEqual(after.organization.id, studio);
+      assert.deepStrictEqual([after.organization.name, after.organization.role], ["Frank Founder", "OWNER"]);
+      assert.deepStrictEqual(after.workspaces.map((w: any) => w.id), [after.organization.id]);
+      const projects = (await at("/api/projects", { cookie: frank })).body.projects;
+      assert.ok(!projects.some((p: any) => p.id === clientProject.body.id), "the studio's projects are out of reach");
+
+      const again = (await at("/api/session", { cookie: await signInAs("frank-code") })).body;
+      assert.strictEqual(again.organization.id, after.organization.id);
+      assert.ok(!again.workspaces.some((w: any) => w.id === studio), "signing in again doesn't rejoin the studio");
+
+      // Someone an earlier removal left with no workspace at all gets a new one,
+      // never the workspace that still has their gh-<id> slug.
+      await db.delete(organizationMembersTable).where(eq(organizationMembersTable.userId, frankId));
+      frank = await signInAs("frank-code");
+      const fresh = (await at("/api/session", { cookie: frank })).body;
+      assert.strictEqual(fresh.organization.role, "OWNER");
+      assert.ok(![studio, after.organization.id].includes(fresh.organization.id), "a new workspace");
+      assert.strictEqual(fresh.workspaces.length, 1);
+      const studioTeam = (await at("/api/workspace", { cookie: gus })).body.members;
+      assert.deepStrictEqual(studioTeam.map((m: any) => `${m.login}:${m.role}`), ["gus:OWNER"]);
+    });
+
+    await scenario("Removing an owner, or making them a member, cancels the invite links they made", async () => {
+      const rejoin = await at("/api/workspace/invites", { method: "POST", cookie: gus });
+      assert.strictEqual((await at(`/api/invites/${rejoin.body.url.split("/").pop()}/accept`, { method: "POST", cookie: frank })).status, 200);
+      const role = (r: string) => at(`/api/workspace/members/${frankId}`, { method: "PATCH", body: { role: r }, cookie: gus });
+      const tokenOf = (reply: Reply) => reply.body.url.split("/").pop();
+      assert.strictEqual((await role("OWNER")).status, 200);
+
+      const kept = tokenOf(await at("/api/workspace/invites", { method: "POST", cookie: frank }));
+      const gusLink = await at("/api/workspace/invites", { method: "POST", cookie: gus });
+      assert.strictEqual((await role("MEMBER")).status, 200);
+      assert.strictEqual((await at(`/api/invites/${kept}`, { cookie: frank })).status, 404, "stepping down cancels their links");
+      assert.strictEqual((await at(`/api/invites/${tokenOf(gusLink)}`, { cookie: frank })).status, 200, "other owners' links stay");
+
+      assert.strictEqual((await role("OWNER")).status, 200);
+      assert.strictEqual((await at(`/api/invites/${kept}`, { cookie: frank })).status, 404, "promoting again doesn't revive them");
+      const saved = tokenOf(await at("/api/workspace/invites", { method: "POST", cookie: frank }));
+      assert.strictEqual((await at(`/api/workspace/members/${frankId}`, { method: "DELETE", cookie: gus })).status, 204);
+      assert.strictEqual((await at(`/api/invites/${saved}/accept`, { method: "POST", cookie: frank })).status, 404);
+      const open = (await at("/api/workspace", { cookie: gus })).body.invites;
+      assert.deepStrictEqual(open.map((i: any) => i.id), [gusLink.body.id], "only the remaining owner's link is open");
+      assert.ok(!(await at("/api/session", { cookie: frank })).body.workspaces.some((w: any) => w.id === studio));
+    });
+
+    await scenario("Team changes from a page showing another workspace are refused", async () => {
+      const shows = (id: string) => ({ "x-scopeci-workspace": id });
+      const stale = await at("/api/workspace", { method: "PATCH", body: { name: "Wrong team" }, cookie: gus, headers: shows(gusHome) });
+      assert.strictEqual(stale.status, 409);
+      assert.strictEqual(stale.body.error, "You switched workspace in another window. Reload this page to continue.");
+      for (const [path, method] of [
+        ["/api/workspace/invites", "POST"],
+        [`/api/workspace/members/${gusId}`, "DELETE"],
+        [`/api/workspace/members/${gusId}`, "PATCH"],
+      ]) {
+        const reply = await at(path, { method, body: method === "PATCH" ? { role: "MEMBER" } : undefined, cookie: gus, headers: shows(gusHome) });
+        assert.strictEqual(reply.status, 409, `${method} ${path}`);
+        // Refused as stale, not by another rule (gus is the last owner here too).
+        assert.strictEqual(reply.body.error, stale.body.error, `${method} ${path}`);
+      }
+      const team = await at("/api/workspace", { cookie: gus, headers: shows(gusHome) });
+      assert.strictEqual(team.body.name, "Frank Studio", "reading is never refused, and nothing changed");
+      assert.deepStrictEqual(team.body.members.map((m: any) => `${m.login}:${m.role}`), ["gus:OWNER"]);
+
+      const matching = await at("/api/workspace", { method: "PATCH", body: { name: "Studio" }, cookie: gus, headers: shows(studio.toUpperCase()) });
+      assert.strictEqual(matching.status, 200);
+      const noHeader = await at("/api/workspace", { method: "PATCH", body: { name: "Frank Studio" }, cookie: gus });
+      assert.strictEqual(noHeader.status, 200, "callers that don't send it work as before");
+    });
+
+    await scenario("Too many sign-ins from one network go back to the app with a notice, not raw JSON", async () => {
+      const startIp = { "x-forwarded-for": "203.0.113.91" };
+      let start: Reply | undefined;
+      for (let i = 0; i < 21; i++) start = await call(server, "/api/auth/github?next=/app/invite/abc123", { headers: startIp });
+      assert.strictEqual(start!.status, 302);
+      assert.strictEqual(start!.headers.location, "/app/invite/abc123?signin=busy");
+      assert.ok(start!.headers["retry-after"]);
+
+      const fromInvite = await call(server, "/api/auth/github?next=/app/invite/xyz789", { headers: { "x-forwarded-for": "203.0.113.93" } });
+      const callbackIp = { "x-forwarded-for": "203.0.113.92" };
+      for (let i = 0; i < 20; i++) {
+        const used = await call(server, "/api/auth/github/callback?code=x&state=y", { headers: callbackIp });
+        assert.strictEqual(used.headers.location, "/app?signin=expired");
+      }
+      const limited = await call(server, "/api/auth/github/callback?code=x&state=y", {
+        cookie: cookieFrom(fromInvite, "scopeci_oauth"),
+        headers: callbackIp,
+      });
+      assert.strictEqual(limited.status, 302);
+      assert.strictEqual(limited.headers.location, "/app/invite/xyz789?signin=busy", "back to the invite they started from");
+    });
+
+    await scenario("A GitHub outage while refreshing says try again; a token that no longer decrypts asks for a sign-in", async () => {
+      const githubIp = { "x-forwarded-for": "203.0.113.94" };
+      const repos = () => call(server, "/api/github/repositories", { cookie: dana, headers: githubIp });
+      const danaRow = eq(usersTable.githubUserId, "5001");
+      const [saved] = await db
+        .select({
+          githubTokenJson: usersTable.githubTokenJson,
+          githubRefreshTokenJson: usersTable.githubRefreshTokenJson,
+          githubTokenExpiresAt: usersTable.githubTokenExpiresAt,
+        })
+        .from(usersTable)
+        .where(danaRow);
+      const expire = () => db.update(usersTable).set({ githubTokenExpiresAt: new Date(Date.now() - 1000) }).where(danaRow);
+      let refreshes = 0;
+      const tokenEndpoint = (answer: () => Promise<Response>) =>
+        setGitHubFetch(async (url, init) => {
+          if (url !== `${WEB}/login/oauth/access_token`) return fakeGitHub(url, init);
+          refreshes++;
+          return answer();
+        });
+      try {
+        await expire();
+        tokenEndpoint(async () => json({ message: "Server Error" }, 502));
+        const down = await repos();
+        assert.strictEqual(down.status, 502, JSON.stringify(down.body));
+        assert.match(down.body.error, /Try again/);
+
+        tokenEndpoint(async () => {
+          throw new TypeError("fetch failed");
+        });
+        assert.strictEqual((await repos()).status, 502, "GitHub unreachable");
+        tokenEndpoint(async () => json({ message: "Slow down" }, 429, { "retry-after": "1" }));
+        assert.strictEqual((await repos()).status, 503, "GitHub limiting requests");
+
+        // Two requests that both find the token expired share one refresh:
+        // GitHub's refresh tokens work once.
+        refreshes = 0;
+        tokenEndpoint(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          return json({ access_token: "user-token-2", refresh_token: "refresh-1", expires_in: 28800 });
+        });
+        const [first, second] = await Promise.all([repos(), repos()]);
+        assert.deepStrictEqual([first.status, second.status], [200, 200]);
+        assert.strictEqual(refreshes, 1);
+
+        // Encrypted under a key the server no longer has.
+        const unreadable = { ...(saved.githubTokenJson as object), authTag: "0".repeat(32) };
+        await db
+          .update(usersTable)
+          .set({ githubTokenJson: unreadable, githubTokenExpiresAt: new Date(Date.now() + 3600_000) })
+          .where(danaRow);
+        const garbled = await repos();
+        assert.strictEqual(garbled.status, 401);
+        assert.match(garbled.body.error, /Sign in again/);
+      } finally {
+        setGitHubFetch(fakeGitHub);
+        await db.update(usersTable).set(saved).where(danaRow);
+      }
+    });
+
+    await scenario("A mangled link or an unreadable body is answered as the client's mistake", async () => {
+      const mangled = await at("/api/invites/abc%zz", { cookie: dana });
+      assert.strictEqual(mangled.status, 400);
+      assert.strictEqual(mangled.body.error, "That link isn't valid. Check it and try again.");
+      const address = server.address() as { port: number };
+      const latin1 = await fetch(`http://127.0.0.1:${address.port}/api/waitlist`, {
+        method: "POST",
+        headers: { "content-type": "application/json; charset=latin1", "x-forwarded-for": "203.0.113.95" },
+        body: JSON.stringify({ email: "charset-check@studio.test" }),
+      });
+      assert.strictEqual(latin1.status, 415);
+      assert.strictEqual(((await latin1.json()) as { error: string }).error, "Send the request as JSON in UTF-8.");
+    });
+
+    await scenario("Wrong admin keys are limited on every route, not just the sign-in form", async () => {
+      process.env.ADMIN_SECRET = "product-admin-secret";
+      const guesser = { "x-forwarded-for": "203.0.113.96" };
+      try {
+        for (let i = 0; i < 10; i++) {
+          const wrong = await call(server, "/api/admin/session", { headers: { ...guesser, "x-admin-key": `guess-${i}` } });
+          assert.strictEqual(wrong.status, 401);
+        }
+        const blocked = await call(server, "/api/admin/session", { headers: { ...guesser, authorization: "Bearer product-admin-secret" } });
+        assert.strictEqual(blocked.status, 429, "even the right key, once the address has guessed too often");
+        const form = await call(server, "/api/admin/session", { body: { key: "product-admin-secret" }, headers: guesser });
+        assert.strictEqual(form.status, 429, "the sign-in form shares the count");
+        const apiKey = await call(server, "/api/integrations/linear/connect", { headers: { ...guesser, authorization: "Bearer guess" } });
+        assert.strictEqual(apiKey.status, 429, "so does the API key");
+        assert.strictEqual((await call(server, "/api/admin/session", { headers: guesser })).status, 401, "no key is not a guess");
+
+        const script = { "x-forwarded-for": "203.0.113.97", "x-admin-key": "product-admin-secret" };
+        for (let i = 0; i < 12; i++) assert.strictEqual((await call(server, "/api/admin/session", { headers: script })).status, 204);
+      } finally {
+        delete process.env.ADMIN_SECRET;
+      }
+    });
+
+    await scenario("The waitlist export keeps every value in its own cell, with dates a spreadsheet reads", async () => {
+      process.env.ADMIN_SECRET = "product-admin-secret";
+      const email = `export-check-${Date.now()}@studio.test`;
+      const { waitlistSignupsTable } = await import("@workspace/db/schema");
+      try {
+        const signup = await call(server, "/api/waitlist", {
+          body: { email, agency: "Acme\r=IMAGE(B3)", utmSource: "\r=1+2" },
+          headers: { "x-forwarded-for": "203.0.113.98" },
+        });
+        assert.strictEqual(signup.status, 201, JSON.stringify(signup.body));
+        const csv = await call(server, "/api/admin/waitlist/csv", { headers: { "x-admin-key": "product-admin-secret" } });
+        assert.strictEqual(csv.status, 200);
+        const text = String(csv.body);
+        // With quoted cells taken out, no line break is left to start a row inside a value.
+        assert.ok(!/\r/.test(text.replace(/"(?:[^"]|"")*"/g, "")), "no bare carriage return outside a quoted cell");
+        const line = text.split("\n").find((l) => l.includes(email))!;
+        // The signup form may strip the carriage return before it is stored; either
+        // way each value stays one cell and the formula can't run.
+        assert.match(line, /,"Acme\r?=IMAGE\(B3\)",/);
+        assert.match(line, /,"?'\r?=1\+2"?,/);
+        assert.match(line, /,\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+      } finally {
+        await db.delete(waitlistSignupsTable).where(eq(waitlistSignupsTable.email, email));
+        delete process.env.ADMIN_SECRET;
+      }
+    });
+
+    await scenario("A saved GitHub App that no longer decrypts is reported, and isn't replaced by accident", async () => {
+      process.env.ADMIN_SECRET = "product-admin-secret";
+      const admin = { "x-admin-key": "product-admin-secret", "x-forwarded-for": "203.0.113.99" };
+      const names = ["GITHUB_APP_ID", "GITHUB_APP_SLUG", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"];
+      const fromEnv = names.map((name) => [name, process.env[name]] as const);
+      const { encryptToken } = await import("../linear/crypto.js");
+      const garbled = { ...encryptToken("secret", "v1", "GITHUB_TOKEN_ENCRYPTION_KEY"), authTag: "0".repeat(32) };
+      try {
+        for (const name of names) delete process.env[name];
+        await db.insert(appSettingsTable).values({
+          key: "github_app",
+          valueJson: {
+            appId: "888",
+            slug: "scopeci-old",
+            name: "ScopeCI Old",
+            owner: "harbor-agency",
+            htmlUrl: "https://github.com/organizations/harbor-agency/settings/apps/scopeci-old",
+            clientId: "Iv1.old",
+            clientSecret: garbled,
+            privateKey: garbled,
+            webhookSecret: garbled,
+            createdAt: new Date().toISOString(),
+          },
+        });
+        forgetGitHubAppSettings();
+        const status = await call(server, "/api/admin/github-app", { headers: admin });
+        assert.strictEqual(status.body.configured, false);
+        assert.strictEqual(status.body.storedUnreadable?.slug, "scopeci-old");
+        const replace = await call(server, "/api/admin/github-app/manifest", { body: { name: "ScopeCI" }, headers: admin });
+        assert.strictEqual(replace.status, 409);
+        assert.match(replace.body.error, /scopeci-old.*GITHUB_TOKEN_ENCRYPTION_KEY/);
+        assert.strictEqual((await call(server, "/api/admin/github-app", { method: "DELETE", headers: admin })).status, 204);
+        assert.strictEqual((await call(server, "/api/admin/github-app", { headers: admin })).body.storedUnreadable, null);
+      } finally {
+        for (const [name, value] of fromEnv) process.env[name] = value;
+        await db.delete(appSettingsTable);
+        forgetGitHubAppSettings();
+        delete process.env.ADMIN_SECRET;
+      }
     });
 
     await scenario("Cancelled and expired invites can't be used", async () => {
@@ -1273,14 +2103,15 @@ async function run() {
           metadata: "read",
         });
 
-        // A code sent with someone else's state is refused, and ends the setup.
-        const forged = await call(server, `/api/setup/github-app/callback?code=manifest-code&state=forged`);
-        assert.strictEqual(forged.headers.location, "/admin/waitlist?github=expired");
+        // Starting again replaces the first setup, so its state stops working.
+        const second = await start();
         const late = await call(server, `/api/setup/github-app/callback?code=manifest-code&state=${first.state}`);
         assert.strictEqual(late.headers.location, "/admin/waitlist?github=expired");
+        // A code sent with someone else's state is refused, and leaves the admin's setup alone.
+        const forged = await call(server, `/api/setup/github-app/callback?code=manifest-code&state=forged`);
+        assert.strictEqual(forged.headers.location, "/admin/waitlist?github=expired");
         assert.strictEqual(fake.conversions, 0);
 
-        const second = await start();
         const done = await call(server, `/api/setup/github-app/callback?code=manifest-code&state=${second.state}`);
         assert.strictEqual(done.status, 302);
         assert.strictEqual(done.headers.location, "/admin/waitlist?github=created");
