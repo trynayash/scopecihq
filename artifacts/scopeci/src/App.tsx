@@ -10,6 +10,7 @@ import Privacy from '@/pages/privacy';
 import Terms from '@/pages/terms';
 import Security from '@/pages/security';
 import Contact from '@/pages/contact';
+import Pricing from '@/pages/pricing';
 import TryPage from '@/pages/try';
 import AppPage from '@/pages/app';
 import AdminWaitlist from '@/pages/admin';
@@ -61,6 +62,7 @@ function Router() {
         <Route path="/terms" component={Terms} />
         <Route path="/security" component={Security} />
         <Route path="/contact" component={Contact} />
+        <Route path="/pricing" component={Pricing} />
         <Route path="/try" component={TryPage} />
         <Route path="/app" nest>
           <AppPage />

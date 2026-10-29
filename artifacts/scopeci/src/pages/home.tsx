@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowRightIcon, CrossIcon, Icon, PlusIcon, TickIcon } from '../icons';
 import { useCreateWaitlistSignup } from '@workspace/api-client-react';
 import {
@@ -6,6 +6,7 @@ import {
   Footer,
   ICON_MARK,
   Navbar,
+  PRICING_PATH,
   PRIVACY_PATH,
   TRY_PATH,
   VendorMark,
@@ -15,6 +16,7 @@ import {
   usePageMeta,
 } from '../site';
 import { useReveal } from '../motion';
+import { AGENCY, dollars, PILOT_MONTHS_FREE, STUDIO } from '../pricing';
 import { HeroStage } from '../landing/hero-stage';
 import { CreepChart } from '../landing/creep-chart';
 import { PolicyDemo } from '../landing/policy-demo';
@@ -508,7 +510,7 @@ function Principles() {
 /* Questions                                                           */
 /* ------------------------------------------------------------------ */
 
-const QUESTIONS: ReadonlyArray<{ q: string; a: string }> = [
+const QUESTIONS: ReadonlyArray<{ q: string; a: ReactNode }> = [
   {
     q: 'Does an AI model read our contracts?',
     a: 'No. The check is plain rules that compare clause text with the pull request’s title, branch, description and changed files, so no language model sees your contract or your code. The trade-off is that it can only be as precise as the SOW, and you confirm what it read before anything is checked.',
@@ -531,7 +533,17 @@ const QUESTIONS: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: 'What does it cost?',
-    a: 'Nothing during the pilot. There’s no price yet; we’d rather set one after a few agencies have used it on real client projects.',
+    a: (
+      <>
+        Nothing during the pilot. After it, one price per agency with everyone on the team included: Studio is{' '}
+        {dollars(STUDIO.monthly)} a month for up to {STUDIO.projects} active projects, and Agency is{' '}
+        {dollars(AGENCY.monthly)} for up to {AGENCY.projects}. Pilot agencies get their first {PILOT_MONTHS_FREE} months
+        free.{' '}
+        <a className="text-link" href={PRICING_PATH}>
+          See pricing
+        </a>
+      </>
+    ),
   },
   {
     q: 'When can we use it?',
@@ -597,7 +609,7 @@ function signupErrorMessage(status: number | undefined): string {
 }
 
 const PILOT_TERMS = [
-  'Free during the pilot',
+  `Free during the pilot, then your first ${PILOT_MONTHS_FREE} months free`,
   'Set up with you on one live project',
   'Report only to start: nothing blocks a merge',
 ] as const;

@@ -331,6 +331,19 @@ export async function journey({ browser, app, github, fake, out, results, server
     await page.getByTestId("button-sign-in").waitFor();
   });
 
+  await step(page, "A visitor compares plans yearly, then asks about a larger plan", async () => {
+    await page.goto(`${app}/pricing`);
+    await page.getByRole("heading", { name: "One price for the agency, not for each seat.", level: 1 }).waitFor();
+    await page.getByTestId("price-studio").getByText("$49", { exact: true }).waitFor();
+    await page.getByTestId("button-billing-yearly").click();
+    await page.getByTestId("price-studio").getByText("$490", { exact: true }).waitFor();
+    await page.getByTestId("price-agency").getByText("$1,490", { exact: true }).waitFor();
+    await page.getByTestId("plan-larger").getByRole("link", { name: "Write to us" }).click();
+    await page.getByRole("heading", { name: "Write to a person." }).waitFor();
+    const topic = await page.getByTestId("select-contact-topic").inputValue();
+    if (topic !== "pilot") throw new Error(`The contact form opened on "${topic}", not the pricing topic`);
+  });
+
   const note = "Does the check read Bitbucket pull requests? We are moving two clients next quarter.";
   await step(page, "A visitor reads the terms and sends a message from the contact form", async () => {
     await page.goto(`${app}/terms`);

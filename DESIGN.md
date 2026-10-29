@@ -32,7 +32,7 @@ Facts the interface must never contradict:
 | The Linear integration runs on stand-ins (no real token exchange): in production its connect, callback and sync routes answer 503, and live checks read no issues (`NoIssueProvider` in `routes/github.ts`). The site doesn't mention Linear. | README, `routes/github.ts` |
 | Hours and prices appear only when an estimate exists (from a linked issue or typed by a person). ScopeCI never invents one. | `docs/github-app.md` |
 | GitHub permissions: pull requests and checks (read and write), contents and metadata (read). | `docs/github-app.md` |
-| Status is a pilot: free, with no price yet, no customers to cite and no accuracy figures. | README, FAQ |
+| Status is a pilot: free now, with no customers to cite and no accuracy figures. The prices after the pilot (per workspace, by active projects) live in `src/pricing.ts` and appear only on `/pricing` and in the home FAQ; nothing is charged until the Terms' 30 days' notice. | `src/pricing.ts`, Terms |
 
 ### Stack
 
@@ -59,6 +59,7 @@ Facts the interface must never contradict:
 | Marketing | `/` | `src/pages/home.tsx`, plus `src/landing/*` (hero stage, product tour, creep chart, policy demo) |
 | Legal | `/terms`, `/privacy`, `/security` | `src/pages/{terms,privacy,security}.tsx`, built on `src/components/legal-page.tsx`; their facts (operator, processors, retention) live in `src/legal.ts` |
 | Marketing | `/contact`: the contact form (no email address is published) | `src/pages/contact.tsx` |
+| Marketing | `/pricing`: the plans after the pilot, with a monthly or yearly switch | `src/pages/pricing.tsx`; the plans and prices live in `src/pricing.ts` |
 | Marketing and tool | `/try`: the public demo, which runs the real check without an account | `src/pages/try.tsx` |
 | Marketing | Any unknown route (404) | `src/pages/not-found.tsx` |
 | Application | `/app` (sign-in, projects, new project, project, team, invite) | `src/pages/app.tsx` |
@@ -440,7 +441,7 @@ Shared rules for all components:
 - **Marketing header**
   - Fixed, 64px high, transparent at the top of the page.
   - Once the page scrolls, it gets a `--line` bottom border and an 82% `--bg` frosted ground.
-  - Contents: logo, then text links (Product, How it works, Policies, Try it, Questions), then the theme toggle, *Sign in* and the primary button *Join the pilot*.
+  - Contents: logo, then text links (Product, How it works, Policies, Try it, Pricing, Questions), then the theme toggle, *Sign in* and the primary button *Join the pilot*.
   - Below `lg`, a menu button opens a full-height panel. The panel closes on Escape and when the window widens.
 - **App header**
   - Sticky.
@@ -453,6 +454,12 @@ Shared rules for all components:
   - a sticky contents list that marks the section being read, with a 2px reading-progress line; below `lg` it becomes a picker pinned under the header;
   - numbered sections whose mono number is the section's own link; plain paragraphs and lists; one callout per section at most (a `--brand` left rule); fact tables that turn into labelled blocks on phones;
   - a "Read next" row of the other legal pages, so no page is a dead end.
+- **Pricing page:** `/pricing`, built from `src/pricing.ts`:
+  - an early-access note on a `--brand-wash` ground first, saying nothing is charged today and linking to the Terms;
+  - a Monthly / Yearly `.segmented` switch whose mark slides; a price that changes settles in like the tour caption;
+  - the four plans in one frame split by hairlines, not four floating cards. The plan open today (Pilot) carries a 3px `--brand` rule on top and an "Open now" label in `--brand`; no "Most popular" badge. Each plan reads name, price, the one number that differs (active projects), who it is for, then its action. Four across from 1101px, two by two below, stacked on phones;
+  - "Every plan has all of ScopeCI" as the same two-column `.spec` ledger as the home page's principles, because plans differ only in project count;
+  - pricing questions in the home FAQ's `details` style, then a closing row with *Join the pilot* and *Try it on your SOW*.
 
 ### Buttons [Existing]
 
@@ -744,7 +751,7 @@ Any new motion must keep all of these true.
 Do not ship any of these:
 
 1. Symmetrical three-card feature grids with floating icons in tinted squares or circles.
-2. The formula page: hero, feature cards, logo marquee, testimonials, pricing, footer. ScopeCI has no customer logos, testimonials or prices to show, so none may be invented.
+2. The formula page: hero, feature cards, logo marquee, testimonials, pricing, footer. ScopeCI has no customer logos or testimonials to show, so none may be invented. Prices have their own page, `/pricing`; the home page answers "What does it cost?" in its FAQ and links there, and gets no pricing section.
 3. Fake floating badges ("New", "AI-powered", "99.9%") and meaningless decorative labels, including numbered section labels that don't help anyone find their way.
 4. Glassmorphism without a function. The only allowed blur is the header when it sits over scrolling content.
 5. Purple, indigo or violet gradients, and any gradient background used in place of design.

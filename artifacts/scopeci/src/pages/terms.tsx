@@ -1,6 +1,6 @@
 import { Callout, LegalPage, Section, Sub } from '../components/legal-page';
 import { Icon, TickIcon } from '../icons';
-import { BASE, CONTACT_PATH, PRIVACY_PATH, SECURITY_PATH, TRY_PATH } from '../site';
+import { BASE, CONTACT_PATH, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, TRY_PATH } from '../site';
 import { contactHref, LEGAL_LOCATION, LEGAL_OPERATOR } from '../legal';
 
 const SECTIONS = [
@@ -107,6 +107,10 @@ export default function Terms() {
           <li>
             If we introduce paid plans, we will tell you at least 30 days before any charge, through the app or by
             writing to you. You will only pay if you choose a paid plan, on terms you will see before you agree to them.
+          </li>
+          <li>
+            The <a href={PRICING_PATH}>Pricing</a> page shows the plans we intend to offer after the pilot. They are
+            not in force until we announce them as above, and they may change before then.
           </li>
           <li>
             Early access means features change, some are unfinished, and we may remove one or end the pilot. If we end

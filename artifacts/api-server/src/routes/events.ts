@@ -52,6 +52,9 @@ export const KNOWN_EVENTS = new Set([
   "contact_submitted",
   "contact_sent",
   "contact_error",
+  "pricing_opened",
+  "pricing_yearly_shown",
+  "pricing_pilot_click",
 ]);
 
 /** A campaign tag (utm_source and the like), trimmed and kept short. */

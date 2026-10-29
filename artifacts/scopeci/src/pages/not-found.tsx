@@ -39,6 +39,7 @@ export default function NotFound() {
             <ul>
               <li>Home</li>
               <li>Try it on your SOW</li>
+              <li>Pricing</li>
               <li>Contact</li>
               <li>Terms, privacy and security</li>
             </ul>

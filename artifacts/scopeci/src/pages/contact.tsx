@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useCreateContactMessage } from '@workspace/api-client-react';
 import { ArrowRightIcon, Icon, TickIcon } from '../icons';
 import { CONTACT_RETENTION_DAYS, CONTACT_TOPICS, LEGAL_LOCATION, LEGAL_OPERATOR, type LegalTopic } from '../legal';
-import { anchor, Footer, Navbar, PRIVACY_PATH, SECURITY_PATH, track, usePageMeta } from '../site';
+import { anchor, Footer, Navbar, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, track, usePageMeta } from '../site';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const MESSAGE_MIN = 10;
@@ -11,7 +11,8 @@ const MESSAGE_MAX = 5000;
 /** What helps us answer each kind of message, said under the topic picker. */
 const TOPIC_HINTS: Record<LegalTopic, string> = {
   general: 'Ask anything: how the check reads a statement of work, whether it fits how your agency works.',
-  pilot: 'Tell us about your agency and the client project you would run it on first.',
+  pilot:
+    'Tell us about your agency: how many client projects run at once, and the one you would run ScopeCI on first.',
   privacy:
     'Say which GitHub account or email address the request is about. We may ask you to confirm it from that account before we act.',
   security:
@@ -344,7 +345,11 @@ export default function Contact() {
                       <a className="text-link" href={anchor('questions')}>
                         questions on the home page
                       </a>
-                      : what the check reads, what it costs, which tools it works with.
+                      : what the check reads and which tools it works with. What it costs is on the{' '}
+                      <a className="text-link" href={PRICING_PATH}>
+                        pricing page
+                      </a>
+                      .
                     </dd>
                   </div>
                   <div>

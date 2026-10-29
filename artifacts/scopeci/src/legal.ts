@@ -52,7 +52,7 @@ export type LegalTopic = 'general' | 'pilot' | 'privacy' | 'security' | 'grievan
 /** The topics the contact form offers, in the words a visitor picks from. */
 export const CONTACT_TOPICS: ReadonlyArray<{ value: LegalTopic; label: string }> = [
   { value: 'general', label: 'A question about ScopeCI' },
-  { value: 'pilot', label: 'The pilot or early access' },
+  { value: 'pilot', label: 'The pilot, pricing or a larger plan' },
   { value: 'privacy', label: 'My data: access, correction or deletion' },
   { value: 'security', label: 'A security problem' },
   { value: 'grievance', label: 'A complaint (Grievance Officer)' },
