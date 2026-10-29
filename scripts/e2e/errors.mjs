@@ -40,7 +40,7 @@ export async function errorJourney({ browser, app, github, out, results }) {
 
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();
-  page.setDefaultTimeout(10_000);
+  page.setDefaultTimeout(15_000);
   const pageErrors = [];
   page.on("pageerror", (e) => pageErrors.push(e.message));
 

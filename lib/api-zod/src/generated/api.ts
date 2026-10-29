@@ -796,6 +796,49 @@ export const UpdateChangeOrderResponse = zod.object({
 
 
 /**
+ * Records why, and checks the pull request again so GitHub's check passes. It stays accepted on later pushes unless they add excluded work the acceptance didn't cover.
+ * @summary Let a flagged pull request through without a change order
+ */
+export const acceptPullRequestPathProjectIdMax = 36;
+
+
+
+export const AcceptPullRequestParams = zod.object({
+  "projectId": zod.coerce.string().max(acceptPullRequestPathProjectIdMax),
+  "number": zod.coerce.number().int()
+})
+
+export const acceptPullRequestBodyReasonMax = 500;
+
+
+
+export const AcceptPullRequestBody = zod.object({
+  "reason": zod.string().min(1).max(acceptPullRequestBodyReasonMax)
+})
+
+export const AcceptPullRequestResponse = zod.object({
+  "reason": zod.string(),
+  "acceptedBy": zod.string().describe('GitHub login of the PM who accepted it.'),
+  "acceptedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Withdraw an acceptance, so the pull request is judged on its own again
+ */
+export const withdrawPullRequestAcceptancePathProjectIdMax = 36;
+
+
+
+export const WithdrawPullRequestAcceptanceParams = zod.object({
+  "projectId": zod.coerce.string().max(withdrawPullRequestAcceptancePathProjectIdMax),
+  "number": zod.coerce.number().int()
+})
+
+export const WithdrawPullRequestAcceptanceResponse = zod.void()
+
+
+/**
  * Lists the open pull requests on the project's repository (newest first, at most 30) and checks each against the current scope, in the background. Pull requests opened before the repository was connected get their first result this way.
  * @summary Check the repository's open pull requests again
  */
@@ -866,6 +909,24 @@ export const ListProjectPullRequestsResponse = zod.object({
 })).describe('The changed files the check read for this commit, by name and line count only (never their contents). Files cited for excluded work come first. Empty when the commit\'s file list wasn\'t recorded.'),
   "fileCount": zod.number().int().describe('How many files the commit changes. Can exceed the length of files, which is capped.'),
   "scopeVersion": zod.string().nullable().describe('The scope version this result was checked against, like \"v3\". Null for results from before versions were recorded.'),
+  "acceptance": zod.union([zod.object({
+  "reason": zod.string(),
+  "acceptedBy": zod.string().describe('GitHub login of the PM who accepted it.'),
+  "acceptedAt": zod.coerce.date()
+}),zod.null()]).describe('The PM\'s standing decision to let this pull request\'s flagged work through without a change order, if any.'),
+  "previousChangeOrder": zod.union([zod.object({
+  "id": zod.string(),
+  "reference": zod.string(),
+  "status": zod.enum(['DRAFT', 'SENT', 'APPROVED', 'DECLINED']),
+  "items": zod.array(zod.string()),
+  "hours": zod.number().int().nullable(),
+  "amount": zod.number().int().nullable(),
+  "currency": zod.string(),
+  "subject": zod.string(),
+  "body": zod.string(),
+  "sentAt": zod.coerce.date().nullable(),
+  "decidedAt": zod.coerce.date().nullable()
+}),zod.null()]).describe('An earlier change order on this pull request that the client already decided, when a later push added excluded work it doesn\'t cover. That new work is the current draft; this one is for reference.'),
   "checkedAt": zod.coerce.date()
 }))
 })

@@ -366,6 +366,21 @@ export interface RepositoryLinkInput {
   repositoryId: number;
 }
 
+export interface Acceptance {
+  reason: string;
+  /** GitHub login of the PM who accepted it. */
+  acceptedBy: string;
+  acceptedAt: string;
+}
+
+export interface AcceptanceInput {
+  /**
+     * @minLength 1
+     * @maxLength 500
+     */
+  reason: string;
+}
+
 export interface RecheckStarted {
   started: boolean;
 }
@@ -474,6 +489,10 @@ export interface PullRequestResult {
      * @nullable
      */
   scopeVersion: string | null;
+  /** The PM's standing decision to let this pull request's flagged work through without a change order, if any. */
+  acceptance: Acceptance | null;
+  /** An earlier change order on this pull request that the client already decided, when a later push added excluded work it doesn't cover. That new work is the current draft; this one is for reference. */
+  previousChangeOrder: TrackedChangeOrder | null;
   checkedAt: string;
 }
 

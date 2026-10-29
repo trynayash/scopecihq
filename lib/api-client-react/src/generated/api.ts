@@ -20,6 +20,8 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  Acceptance,
+  AcceptanceInput,
   ChangeOrderUpdateInput,
   DemoEvaluation,
   DemoEvaluationInput,
@@ -1838,6 +1840,154 @@ export const useUpdateChangeOrder = <TError = ErrorType<ErrorResponse>,
         TContext
       > => {
       return useMutation(getUpdateChangeOrderMutationOptions(options));
+    }
+
+export const getAcceptPullRequestUrl = (projectId: string,
+    number: number,) => {
+
+
+
+
+  return `/api/projects/${projectId}/pull-requests/${number}/acceptance`
+}
+
+/**
+ * Records why, and checks the pull request again so GitHub's check passes. It stays accepted on later pushes unless they add excluded work the acceptance didn't cover.
+ * @summary Let a flagged pull request through without a change order
+ */
+export const acceptPullRequest = async (projectId: string,
+    number: number,
+    acceptanceInput: AcceptanceInput, options?: Parameters<typeof customFetch>[1]): Promise<Acceptance> => {
+
+  return customFetch<Acceptance>(getAcceptPullRequestUrl(projectId,number),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(acceptanceInput)
+  }
+);}
+
+
+
+
+
+export const getAcceptPullRequestMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof acceptPullRequest>>, TError,{projectId: string;number: number;data: BodyType<AcceptanceInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof acceptPullRequest>>, TError,{projectId: string;number: number;data: BodyType<AcceptanceInput>}, TContext> => {
+
+const mutationKey = ['acceptPullRequest'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof acceptPullRequest>>, {projectId: string;number: number;data: BodyType<AcceptanceInput>}> = (props) => {
+          const {projectId,number,data} = props ?? {};
+
+          return  acceptPullRequest(projectId,number,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AcceptPullRequestMutationResult = NonNullable<Awaited<ReturnType<typeof acceptPullRequest>>>
+    export type AcceptPullRequestMutationBody = BodyType<AcceptanceInput>
+    export type AcceptPullRequestMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Let a flagged pull request through without a change order
+ */
+export const useAcceptPullRequest = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof acceptPullRequest>>, TError,{projectId: string;number: number;data: BodyType<AcceptanceInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof acceptPullRequest>>,
+        TError,
+        {projectId: string;number: number;data: BodyType<AcceptanceInput>},
+        TContext
+      > => {
+      return useMutation(getAcceptPullRequestMutationOptions(options));
+    }
+
+export const getWithdrawPullRequestAcceptanceUrl = (projectId: string,
+    number: number,) => {
+
+
+
+
+  return `/api/projects/${projectId}/pull-requests/${number}/acceptance`
+}
+
+/**
+ * @summary Withdraw an acceptance, so the pull request is judged on its own again
+ */
+export const withdrawPullRequestAcceptance = async (projectId: string,
+    number: number, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getWithdrawPullRequestAcceptanceUrl(projectId,number),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getWithdrawPullRequestAcceptanceMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof withdrawPullRequestAcceptance>>, TError,{projectId: string;number: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof withdrawPullRequestAcceptance>>, TError,{projectId: string;number: number}, TContext> => {
+
+const mutationKey = ['withdrawPullRequestAcceptance'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof withdrawPullRequestAcceptance>>, {projectId: string;number: number}> = (props) => {
+          const {projectId,number} = props ?? {};
+
+          return  withdrawPullRequestAcceptance(projectId,number,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type WithdrawPullRequestAcceptanceMutationResult = NonNullable<Awaited<ReturnType<typeof withdrawPullRequestAcceptance>>>
+
+    export type WithdrawPullRequestAcceptanceMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Withdraw an acceptance, so the pull request is judged on its own again
+ */
+export const useWithdrawPullRequestAcceptance = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof withdrawPullRequestAcceptance>>, TError,{projectId: string;number: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof withdrawPullRequestAcceptance>>,
+        TError,
+        {projectId: string;number: number},
+        TContext
+      > => {
+      return useMutation(getWithdrawPullRequestAcceptanceMutationOptions(options));
     }
 
 export const getRecheckProjectUrl = (projectId: string,) => {

@@ -828,6 +828,76 @@ async function run() {
       assert.strictEqual(again.checked, 0, "nothing left to check");
     });
 
+    await scenario("A PM accepts a pull request that needs a decision; it stays accepted on a push; withdrawing it brings the flag back", async () => {
+      const sha = "2".repeat(40);
+      const empty = await call(server, `/api/projects/${projectId}/pull-requests/18/acceptance`, {
+        method: "PUT",
+        body: { reason: "  " },
+        cookie: dana,
+      });
+      assert.strictEqual(empty.status, 400);
+      const accepted = await call(server, `/api/projects/${projectId}/pull-requests/18/acceptance`, {
+        method: "PUT",
+        body: { reason: "The client asked for the gift cards link on our call; no extra work." },
+        cookie: dana,
+      });
+      assert.strictEqual(accepted.status, 200, JSON.stringify(accepted.body));
+      assert.strictEqual(accepted.body.acceptedBy, "dana");
+      const run = fake.checkRuns.filter((r) => r.body.head_sha === sha);
+      assert.strictEqual(run.length, 1, "the same commit's check run is updated");
+      assert.strictEqual(run[0].body.output.title, "ScopeCI: Accepted without a change order");
+      assert.strictEqual(run[0].body.conclusion, "neutral", "report-only projects never pass or fail a check");
+      let pr18 = (await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana })).body.pullRequests.find((p: any) => p.number === 18);
+      assert.strictEqual(pr18.verdict, "OVERRIDDEN");
+      assert.strictEqual(pr18.acceptance.acceptedBy, "dana");
+      assert.match(pr18.reason, /Accepted without a change order by @dana/);
+
+      const pushed = prPayload(storefront, 18, "6".repeat(40), "synchronize");
+      pushed.pull_request.title = "Footer tweaks";
+      pushed.pull_request.body = "Adds a gift cards page and links it from the footer.";
+      const again: any = await deliver(pushed);
+      assert.strictEqual(again.evaluationState, "OVERRIDDEN", "a new push stays accepted");
+
+      const foreign = await call(server, `/api/projects/${projectId}/pull-requests/18/acceptance`, { method: "DELETE", cookie: eve });
+      assert.strictEqual(foreign.status, 404);
+      const withdrawn = await call(server, `/api/projects/${projectId}/pull-requests/18/acceptance`, { method: "DELETE", cookie: dana });
+      assert.strictEqual(withdrawn.status, 204);
+      pr18 = (await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana })).body.pullRequests.find((p: any) => p.number === 18);
+      assert.strictEqual(pr18.verdict, "REVIEW_REQUIRED");
+      assert.strictEqual(pr18.acceptance, null);
+      const notFlagged = await call(server, `/api/projects/${projectId}/pull-requests/17/acceptance`, {
+        method: "PUT",
+        body: { reason: "fine" },
+        cookie: dana,
+      });
+      assert.strictEqual(notFlagged.status, 409, "an in-scope pull request has nothing to accept");
+    });
+
+    await scenario("New excluded work after an approved change order gets a change order of its own", async () => {
+      fake.files["harbor-agency/storefront#12"] = [
+        [
+          { filename: "src/loyalty/points.ts", status: "modified", additions: 4, deletions: 1 },
+          { filename: "src/giftcards/redeem.ts", status: "added", additions: 50, deletions: 0 },
+        ],
+      ];
+      const pushed = prPayload(storefront, 12, "7".repeat(40), "synchronize");
+      pushed.pull_request.title = "Add loyalty points and gift cards at checkout";
+      const result: any = await deliver(pushed);
+      assert.strictEqual(result.evaluationState, "CHANGE_REQUIRED");
+      const pr12 = (await call(server, `/api/projects/${projectId}/pull-requests`, { cookie: dana })).body.pullRequests.find((p: any) => p.number === 12);
+      assert.strictEqual(pr12.trackedChangeOrder, null, "the new work has no change order yet");
+      assert.strictEqual(pr12.previousChangeOrder.reference, "CO-1");
+      assert.strictEqual(pr12.previousChangeOrder.status, "APPROVED");
+      const second = await call(server, `/api/projects/${projectId}/change-order`, {
+        method: "PUT",
+        body: { evaluationId: pr12.evaluationId, hours: 6 },
+        cookie: dana,
+      });
+      assert.strictEqual(second.status, 200, JSON.stringify(second.body));
+      assert.strictEqual(second.body.reference, "CO-2");
+      assert.deepStrictEqual(second.body.items, ["Gift cards"]);
+    });
+
     let eveWorkspace = "";
     let danaWorkspace = "";
     await scenario("An owner renames the workspace and invites someone with a single-use link", async () => {

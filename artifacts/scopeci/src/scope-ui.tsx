@@ -15,7 +15,7 @@ export const VERDICT: Record<string, { label: string; tone: 'alert' | 'warn' | '
   IN_SCOPE: { label: 'In scope', tone: 'ok' },
   APPROVED_CHANGE: { label: 'Covered by an approved change', tone: 'ok' },
   BLOCKED: { label: 'Excluded work', tone: 'alert' },
-  OVERRIDDEN: { label: 'Overridden', tone: 'ok' },
+  OVERRIDDEN: { label: 'Accepted without a change order', tone: 'ok' },
 };
 
 export const verdictOf = (state: string) => VERDICT[state] ?? { label: state, tone: 'warn' as const };

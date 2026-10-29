@@ -6,6 +6,8 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './acceptance';
+export * from './acceptanceInput';
 export * from './changedFile';
 export * from './changedFileStatus';
 export * from './changeOrderUpdateInput';

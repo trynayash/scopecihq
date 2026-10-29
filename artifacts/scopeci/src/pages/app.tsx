@@ -28,6 +28,8 @@ import {
   useListGitHubRepositories,
   useListProjectPullRequests,
   useRecheckProject,
+  useAcceptPullRequest,
+  useWithdrawPullRequestAcceptance,
   useListProjects,
   useParseDemoSow,
   useSaveProjectScope,
@@ -1202,6 +1204,12 @@ function ChangeOrderPanel({ project, pr }: { project: Project; pr: PullRequestRe
       <div className="drawer-body" ref={bodyRef}>
         <ChangeOrderSteps pr={pr} />
         <WhyLine pr={pr} tone={verdictOf(pr.verdict).tone} />
+        {pr.previousChangeOrder && (
+          <p className="notice">
+            {pr.previousChangeOrder.reference} was {pr.previousChangeOrder.status === 'APPROVED' ? 'approved' : 'declined'} for{' '}
+            {pr.previousChangeOrder.items.join(', ')}. This one is for the work added since.
+          </p>
+        )}
         {!decided && pr.verdict !== 'CHANGE_REQUIRED' && (
           <p className="notice">The latest commit no longer builds the excluded work, so this change order may not be needed.</p>
         )}
@@ -1379,21 +1387,111 @@ function ChangedFiles({ pr }: { pr: PullRequestResult }) {
   );
 }
 
+/**
+ * Letting a flagged pull request through without a change order: the PM says
+ * why, and the reason is kept with their name. Later pushes stay accepted
+ * unless they add excluded work this didn't cover.
+ */
+function AcceptDialog({ project, pr, onClose }: { project: Project; pr: PullRequestResult | null; onClose: (done?: string) => void }) {
+  const queryClient = useQueryClient();
+  const accept = useAcceptPullRequest();
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState('');
+  // Keep the last pull request while the dialog animates closed.
+  const last = useRef(pr);
+  if (pr) last.current = pr;
+  const shown = pr ?? last.current;
+  const flaggedWork = shown?.excluded.map((e) => e.item).join(', ');
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!shown) return;
+    if (!reason.trim()) {
+      setError('Say why; the reason is kept with the decision.');
+      return;
+    }
+    setError('');
+    accept.mutate(
+      { projectId: project.id, number: shown.number, data: { reason: reason.trim().slice(0, 500) } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getListProjectPullRequestsQueryKey(project.id) });
+          queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(project.id) });
+          queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
+          setReason('');
+          onClose(`#${shown.number} accepted. Its GitHub check is updated.`);
+        },
+        onError: (err) => setError(errorMessage(err, "We couldn't record the acceptance.")),
+      },
+    );
+  };
+
+  return (
+    <Dialog.Root open={pr !== null} onOpenChange={(open) => !open && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="dialog-overlay" />
+        <Dialog.Content className="dialog dialog-wide" data-testid="accept-dialog">
+          <Dialog.Title className="dialog-title">Accept #{shown?.number} without a change order?</Dialog.Title>
+          <Dialog.Description className="dialog-description">
+            {flaggedWork
+              ? `The work it builds that the scope excludes (${flaggedWork}) goes ahead unbilled. `
+              : 'It goes ahead as in scope. '}
+            Later pushes stay accepted unless they add other excluded work. You can withdraw this.
+          </Dialog.Description>
+          <form onSubmit={submit} className="accept-form">
+            <div className="field">
+              <label htmlFor="accept-reason">Why</label>
+              <textarea
+                id="accept-reason"
+                className="textarea"
+                rows={3}
+                maxLength={500}
+                value={reason}
+                placeholder="For example: the client agreed on our call that this is part of checkout."
+                onChange={(e) => setReason(e.target.value)}
+              />
+            </div>
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="dialog-actions">
+              <Dialog.Close className="button button-quiet" type="button">
+                Cancel
+              </Dialog.Close>
+              <button type="submit" className="button button-primary" disabled={accept.isPending}>
+                {accept.isPending ? 'Accepting…' : 'Accept'}
+              </button>
+            </div>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
 function PullRequestRow({
   pr,
   currentScope,
   onOpen,
+  onAccept,
+  onWithdraw,
 }: {
   pr: PullRequestResult;
   currentScope: string | null;
   onOpen: (button: HTMLButtonElement) => void;
+  onAccept: () => void;
+  onWithdraw: () => void;
 }) {
   const verdict = verdictOf(pr.verdict);
   const tracked = pr.trackedChangeOrder;
   // With excluded items the why line already says it; the full reason
   // follows as detail. Otherwise the why line is the reason itself.
-  const reasonBelow = pr.excluded.length > 0 || verdict.tone === 'ok';
+  // An accepted result says who accepted it and why just below, so its reason isn't repeated.
+  const reasonBelow = (pr.excluded.length > 0 || verdict.tone === 'ok') && !(pr.acceptance && pr.verdict === 'OVERRIDDEN');
   const stale = Boolean(pr.scopeVersion && currentScope && pr.scopeVersion !== currentScope);
+  const flagged = pr.verdict === 'CHANGE_REQUIRED' || pr.verdict === 'REVIEW_REQUIRED';
 
   return (
     <li className={`verdict-card is-${verdict.tone} pr-row`} data-testid="pr-result">
@@ -1422,6 +1520,27 @@ function PullRequestRow({
       {reasonBelow && <p className={pr.excluded.length > 0 ? 'pr-row-detail' : 'verdict-card-reason'}>{pr.reason}</p>}
       {pr.estimate && <p className="verdict-card-estimate">Estimated impact: {pr.estimate}</p>}
       <ChangedFiles pr={pr} />
+      {pr.acceptance && (
+        <p className="pr-row-accepted">
+          Accepted by @{pr.acceptance.acceptedBy} on {shortDate(pr.acceptance.acceptedAt)}: {pr.acceptance.reason}{' '}
+          <button type="button" className="text-link" onClick={onWithdraw} aria-label={`Withdraw the acceptance of #${pr.number}`}>
+            Withdraw
+          </button>
+        </p>
+      )}
+      {pr.previousChangeOrder && (
+        <p className="pr-row-previous">
+          {pr.previousChangeOrder.reference} ({pr.previousChangeOrder.status === 'APPROVED' ? 'approved' : 'declined'}) covers{' '}
+          {pr.previousChangeOrder.items.join(', ')}. A later push added work it doesn't, so that needs its own change order.
+        </p>
+      )}
+      {flagged && !pr.acceptance && (
+        <div className="pr-row-actions">
+          <button type="button" className="text-link" onClick={onAccept} aria-label={`Accept #${pr.number} without a change order`}>
+            {pr.verdict === 'REVIEW_REQUIRED' ? 'Accept as in scope…' : 'Accept without a change order…'}
+          </button>
+        </div>
+      )}
       {(pr.changeOrder || tracked) && (
         <div className="pr-row-co">
           <span className={`chip ${tracked ? CHANGE_ORDER_TONE[tracked.status] : ''}`}>{changeOrderSummary(tracked)}</span>
@@ -1448,7 +1567,33 @@ function PullRequestsSection({ project }: { project: Project }) {
     query: { queryKey: getListProjectPullRequestsQueryKey(project.id), refetchInterval: 30_000 },
   });
   const recheck = useRecheckProject();
+  const withdraw = useWithdrawPullRequestAcceptance();
+  const [confirm, confirmDialog] = useConfirm();
   const [recheckStatus, setRecheckStatus] = useState('');
+  const [accepting, setAccepting] = useState<PullRequestResult | null>(null);
+  const refreshResults = () => {
+    queryClient.invalidateQueries({ queryKey: getListProjectPullRequestsQueryKey(project.id) });
+    queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(project.id) });
+    queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
+  };
+  const withdrawAcceptance = async (pr: PullRequestResult) => {
+    const ok = await confirm({
+      title: `Withdraw the acceptance of #${pr.number}?`,
+      description: 'It is checked again and judged on its own; GitHub shows the result.',
+      confirmLabel: 'Withdraw',
+    });
+    if (!ok) return;
+    withdraw.mutate(
+      { projectId: project.id, number: pr.number },
+      {
+        onSuccess: () => {
+          setRecheckStatus(`Acceptance of #${pr.number} withdrawn; it's judged on its own again.`);
+          refreshResults();
+        },
+        onError: (err) => setRecheckStatus(errorMessage(err, "We couldn't withdraw it.")),
+      },
+    );
+  };
   // The open panel follows the pull request, so a new result for it (a push,
   // an approval) doesn't close it.
   const [openNumber, setOpenNumber] = useState<number | null>(null);
@@ -1511,6 +1656,8 @@ function PullRequestsSection({ project }: { project: Project }) {
                 opener.current = button;
                 setOpenNumber(pr.number);
               }}
+              onAccept={() => setAccepting(pr)}
+              onWithdraw={() => withdrawAcceptance(pr)}
             />
           ))}
         </ul>
@@ -1521,6 +1668,15 @@ function PullRequestsSection({ project }: { project: Project }) {
         onClose={() => setOpenNumber(null)}
         returnFocus={() => opener.current?.focus()}
       />
+      <AcceptDialog
+        project={project}
+        pr={accepting}
+        onClose={(done) => {
+          setAccepting(null);
+          if (done) setRecheckStatus(done);
+        }}
+      />
+      {confirmDialog}
     </section>
   );
 }

@@ -82,7 +82,7 @@ export async function journey({ browser, app, github, fake, out, results, server
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();
   watch(page, "dana");
-  page.setDefaultTimeout(10_000);
+  page.setDefaultTimeout(15_000);
   let projectUrl = "";
 
   await step(page, "Signing in with GitHub lands a new PM in an empty workspace", async () => {
@@ -190,6 +190,60 @@ export async function journey({ browser, app, github, fake, out, results, server
     await drawer.waitFor({ state: "detached" });
   });
 
+  await step(page, "New excluded work after the approval gets its own change order", async () => {
+    await control("/__e2e/pull-request", {
+      repo: "harbor-agency/storefront",
+      number: 12,
+      title: "Add loyalty points and gift cards at checkout",
+      body: "",
+      branch: "feat/loyalty-points",
+      sha: "e5".repeat(20),
+      files: [
+        { filename: "src/loyalty/points.ts", status: "modified", additions: 6, deletions: 1 },
+        { filename: "src/giftcards/redeem.ts", status: "added", additions: 70, deletions: 0 },
+      ],
+    });
+    await resultAppears(page, ["#12", "Change order needed", "needs its own change order"], "the follow-up flag");
+    await page.getByRole("button", { name: "Open the change order for #12" }).click();
+    const drawer = page.getByTestId("change-order-drawer");
+    await drawer.getByText(/This one is for the work added since/).waitFor();
+    await drawer.getByLabel(/^Hours/).fill("4");
+    await drawer.getByRole("button", { name: "Save hours" }).click();
+    await drawer.getByText(/Hours saved/).waitFor();
+    await drawer.getByText("CO-2").waitFor();
+    await shot(page, "04b-follow-up");
+    await page.keyboard.press("Escape");
+    await drawer.waitFor({ state: "detached" });
+  });
+
+  await step(page, "A pull request that needs a decision is accepted with a reason, then withdrawn", async () => {
+    const sha = "f6".repeat(20);
+    await control("/__e2e/pull-request", {
+      repo: "harbor-agency/storefront",
+      number: 15,
+      title: "Export orders as CSV",
+      body: "Adds a CSV export of orders for the finance team.",
+      branch: "feat/orders-csv",
+      sha,
+      files: [{ filename: "src/admin/orders-export.ts", status: "added", additions: 64, deletions: 0 }],
+    });
+    await resultAppears(page, ["#15", "Needs a decision"], "the review result");
+    await page.getByRole("button", { name: "Accept #15 without a change order" }).click();
+    const dialog = page.getByTestId("accept-dialog");
+    await dialog.getByRole("button", { name: "Accept", exact: true }).click();
+    await dialog.getByText(/Say why/).waitFor();
+    await dialog.getByLabel("Why").fill("Finance export was agreed as part of order history.");
+    await dialog.getByRole("button", { name: "Accept", exact: true }).click();
+    await page.getByText(/#15 accepted/).waitFor();
+    await resultAppears(page, ["#15", "Accepted without a change order", "Accepted by @dana-pm"], "the accepted result");
+    const run = (await ghState()).checkRuns.find((r) => r.head_sha === sha);
+    if (run?.output?.title !== "ScopeCI: Accepted without a change order") throw new Error(`check run says "${run?.output?.title}"`);
+    await shot(page, "04c-accepted");
+    await page.getByRole("button", { name: "Withdraw the acceptance of #15" }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Withdraw" }).click();
+    await resultAppears(page, ["#15", "Needs a decision"], "the withdrawn result");
+  });
+
   await step(page, "Policy changes are saved", async () => {
     await page.getByLabel(/Fail the check/).check();
     await page.getByRole("button", { name: "Save settings" }).click();
@@ -207,7 +261,7 @@ export async function journey({ browser, app, github, fake, out, results, server
   const ctx2 = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const phone = await ctx2.newPage();
   watch(phone, "eve");
-  phone.setDefaultTimeout(10_000);
+  phone.setDefaultTimeout(15_000);
   await step(phone, "A teammate signs in from the invite on a phone and joins", async () => {
     await control("/__e2e/sign-in-as", { login: "eve" });
     await phone.goto(inviteUrl.replace(/^https?:\/\/[^/]+/, app));

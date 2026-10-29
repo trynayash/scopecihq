@@ -48,7 +48,7 @@ export const VERDICT_LABELS: Record<CommercialEvaluation["state"], string> = {
   REVIEW_REQUIRED: "Needs a decision",
   CHANGE_REQUIRED: "Change order needed",
   BLOCKED: "Excluded work",
-  OVERRIDDEN: "Overridden",
+  OVERRIDDEN: "Accepted without a change order",
 };
 
 const MERGE_NOTE: Record<CommercialEvaluation["checkConclusion"], string> = {

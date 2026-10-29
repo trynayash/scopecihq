@@ -579,6 +579,65 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /projects/{projectId}/pull-requests/{number}/acceptance:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - name: number
+        in: path
+        required: true
+        schema:
+          type: integer
+    put:
+      operationId: acceptPullRequest
+      tags: [projects]
+      summary: Let a flagged pull request through without a change order
+      description: >-
+        Records why, and checks the pull request again so GitHub's check passes. It stays accepted on later pushes
+        unless they add excluded work the acceptance didn't cover.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptanceInput"
+      responses:
+        "200":
+          description: The acceptance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Acceptance"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such project or pull request in this organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The pull request's latest result isn't flagged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: withdrawPullRequestAcceptance
+      tags: [projects]
+      summary: Withdraw an acceptance, so the pull request is judged on its own again
+      responses:
+        "204":
+          description: Withdrawn
+        "404":
+          description: No such project, pull request or acceptance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /projects/{projectId}/recheck:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -1152,6 +1211,30 @@ components:
       required:
         - installationId
         - repositoryId
+    Acceptance:
+      type: object
+      properties:
+        reason:
+          type: string
+        acceptedBy:
+          type: string
+          description: GitHub login of the PM who accepted it.
+        acceptedAt:
+          type: string
+          format: date-time
+      required:
+        - reason
+        - acceptedBy
+        - acceptedAt
+    AcceptanceInput:
+      type: object
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+      required:
+        - reason
     RecheckStarted:
       type: object
       properties:
@@ -1208,11 +1291,25 @@ components:
         scopeVersion:
           type: ["string", "null"]
           description: The scope version this result was checked against, like "v3". Null for results from before versions were recorded.
+        acceptance:
+          description: The PM's standing decision to let this pull request's flagged work through without a change order, if any.
+          oneOf:
+            - $ref: "#/components/schemas/Acceptance"
+            - type: "null"
+        previousChangeOrder:
+          description: >-
+            An earlier change order on this pull request that the client already decided, when a later push added
+            excluded work it doesn't cover. That new work is the current draft; this one is for reference.
+          oneOf:
+            - $ref: "#/components/schemas/TrackedChangeOrder"
+            - type: "null"
         checkedAt:
           type: string
           format: date-time
       required:
         - scopeVersion
+        - acceptance
+        - previousChangeOrder
         - trackedChangeOrder
         - evaluationId
         - number

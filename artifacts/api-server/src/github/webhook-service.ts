@@ -17,6 +17,7 @@ import {
   webhookDeliveriesTable,
 } from "@workspace/db/schema";
 import {
+  applyHumanOverride,
   composeChangeOrder,
   draftChangeOrder,
   evaluateCommercialScope,
@@ -33,6 +34,7 @@ import { normalizePullRequestDiff } from "./diff-collector.js";
 import { VERDICT_LABELS, formatScopeCIComment, projectEstimate } from "./comment-formatter.js";
 import { logger } from "../lib/logger.js";
 import { loadActiveBaseline, toDomainBaseline } from "../lib/scope-store.js";
+import { acceptanceFor, covers } from "../lib/acceptance.js";
 
 export interface GitHubWebhookHeaders {
   deliveryId: string;
@@ -776,7 +778,7 @@ export class WebhookService {
         : [];
 
       // 6. Invoke Commercial Engine (OBSERVE mode, HeadSha Invariant Enforced)
-      const evaluation = evaluateCommercialScope({
+      const checked = evaluateCommercialScope({
         baseline: domainBaseline,
         pullRequest: {
           id: prRecord.id,
@@ -814,14 +816,37 @@ export class WebhookService {
       });
 
       const projectName = project?.name ?? projectLink?.externalProjectName ?? repositoryFullName;
-      const changeOrder = draftChangeOrder({
-        evaluation,
+      const drafted = draftChangeOrder({
+        evaluation: checked,
         pullRequestTitle: prRecord.title,
         // The client reads this: name the contract they signed, as the demo does.
         projectName: domainBaseline.title || projectName,
         clientName: project?.clientName ?? undefined,
         hourlyRate: project?.hourlyRate ?? undefined,
       });
+
+      // 6b. A PM who accepted this pull request's flagged work keeps it
+      // accepted on later pushes, as long as nothing new is excluded.
+      let evaluation = checked;
+      let changeOrder = drafted;
+      const accepted = project ? await acceptanceFor(prRecord.id) : null;
+      if (
+        accepted &&
+        (checked.state === "CHANGE_REQUIRED" || checked.state === "REVIEW_REQUIRED") &&
+        covers(accepted, (drafted?.items ?? []).map((i) => i.item))
+      ) {
+        const { updatedEvaluation } = applyHumanOverride({ evaluation: checked, events: [] }, { actor: accepted.acceptedBy, reason: accepted.reason });
+        const why = `Accepted without a change order by @${accepted.acceptedBy}: ${accepted.reason}`;
+        evaluation = {
+          ...updatedEvaluation,
+          detectedDelta: [why],
+          evidenceBundle: updatedEvaluation.evidenceBundle && {
+            ...updatedEvaluation.evidenceBundle,
+            decisionExplanation: { ...updatedEvaluation.evidenceBundle.decisionExplanation, reason: why },
+          },
+        } as CommercialEvaluation;
+        changeOrder = undefined;
+      }
 
       // 7. Persist Evaluation with exact headSha
       const [evalRecord] = await db

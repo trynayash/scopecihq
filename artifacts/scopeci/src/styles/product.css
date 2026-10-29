@@ -501,6 +501,11 @@ button.text-link { margin-right: var(--space-3); font-size: var(--t-ui); }
 .pr-row .verdict-card-reason { font-size: var(--t-ui); }
 .pr-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-1) var(--space-4); flex-wrap: wrap; }
 .pr-row-meta { color: var(--fg-muted); font-size: var(--t-code-s); }
+/* A flagged result's decision without a change order, and its record. */
+.pr-row-actions { margin-top: var(--space-3); }
+.pr-row-accepted,
+.pr-row-previous { margin-top: var(--space-3); color: var(--fg-muted); font-size: var(--t-ui); line-height: 1.5; }
+.pr-row-accepted .text-link { margin-left: var(--space-1); }
 /* Checked against an older scope version than the current one. */
 .pr-row-meta .is-stale { color: var(--warning); }
 .pr-row-detail { margin-top: var(--space-2); color: var(--fg-muted); font-size: var(--t-ui); line-height: 1.55; }
@@ -651,6 +656,8 @@ button.text-link { margin-right: var(--space-3); font-size: var(--t-ui); }
 .dialog[data-state='closed'] { animation: overlay-out var(--fast) var(--ease) forwards; }
 .dialog-title { font-size: var(--t-title); font-weight: 600; letter-spacing: -0.02em; line-height: 1.35; text-wrap: balance; }
 .dialog-description { color: var(--fg-muted); font-size: var(--t-ui); line-height: 1.55; text-wrap: pretty; }
+.dialog-wide { width: min(520px, calc(100vw - var(--space-4) * 2)); }
+.accept-form { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
 .dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-3); margin-top: var(--space-4); }
 @keyframes dialog-in {
   from { opacity: 0; transform: translate(-50%, calc(-50% + var(--space-2))); }
