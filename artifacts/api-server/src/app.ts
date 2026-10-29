@@ -201,21 +201,23 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
     res.status(403).json({ error: "Origin not allowed." });
     return;
   }
+  // GitHub first: its network failures carry the same codes as the database's.
+  if (err?.name === "GitHubApiError") {
+    (req.log ?? logger).warn({ err }, "GitHub request failed");
+    if (err.rateLimited) {
+      if (err.retryAfter) res.setHeader("Retry-After", String(err.retryAfter));
+      res.status(503).json({ error: "GitHub is limiting requests right now. Try again in a minute." });
+    } else if (err.status === 403) {
+      res.status(502).json({ error: "GitHub refused the request. Check the ScopeCI App's access to this repository on GitHub, then try again." });
+    } else {
+      res.status(502).json({ error: "GitHub didn't answer properly. Try again in a minute." });
+    }
+    return;
+  }
   if (databaseUnavailable(err)) {
     (req.log ?? logger).error({ err }, "Database unavailable");
     res.setHeader("Retry-After", "30");
     res.status(503).json({ error: "ScopeCI can't reach its database right now. Try again in a minute." });
-    return;
-  }
-  if (err?.name === "GitHubApiError") {
-    (req.log ?? logger).warn({ err }, "GitHub request failed");
-    const limited = err.status === 429 || err.status === 403;
-    if (err.retryAfter) res.setHeader("Retry-After", String(err.retryAfter));
-    res.status(limited ? 503 : 502).json({
-      error: limited
-        ? "GitHub is limiting requests right now. Try again in a minute."
-        : "GitHub didn't answer properly. Try again in a minute.",
-    });
     return;
   }
   (req.log ?? logger).error({ err }, "Unhandled request error");

@@ -20,8 +20,9 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
-  Acceptance,
   AcceptanceInput,
+  AcceptanceRecorded,
+  AcceptanceWithdrawn,
   ChangeOrderUpdateInput,
   DemoEvaluation,
   DemoEvaluationInput,
@@ -2079,9 +2080,9 @@ export const getAcceptPullRequestUrl = (projectId: string,
  */
 export const acceptPullRequest = async (projectId: string,
     number: number,
-    acceptanceInput: AcceptanceInput, options?: Parameters<typeof customFetch>[1]): Promise<Acceptance> => {
+    acceptanceInput: AcceptanceInput, options?: Parameters<typeof customFetch>[1]): Promise<AcceptanceRecorded> => {
 
-  return customFetch<Acceptance>(getAcceptPullRequestUrl(projectId,number),
+  return customFetch<AcceptanceRecorded>(getAcceptPullRequestUrl(projectId,number),
   {
     ...options,
     method: 'PUT',
@@ -2152,9 +2153,9 @@ export const getWithdrawPullRequestAcceptanceUrl = (projectId: string,
  * @summary Withdraw an acceptance, so the pull request is judged on its own again
  */
 export const withdrawPullRequestAcceptance = async (projectId: string,
-    number: number, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+    number: number, options?: Parameters<typeof customFetch>[1]): Promise<AcceptanceWithdrawn> => {
 
-  return customFetch<void>(getWithdrawPullRequestAcceptanceUrl(projectId,number),
+  return customFetch<AcceptanceWithdrawn>(getWithdrawPullRequestAcceptanceUrl(projectId,number),
   {
     ...options,
     method: 'DELETE'

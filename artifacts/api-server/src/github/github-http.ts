@@ -21,11 +21,17 @@ export function gitHubWebUrl(): string {
   return (process.env.GITHUB_WEB_URL || "https://github.com").replace(/\/+$/, "");
 }
 
+/**
+ * GitHub answered with an error, or (status 0) couldn't be reached at all.
+ * `rateLimited` is set when GitHub said it was limiting requests: a 429, or
+ * a 403 carrying the rate-limit headers (other 403s are about access).
+ */
 export class GitHubApiError extends Error {
   constructor(
     message: string,
     public status: number,
     public retryAfter?: number,
+    public rateLimited = false,
   ) {
     super(message);
     this.name = "GitHubApiError";
@@ -58,9 +64,12 @@ function backoff(attempt: number, retryAfter?: number): number {
  * might have, so only requests that are safe to repeat are: reads and edits,
  * not creating a comment or a check run twice.
  */
+function rateLimit(status: number, headers: Headers): boolean {
+  return status === 429 || (status === 403 && Boolean(headers.get("retry-after") || headers.get("x-ratelimit-remaining") === "0"));
+}
+
 function retryable(status: number, method: string, headers: Headers): boolean {
-  if (status === 429) return true;
-  if (status === 403 && (headers.get("retry-after") || headers.get("x-ratelimit-remaining") === "0")) return true;
+  if (rateLimit(status, headers)) return true;
   return status >= 500 && method !== "POST";
 }
 
@@ -76,7 +85,15 @@ export async function gitHubRequest<T>(
   const { timeoutMs = 10_000, ...rest } = init;
   const method = (rest.method ?? "GET").toUpperCase();
   for (let attempt = 0; ; attempt++) {
-    const res = await gitHubFetch(url, { ...rest, signal: AbortSignal.timeout(timeoutMs) });
+    let res: Response;
+    try {
+      res = await gitHubFetch(url, { ...rest, signal: AbortSignal.timeout(timeoutMs) });
+    } catch (err: any) {
+      // No answer at all (DNS, a reset connection, the timeout): GitHub's
+      // trouble, never to be mistaken for the database's.
+      const why = err?.name === "TimeoutError" ? "timed out" : (err?.cause?.code ?? err?.message ?? "failed");
+      throw new GitHubApiError(`GitHub couldn't be reached (${why})`, 0);
+    }
     if (res.ok) {
       const data = res.status === 204 ? (undefined as T) : ((await res.json()) as T);
       return { data, headers: res.headers };
@@ -94,7 +111,7 @@ export async function gitHubRequest<T>(
     } catch {
       // body wasn't JSON
     }
-    throw new GitHubApiError(message, res.status, retryAfter);
+    throw new GitHubApiError(message, res.status, retryAfter, rateLimit(res.status, res.headers));
   }
 }
 

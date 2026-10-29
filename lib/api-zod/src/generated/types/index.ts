@@ -8,6 +8,8 @@
 
 export * from './acceptance';
 export * from './acceptanceInput';
+export * from './acceptanceRecorded';
+export * from './acceptanceWithdrawn';
 export * from './changedFile';
 export * from './changedFileStatus';
 export * from './changeOrderUpdateInput';

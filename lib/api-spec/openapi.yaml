@@ -685,7 +685,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Acceptance"
+                $ref: "#/components/schemas/AcceptanceRecorded"
         "400":
           description: Invalid input
           content:
@@ -709,8 +709,12 @@ paths:
       tags: [projects]
       summary: Withdraw an acceptance, so the pull request is judged on its own again
       responses:
-        "204":
+        "200":
           description: Withdrawn
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcceptanceWithdrawn"
         "404":
           description: No such project, pull request or acceptance
           content:
@@ -1305,6 +1309,36 @@ components:
         - reason
         - acceptedBy
         - acceptedAt
+    AcceptanceRecorded:
+      type: object
+      properties:
+        reason:
+          type: string
+        acceptedBy:
+          type: string
+          description: GitHub login of the PM who accepted it.
+        acceptedAt:
+          type: string
+          format: date-time
+        checkUpdated:
+          type: boolean
+          description: >-
+            Whether the pull request was checked again straight away. When false (GitHub didn't answer, or the
+            repository is no longer connected) the decision is recorded but its GitHub check shows the old result until
+            the next re-check or push.
+      required:
+        - reason
+        - acceptedBy
+        - acceptedAt
+        - checkUpdated
+    AcceptanceWithdrawn:
+      type: object
+      properties:
+        checkUpdated:
+          type: boolean
+          description: Whether the pull request was checked again straight away (see AcceptanceRecorded).
+      required:
+        - checkUpdated
     AcceptanceInput:
       type: object
       properties:

@@ -520,7 +520,7 @@ The row is built in this order, top to bottom:
 8. **Changed files:** see "Files and diffs" below.
 9. **Change order row:** a status chip ("CO-007 sent 3 h ago, waiting on the client") and the *Open change order* button, above a hairline.
 10. **[Existing] Earlier change order**, when new work arrived after one was decided: "CO-1 (approved) covers Gift cards. A later push added work it doesn't, so that needs its own change order." (muted), above the change order row.
-11. **[Existing] Acceptance**, when someone accepted the work without a change order: "Accepted by @dana-pm on Oct 29: Agreed on the call to include it" (14px, the reason in `--fg`), with a *Withdraw* text link. A flagged row without one carries an *Accept without a change order…* text link (*Accept as in scope…* for needs a decision) above its change order row.
+11. **[Existing] Acceptance**, when someone accepted the work without a change order: "Accepted by @dana-pm on Oct 29: Agreed on the call to include it" (14px, the reason in `--fg`), with a *Withdraw* text link. When a later push added work the acceptance doesn't cover, the line adds "A later push added work this doesn't cover." Every flagged row carries an *Accept without a change order…* text link (*Accept as in scope…* for needs a decision) above its change order row.
 
 ### Files and diffs
 
@@ -593,7 +593,8 @@ ScopeCI reads **changed file names and per-file line counts, not code**, so it n
 - **A sent letter is read-only.** Once marked as sent, the change order letter is what the client received: it can be copied, not edited; hours can still be recorded.
 - **Edits are never overwritten.** A draft the PM edited gets *Save draft* and *Discard edits*; a newer draft from the server replaces the letter only when it hasn't been edited.
 - **[Existing] Accepting work without a change order** opens a dialog that asks for the reason, which is required, kept in the project history and shown on the row and in the GitHub check ("Accepted without a change order by @dana-pm: …"). *Withdraw* asks first and puts the check back to what the scope says.
-- **[Existing] New work after a decision gets its own change order.** Once a change order is approved or declined, excluded work pushed later starts a new one (CO-2) listing only the new items; the decided one is never reopened.
+- **[Existing] New work after a decision gets its own change order.** Once a change order is approved or declined, excluded work pushed later starts a new one (CO-2) listing only the new items, and its suggested letter names only those; the decided one is never reopened, and work it listed (declined included) is never raised again. The side panel starts afresh for the new one.
+- **[Existing] When GitHub doesn't take a decision at once** (accepting or withdrawing), the status line says the decision is recorded but the check needs *Re-check open pull requests*; it never claims the check was updated.
 - **Leaving unsaved scope edits** (closing or reloading the tab) asks first. Text typed into an add field but not added is pointed out ("Press Enter to add it to the list.").
 
 ### Dialogs, menus and tooltips

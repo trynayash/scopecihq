@@ -15,6 +15,7 @@ import {
 import {
   AcceptPullRequestBody,
   AcceptPullRequestResponse,
+  WithdrawPullRequestAcceptanceResponse,
   CreateProjectBody,
   CreateProjectResponse,
   GetProjectResponse,
@@ -40,7 +41,8 @@ import { checklistFromRecord, loadActiveBaseline, saveChecklist } from "../lib/s
 import { GitHubReauthRequired, userGitHubToken } from "../lib/github-token.js";
 import { installUrl, listInstallationRepositories, listUserInstallations } from "../github/user-api.js";
 import { GitHubApiError } from "../github/github-http.js";
-import { ACCEPTED, WITHDRAWN, acceptanceFor, acceptancesFor, itemKey } from "../lib/acceptance.js";
+import { ACCEPTED, WITHDRAWN, acceptanceFor, acceptancesFor } from "../lib/acceptance.js";
+import { changeOrderPlan } from "../lib/change-orders.js";
 
 /**
  * The signed-in app: projects, their confirmed scope, the repository each
@@ -648,40 +650,33 @@ router.put("/projects/:projectId/change-order", async (req, res): Promise<void> 
       hourlyRate: project.hourlyRate ?? undefined,
     });
 
-  // The pull request's latest change order. Once the client has decided it,
-  // excluded work it doesn't list (a later push) gets a change order of its own.
+  // The change order this pull request is on, raised now if it needs one.
+  // Under a lock per contract, so two people pricing at once get one change
+  // order, and references (CO-n, counted per contract) never repeat.
   const resultItems = (evaluation.changeOrderDraftJson as { items?: ChangeOrderItem[] } | null)?.items ?? [];
-  let row = await db.query.changeOrdersTable.findFirst({
-    where: eq(changeOrdersTable.pullRequestId, pr.id),
-    orderBy: [desc(changeOrdersTable.createdAt)],
-  });
-  let newItems = resultItems;
-  if (row && (row.status === "APPROVED" || row.status === "REJECTED")) {
-    const listed = new Set(((row.itemsJson as ChangeOrderItem[] | null) ?? []).map((i) => itemKey(i.item)));
-    const fresh = resultItems.filter((i) => !listed.has(itemKey(i.item)));
-    if (fresh.length > 0) {
-      row = undefined;
-      newItems = fresh;
-    }
-  }
-  if (!row) {
-    if (newItems.length === 0 || !project.contractId) {
-      res.status(409).json({ error: "This pull request has no out-of-scope work to raise a change order for." });
-      return;
-    }
-    const [{ count }] = await db
+  const contractId = project.contractId;
+  const row = await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`change-orders:${contractId ?? pr.id}`}))`);
+    const orders = await tx.query.changeOrdersTable.findMany({
+      where: eq(changeOrdersTable.pullRequestId, pr.id),
+      orderBy: [changeOrdersTable.createdAt],
+    });
+    const plan = changeOrderPlan(orders, resultItems);
+    if (plan.current) return plan.current;
+    if (plan.fresh.length === 0 || !contractId) return null;
+    const [{ count }] = await tx
       .select({ count: sql<number>`count(*)::int` })
       .from(changeOrdersTable)
-      .where(eq(changeOrdersTable.contractId, project.contractId));
-    const message = compose(newItems, null);
-    [row] = await db
+      .where(eq(changeOrdersTable.contractId, contractId));
+    const message = compose(plan.fresh, null);
+    const [created] = await tx
       .insert(changeOrdersTable)
       .values({
         organizationId: project.organizationId,
-        contractId: project.contractId,
+        contractId,
         sourceBaselineId: evaluation.scopeBaselineId,
         reference: `CO-${count + 1}`,
-        title: newItems.map((i) => i.item).join(", ").slice(0, 255),
+        title: plan.fresh.map((i) => i.item).join(", ").slice(0, 255),
         description: `Raised by pull request #${pr.number}: ${pr.title}`,
         estimatedHoursMin: 0,
         estimatedHoursMax: 0,
@@ -691,11 +686,16 @@ router.put("/projects/:projectId/change-order", async (req, res): Promise<void> 
         status: "DRAFT",
         projectId: project.id,
         pullRequestId: pr.id,
-        itemsJson: newItems,
+        itemsJson: plan.fresh,
         messageSubject: message.subject,
         messageBody: message.body,
       })
       .returning();
+    return created;
+  });
+  if (!row) {
+    res.status(409).json({ error: "This pull request has no out-of-scope work to raise a change order for." });
+    return;
   }
 
   const decided = row.status === "APPROVED" || row.status === "REJECTED";
@@ -741,8 +741,13 @@ router.put("/projects/:projectId/change-order", async (req, res): Promise<void> 
       ...(nextStatus === "REJECTED" ? { rejectedAt: now } : {}),
       updatedAt: now,
     })
-    .where(eq(changeOrdersTable.id, row.id))
+    // Only if nobody changed its status meanwhile (two people deciding at once).
+    .where(and(eq(changeOrdersTable.id, row.id), eq(changeOrdersTable.status, row.status)))
     .returning();
+  if (!updated) {
+    res.status(409).json({ error: `${row.reference} was changed by someone else just now. Reload to see it.` });
+    return;
+  }
 
   if (nextStatus !== row.status) {
     await db.insert(commercialEventsTable).values({
@@ -779,25 +784,39 @@ router.put("/projects/:projectId/change-order", async (req, res): Promise<void> 
 /* Accepting a flagged pull request                                    */
 /* ------------------------------------------------------------------ */
 
+/**
+ * A project's pull request by number. A project that moved to another
+ * repository keeps the old one's results, so numbers can repeat: the
+ * connected repository's pull request wins, then the most recent.
+ */
 async function projectPullRequest(req: Request, res: Response, project: ProjectRow) {
   const number = Number(req.params.number);
-  const pr = Number.isInteger(number) && number > 0
-    ? await db.query.pullRequestsTable.findFirst({
+  const rows = Number.isInteger(number) && number > 0
+    ? await db.query.pullRequestsTable.findMany({
         where: and(eq(pullRequestsTable.projectId, project.id), eq(pullRequestsTable.number, number)),
         orderBy: [desc(pullRequestsTable.updatedAt)],
       })
-    : undefined;
+    : [];
+  const repo = project.repositoryFullName?.toLowerCase();
+  const pr = (repo && rows.find((r) => r.url.toLowerCase().includes(`/${repo}/pull/`))) || rows[0];
   if (!pr) res.status(404).json({ error: "No such pull request in this project." });
   return pr;
 }
 
-/** Checks a pull request again now, so GitHub and the results show the decision; a failure is logged, not thrown. */
-async function recheckNow(req: Request, pullRequestId: string): Promise<void> {
+/**
+ * Checks a pull request again now, so GitHub and the results show the
+ * decision. Says whether that happened; a failure is logged, not thrown, as
+ * the decision itself is already recorded.
+ */
+async function recheckNow(req: Request, pullRequestId: string): Promise<boolean> {
   try {
-    await (await currentWebhookService())?.reevaluatePullRequest(pullRequestId);
+    const result = await (await currentWebhookService())?.reevaluatePullRequest(pullRequestId);
+    if (result?.status === "processed" || result?.status === "already_processed") return true;
+    req.log.warn({ pullRequestId, status: result?.status, error: result?.error }, "Re-check after an acceptance change didn't update the check");
   } catch (err) {
     req.log.warn({ err, pullRequestId }, "Re-check after an acceptance change failed");
   }
+  return false;
 }
 
 router.put("/projects/:projectId/pull-requests/:number/acceptance", async (req, res): Promise<void> => {
@@ -839,8 +858,10 @@ router.put("/projects/:projectId/pull-requests/:number/acceptance", async (req, 
       metadataJson: { reason: reason.slice(0, 500), items, headSha: latest.headSha },
     })
     .returning();
-  await recheckNow(req, pr.id);
-  res.json(AcceptPullRequestResponse.parse({ reason: reason.slice(0, 500), acceptedBy: account.login, acceptedAt: event.occurredAt }));
+  const checkUpdated = await recheckNow(req, pr.id);
+  res.json(
+    AcceptPullRequestResponse.parse({ reason: reason.slice(0, 500), acceptedBy: account.login, acceptedAt: event.occurredAt, checkUpdated }),
+  );
 });
 
 router.delete("/projects/:projectId/pull-requests/:number/acceptance", async (req, res): Promise<void> => {
@@ -862,8 +883,8 @@ router.delete("/projects/:projectId/pull-requests/:number/acceptance", async (re
     actorId: account.login,
     metadataJson: {},
   });
-  await recheckNow(req, pr.id);
-  res.status(204).end();
+  const checkUpdated = await recheckNow(req, pr.id);
+  res.json(WithdrawPullRequestAcceptanceResponse.parse({ checkUpdated }));
 });
 
 /* ------------------------------------------------------------------ */
@@ -918,7 +939,7 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
         ).map((b) => [b.id, b.version])
       : [],
   );
-  // Oldest first, so each pull request ends up mapped to its latest change order.
+  // Each pull request's change orders, oldest first.
   const tracked = prs.length
     ? await db.query.changeOrdersTable.findMany({
         where: inArray(
@@ -928,7 +949,16 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
         orderBy: [changeOrdersTable.createdAt],
       })
     : [];
-  const trackedBy = new Map(tracked.map((t) => [t.pullRequestId, t]));
+  const ordersBy = new Map<string, typeof tracked>();
+  for (const t of tracked) {
+    if (!t.pullRequestId) continue;
+    ordersBy.set(t.pullRequestId, [...(ordersBy.get(t.pullRequestId) ?? []), t]);
+  }
+  // A follow-up change order's letter names only the new work, so the
+  // contract's name is needed to write it.
+  const contract = tracked.length && project.contractId
+    ? await db.query.contractsTable.findFirst({ where: eq(contractsTable.id, project.contractId) })
+    : undefined;
   const accepted = await acceptancesFor(prs.map((p) => p.id));
   // The file list each latest result read, and no other.
   const diffIds = evaluations.flatMap((e) => (e.prDiffAnalysisId ? [e.prDiffAnalysisId] : []));
@@ -956,16 +986,20 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
     const excluded = (draft?.items ?? []).flatMap((i) =>
       i.item && i.clauseRef ? [{ item: i.item, clauseRef: i.clauseRef, clauseTitle: i.clauseTitle ?? "" }] : [],
     );
-    // A decided change order with new excluded work since: the new work is
-    // the current draft, and the decided one is shown for reference.
-    let latestOrder = trackedBy.get(pr.id) ?? null;
-    let previousOrder: typeof latestOrder = null;
-    if (latestOrder && (latestOrder.status === "APPROVED" || latestOrder.status === "REJECTED") && e.state === "CHANGE_REQUIRED") {
-      const listed = new Set(((latestOrder.itemsJson as ChangeOrderItem[] | null) ?? []).map((i) => itemKey(i.item)));
-      if ((draft?.items ?? []).some((i) => i.item && !listed.has(itemKey(i.item)))) {
-        previousOrder = latestOrder;
-        latestOrder = null;
-      }
+    // Excluded work no decided change order lists gets one of its own; the
+    // decided one is shown for reference, and the suggested letter names
+    // only the new work.
+    const plan = changeOrderPlan(ordersBy.get(pr.id) ?? [], (draft?.items ?? []) as ChangeOrderItem[]);
+    let suggested = draft?.subject && draft.body ? { subject: draft.subject, body: draft.body } : null;
+    if (suggested && !plan.current && plan.previous) {
+      const letter = composeChangeOrder({
+        items: plan.fresh,
+        pullRequestTitle: pr.title,
+        projectName: contract?.name || project.name,
+        clientName: project.clientName ?? undefined,
+        hourlyRate: project.hourlyRate ?? undefined,
+      });
+      suggested = { subject: letter.subject, body: letter.body };
     }
     const acceptance = accepted.get(pr.id);
     return [
@@ -981,9 +1015,9 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
         reason:
           (e.decisionExplanationJson as { reason?: string } | null)?.reason ?? e.reason,
         estimate: e.estimateSummary,
-        changeOrder: draft?.subject && draft.body ? { subject: draft.subject, body: draft.body } : null,
-        trackedChangeOrder: latestOrder ? toTracked(latestOrder) : null,
-        previousChangeOrder: previousOrder ? toTracked(previousOrder) : null,
+        changeOrder: suggested,
+        trackedChangeOrder: plan.current ? toTracked(plan.current) : null,
+        previousChangeOrder: plan.previous ? toTracked(plan.previous) : null,
         acceptance: acceptance
           ? { reason: acceptance.reason, acceptedBy: acceptance.acceptedBy, acceptedAt: acceptance.acceptedAt }
           : null,

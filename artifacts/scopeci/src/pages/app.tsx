@@ -1412,8 +1412,11 @@ function ChangeOrderDrawer({
           }}
         >
           {/* Keyed by pull request, not result: a new push or an approval
-              makes a new result, and the open panel keeps its state. */}
-          {shown && <ChangeOrderPanel key={shown.number} project={project} pr={shown} />}
+              makes a new result, and the open panel keeps its state. A
+              follow-up change order (new work after a decision) starts afresh. */}
+          {shown && (
+            <ChangeOrderPanel key={`${shown.number}:${shown.previousChangeOrder?.id ?? ''}`} project={project} pr={shown} />
+          )}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
@@ -1488,12 +1491,16 @@ function AcceptDialog({ project, pr, onClose }: { project: Project; pr: PullRequ
     accept.mutate(
       { projectId: project.id, number: shown.number, data: { reason: reason.trim().slice(0, 500) } },
       {
-        onSuccess: () => {
+        onSuccess: (result) => {
           queryClient.invalidateQueries({ queryKey: getListProjectPullRequestsQueryKey(project.id) });
           queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(project.id) });
           queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
           setReason('');
-          onClose(`#${shown.number} accepted. Its GitHub check is updated.`);
+          onClose(
+            result.checkUpdated
+              ? `#${shown.number} accepted. Its GitHub check is updated.`
+              : `#${shown.number} accepted, but its GitHub check couldn't be updated just now. Re-check open pull requests to update it.`,
+          );
         },
         onError: (err) => setError(errorMessage(err, "We couldn't record the acceptance.")),
       },
@@ -1596,7 +1603,8 @@ function PullRequestRow({
       <ChangedFiles pr={pr} />
       {pr.acceptance && (
         <p className="pr-row-accepted">
-          Accepted by @{pr.acceptance.acceptedBy} on {shortDate(pr.acceptance.acceptedAt)}: {pr.acceptance.reason}{' '}
+          Accepted by @{pr.acceptance.acceptedBy} on {shortDate(pr.acceptance.acceptedAt)}: {pr.acceptance.reason}
+          {flagged && ' A later push added work this doesn\'t cover.'}{' '}
           <button type="button" className="text-link" onClick={onWithdraw} aria-label={`Withdraw the acceptance of #${pr.number}`}>
             Withdraw
           </button>
@@ -1608,7 +1616,9 @@ function PullRequestRow({
           {pr.previousChangeOrder.items.join(', ')}. A later push added work it doesn't, so that needs its own change order.
         </p>
       )}
-      {flagged && !pr.acceptance && (
+      {/* Flagged despite an acceptance means a later push added work it
+          doesn't cover: that can be accepted too. */}
+      {flagged && (
         <div className="pr-row-actions">
           <button type="button" className="text-link" onClick={onAccept} aria-label={`Accept #${pr.number} without a change order`}>
             {pr.verdict === 'REVIEW_REQUIRED' ? 'Accept as in scope…' : 'Accept without a change order…'}
@@ -1660,8 +1670,12 @@ function PullRequestsSection({ project }: { project: Project }) {
     withdraw.mutate(
       { projectId: project.id, number: pr.number },
       {
-        onSuccess: () => {
-          setRecheckStatus(`Acceptance of #${pr.number} withdrawn; it's judged on its own again.`);
+        onSuccess: (result) => {
+          setRecheckStatus(
+            result.checkUpdated
+              ? `Acceptance of #${pr.number} withdrawn; it's judged on its own again.`
+              : `Acceptance of #${pr.number} withdrawn, but its GitHub check couldn't be updated just now. Re-check open pull requests to update it.`,
+          );
           refreshResults();
         },
         onError: (err) => setRecheckStatus(errorMessage(err, "We couldn't withdraw it.")),

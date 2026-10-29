@@ -911,7 +911,8 @@ export const AcceptPullRequestBody = zod.object({
 export const AcceptPullRequestResponse = zod.object({
   "reason": zod.string(),
   "acceptedBy": zod.string().describe('GitHub login of the PM who accepted it.'),
-  "acceptedAt": zod.coerce.date()
+  "acceptedAt": zod.coerce.date(),
+  "checkUpdated": zod.boolean().describe('Whether the pull request was checked again straight away. When false (GitHub didn\'t answer, or the repository is no longer connected) the decision is recorded but its GitHub check shows the old result until the next re-check or push.')
 })
 
 
@@ -927,7 +928,9 @@ export const WithdrawPullRequestAcceptanceParams = zod.object({
   "number": zod.coerce.number().int()
 })
 
-export const WithdrawPullRequestAcceptanceResponse = zod.void()
+export const WithdrawPullRequestAcceptanceResponse = zod.object({
+  "checkUpdated": zod.boolean().describe('Whether the pull request was checked again straight away (see AcceptanceRecorded).')
+})
 
 
 /**
