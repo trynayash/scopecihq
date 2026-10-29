@@ -24,6 +24,9 @@ import type {
   AcceptanceRecorded,
   AcceptanceWithdrawn,
   ChangeOrderUpdateInput,
+  ContactMessageInput,
+  ContactMessageList,
+  ContactMessageReceived,
   DemoEvaluation,
   DemoEvaluationInput,
   DemoPullRequest,
@@ -43,6 +46,7 @@ import type {
   ProjectList,
   ProjectUpdateInput,
   PullRequestResultList,
+  RateLimited,
   RecheckStarted,
   RepositoryLinkInput,
   SavedScope,
@@ -233,6 +237,78 @@ export const useCreateWaitlistSignup = <TError = ErrorType<ErrorResponse>,
         TContext
       > => {
       return useMutation(getCreateWaitlistSignupMutationOptions(options));
+    }
+
+export const getCreateContactMessageUrl = () => {
+
+
+
+
+  return `/api/contact`
+}
+
+/**
+ * Stores the message for ScopeCI to read on the admin page and answer by email. Text is trimmed and control characters are removed before the limits are checked. Only what the form asks for is kept: no IP address, user agent or cookie. Messages are deleted after 365 days.
+ * @summary Send ScopeCI a message
+ */
+export const createContactMessage = async (contactMessageInput: ContactMessageInput, options?: Parameters<typeof customFetch>[1]): Promise<ContactMessageReceived> => {
+
+  return customFetch<ContactMessageReceived>(getCreateContactMessageUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(contactMessageInput)
+  }
+);}
+
+
+
+
+
+export const getCreateContactMessageMutationOptions = <TError = ErrorType<ErrorResponse | RateLimited>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createContactMessage>>, TError,{data: BodyType<ContactMessageInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createContactMessage>>, TError,{data: BodyType<ContactMessageInput>}, TContext> => {
+
+const mutationKey = ['createContactMessage'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createContactMessage>>, {data: BodyType<ContactMessageInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createContactMessage(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateContactMessageMutationResult = NonNullable<Awaited<ReturnType<typeof createContactMessage>>>
+    export type CreateContactMessageMutationBody = BodyType<ContactMessageInput>
+    export type CreateContactMessageMutationError = ErrorType<ErrorResponse | RateLimited>
+
+    /**
+ * @summary Send ScopeCI a message
+ */
+export const useCreateContactMessage = <TError = ErrorType<ErrorResponse | RateLimited>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createContactMessage>>, TError,{data: BodyType<ContactMessageInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createContactMessage>>,
+        TError,
+        {data: BodyType<ContactMessageInput>},
+        TContext
+      > => {
+      return useMutation(getCreateContactMessageMutationOptions(options));
     }
 
 export const getParseDemoSowUrl = () => {
@@ -2448,4 +2524,152 @@ export function useListGitHubRepositories<TData = Awaited<ReturnType<typeof list
 
 
 
+
+export const getListContactMessagesUrl = () => {
+
+
+
+
+  return `/api/admin/contact`
+}
+
+/**
+ * @summary Messages sent through the contact form, newest first (at most 500)
+ */
+export const listContactMessages = async ( options?: Parameters<typeof customFetch>[1]): Promise<ContactMessageList> => {
+
+  return customFetch<ContactMessageList>(getListContactMessagesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListContactMessagesQueryKey = () => {
+    return [
+    `/api/admin/contact`
+    ] as const;
+    }
+
+
+export const getListContactMessagesQueryOptions = <TData = Awaited<ReturnType<typeof listContactMessages>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listContactMessages>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListContactMessagesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listContactMessages>>> = ({ signal }) => listContactMessages({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listContactMessages>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListContactMessagesQueryResult = NonNullable<Awaited<ReturnType<typeof listContactMessages>>>
+export type ListContactMessagesQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Messages sent through the contact form, newest first (at most 500)
+ */
+
+export function useListContactMessages<TData = Awaited<ReturnType<typeof listContactMessages>>, TError = ErrorType<ErrorResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listContactMessages>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListContactMessagesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getDeleteContactMessageUrl = (id: string,) => {
+
+
+
+
+  return `/api/admin/contact/${id}`
+}
+
+/**
+ * @summary Delete one message
+ */
+export const deleteContactMessage = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDeleteContactMessageUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteContactMessageMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteContactMessage>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteContactMessage>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['deleteContactMessage'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteContactMessage>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteContactMessage(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteContactMessageMutationResult = NonNullable<Awaited<ReturnType<typeof deleteContactMessage>>>
+
+    export type DeleteContactMessageMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Delete one message
+ */
+export const useDeleteContactMessage = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteContactMessage>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteContactMessage>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getDeleteContactMessageMutationOptions(options));
+    }
 

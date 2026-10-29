@@ -51,6 +51,84 @@ export interface ErrorResponse {
   error: string;
 }
 
+/**
+ * The body of a 429, as every rate limit on the API answers.
+ */
+export interface RateLimited {
+  /** Always "Too Many Requests". */
+  error: string;
+  /** One sentence saying what happened and when to try again; the one to show. */
+  message: string;
+  retryAfterSeconds: number;
+}
+
+/**
+ * What the message is about, chosen on the contact form.
+ */
+export type ContactTopic = typeof ContactTopic[keyof typeof ContactTopic];
+
+
+export const ContactTopic = {
+  general: 'general',
+  pilot: 'pilot',
+  privacy: 'privacy',
+  security: 'security',
+  grievance: 'grievance',
+  legal: 'legal',
+} as const;
+
+/**
+ * What the contact form sends. Text is trimmed, and control characters removed (line breaks in `message` are kept), before the limits below are checked.
+ */
+export interface ContactMessageInput {
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  name: string;
+  /**
+     * Stored lowercased.
+     * @maxLength 254
+     */
+  email: string;
+  /**
+     * Optional; empty is stored as no company.
+     * @maxLength 200
+     * @nullable
+     */
+  company?: string | null;
+  topic: ContactTopic;
+  /**
+     * @minLength 10
+     * @maxLength 5000
+     */
+  message: string;
+  /**
+     * Anti-spam field rendered hidden in the form. People leave it empty; a value means a bot filled it.
+     * @nullable
+     */
+  website?: string | null;
+}
+
+export interface ContactMessageReceived {
+  ok: boolean;
+}
+
+export interface ContactMessage {
+  id: string;
+  name: string;
+  email: string;
+  /** @nullable */
+  company: string | null;
+  topic: ContactTopic;
+  message: string;
+  createdAt: string;
+}
+
+export interface ContactMessageList {
+  messages: ContactMessage[];
+}
+
 export interface DemoSowInput {
   /**
      * @minLength 1

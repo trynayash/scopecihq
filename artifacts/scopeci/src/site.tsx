@@ -3,6 +3,10 @@ import { useTheme } from 'next-themes';
 import { SiGithub } from 'react-icons/si';
 import { ArrowRightIcon, CrossIcon, Icon, MenuIcon, MoonIcon, SunIcon, SystemThemeIcon } from './icons';
 import { useIndicator, withViewTransition } from './motion';
+import { LEGAL_OPERATOR } from './legal';
+
+/** The footer names the city; the legal pages give the full place. */
+const LEGAL_CITY = 'Mumbai, India';
 
 /**
  * Pieces every public page shares: paths, analytics, page metadata, the
@@ -15,6 +19,9 @@ export const ICON_MARK = '/assets/logo-icon.png';
 export const BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
 export const HOME_PATH = `${BASE}/`;
 export const PRIVACY_PATH = `${BASE}/privacy`;
+export const TERMS_PATH = `${BASE}/terms`;
+export const SECURITY_PATH = `${BASE}/security`;
+export const CONTACT_PATH = `${BASE}/contact`;
 export const TRY_PATH = `${BASE}/try`;
 export const APP_PATH = `${BASE}/app`;
 export const anchor = (id: string) => `${BASE}/#${id}`;
@@ -335,11 +342,19 @@ export function Footer() {
             <h2 id="footer-company">ScopeCI</h2>
             <a href={anchor('waitlist')} data-testid="link-waitlist-footer">Join the pilot</a>
             <a href={anchor('questions')}>Questions</a>
-            <a href={PRIVACY_PATH} data-testid="link-privacy-footer">Privacy</a>
+            <a href={CONTACT_PATH} data-testid="link-contact-footer">Contact</a>
+          </nav>
+          <nav className="footer-col" aria-labelledby="footer-legal">
+            <h2 id="footer-legal">Legal</h2>
+            <a href={TERMS_PATH} data-testid="link-terms-footer">Terms of Service</a>
+            <a href={PRIVACY_PATH} data-testid="link-privacy-footer">Privacy Policy</a>
+            <a href={SECURITY_PATH} data-testid="link-security-footer">Security</a>
           </nav>
         </div>
         <div className="footer-bottom">
-          <span>© 2026 ScopeCI · Early access</span>
+          <span>
+            © 2026 ScopeCI · Run by {LEGAL_OPERATOR} in {LEGAL_CITY} · Early access
+          </span>
           <ThemeSwitch />
         </div>
       </div>

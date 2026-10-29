@@ -50,7 +50,18 @@ import {
   type SessionUser,
   type TrackedChangeOrder,
 } from '@workspace/api-client-react';
-import { BASE, ICON_MARK, Logo, TRY_PATH, ThemeToggle, usePageMeta } from '../site';
+import {
+  BASE,
+  CONTACT_PATH,
+  ICON_MARK,
+  Logo,
+  PRIVACY_PATH,
+  SECURITY_PATH,
+  TERMS_PATH,
+  TRY_PATH,
+  ThemeToggle,
+  usePageMeta,
+} from '../site';
 import { useConfirm } from '../components/confirm-dialog';
 import { Loading } from '../components/loading';
 import { LoadError, StaleNotice } from '../components/load-error';
@@ -269,6 +280,17 @@ function Frame({
       <main id="main" className="app-main">
         <div className="container app-inner">{children}</div>
       </main>
+      <footer className="app-foot">
+        <div className="container app-inner">
+          <span>ScopeCI · Early access</span>
+          <nav aria-label="Legal">
+            <a href={TERMS_PATH}>Terms</a>
+            <a href={PRIVACY_PATH}>Privacy</a>
+            <a href={SECURITY_PATH}>Security</a>
+            <a href={CONTACT_PATH}>Contact</a>
+          </nav>
+        </div>
+      </footer>
     </div>
   );
 }
@@ -308,6 +330,19 @@ function SignIn({ available }: { available: boolean }) {
           </a>
         ) : (
           !problem && <p className="notice">Sign-in isn't switched on for this server yet.</p>
+        )}
+        {available && (
+          <p className="app-signin-legal">
+            By signing in you agree to the{' '}
+            <a className="text-link" href={TERMS_PATH}>
+              Terms of Service
+            </a>{' '}
+            and the{' '}
+            <a className="text-link" href={PRIVACY_PATH}>
+              Privacy Policy
+            </a>
+            .
+          </p>
         )}
         <ol className="app-signin-steps">
           <li>Signing in for the first time creates your workspace.</li>
@@ -2092,7 +2127,7 @@ function SettingsSection({ project }: { project: Project }) {
           </div>
           <div className="field">
             <label htmlFor="settings-rate">
-              Hourly rate, $ <span className="field-optional">empty = no prices</span>
+              Hourly rate, $ <span className="field-optional">optional; without it, change orders show hours only</span>
             </label>
             <input
               id="settings-rate"
@@ -2270,7 +2305,14 @@ function TeamPage() {
         <ul className="member-list">
           {team.members.map((member) => (
             <li key={member.userId} className="member-row" data-testid="member-row">
-              {member.avatarUrl && <img src={member.avatarUrl} alt="" width="28" height="28" />}
+              {member.avatarUrl ? (
+                <img src={member.avatarUrl} alt="" width="28" height="28" />
+              ) : (
+                // No GitHub picture: the initial keeps the names in line.
+                <span className="member-initial" aria-hidden="true">
+                  {(member.name ?? member.login).trim().charAt(0).toUpperCase()}
+                </span>
+              )}
               <span className="member-name">
                 <strong>{member.name ?? member.login}</strong>
                 <span className="mono">

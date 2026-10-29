@@ -3,6 +3,7 @@
 
 /** Every ScopeCI table, for turning on row level security. */
 export const SCHEMA_TABLES: string[] = [
+  "contact_messages",
   "site_events",
   "waitlist_signups",
   "change_orders",
@@ -36,6 +37,10 @@ export const SCHEMA_TABLES: string[] = [
 
 /** The whole schema, as statements that only create what is missing. */
 export const SCHEMA_STATEMENTS: string[] = [
+  "CREATE TABLE IF NOT EXISTS \"contact_messages\" (\n\t\"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,\n\t\"name\" varchar(120) NOT NULL,\n\t\"email\" varchar(254) NOT NULL,\n\t\"company\" varchar(200),\n\t\"topic\" varchar(20) NOT NULL,\n\t\"message\" varchar(5000) NOT NULL,\n\t\"created_at\" timestamp with time zone DEFAULT now() NOT NULL\n);",
+  "ALTER TABLE \"contact_messages\" ADD COLUMN IF NOT EXISTS \"company\" varchar(200);",
+  "ALTER TABLE \"contact_messages\" ADD COLUMN IF NOT EXISTS \"created_at\" timestamp with time zone DEFAULT now() NOT NULL;",
+  "ALTER TABLE \"contact_messages\" ENABLE ROW LEVEL SECURITY;",
   "CREATE TABLE IF NOT EXISTS \"site_events\" (\n\t\"id\" serial PRIMARY KEY NOT NULL,\n\t\"event\" varchar(80) NOT NULL,\n\t\"source\" varchar(100),\n\t\"medium\" varchar(100),\n\t\"campaign\" varchar(200),\n\t\"referrer\" varchar(2000),\n\t\"landing_page\" varchar(2000),\n\t\"created_at\" timestamp with time zone DEFAULT now() NOT NULL\n);",
   "ALTER TABLE \"site_events\" ADD COLUMN IF NOT EXISTS \"source\" varchar(100);",
   "ALTER TABLE \"site_events\" ADD COLUMN IF NOT EXISTS \"medium\" varchar(100);",
@@ -357,6 +362,7 @@ export const SCHEMA_STATEMENTS: string[] = [
   "DO $$ BEGIN ALTER TABLE \"projects\" ADD CONSTRAINT \"projects_created_by_user_id_users_id_fk\" FOREIGN KEY (\"created_by_user_id\") REFERENCES \"public\".\"users\"(\"id\") ON DELETE set null ON UPDATE no action; EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;",
   "DO $$ BEGIN ALTER TABLE \"user_sessions\" ADD CONSTRAINT \"user_sessions_user_id_users_id_fk\" FOREIGN KEY (\"user_id\") REFERENCES \"public\".\"users\"(\"id\") ON DELETE cascade ON UPDATE no action; EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;",
   "DO $$ BEGIN ALTER TABLE \"user_sessions\" ADD CONSTRAINT \"user_sessions_organization_id_organizations_id_fk\" FOREIGN KEY (\"organization_id\") REFERENCES \"public\".\"organizations\"(\"id\") ON DELETE set null ON UPDATE no action; EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;",
+  "CREATE INDEX IF NOT EXISTS \"contact_messages_created_at_idx\" ON \"contact_messages\" USING btree (\"created_at\");",
   "CREATE INDEX IF NOT EXISTS \"co_org_idx\" ON \"change_orders\" USING btree (\"organization_id\");",
   "CREATE INDEX IF NOT EXISTS \"co_contract_idx\" ON \"change_orders\" USING btree (\"contract_id\");",
   "CREATE INDEX IF NOT EXISTS \"co_reference_idx\" ON \"change_orders\" USING btree (\"reference\");",

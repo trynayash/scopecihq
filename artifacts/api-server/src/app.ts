@@ -122,6 +122,9 @@ const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(currentDir, "..", "..", "scopeci", "dist", "public");
 
 if (fs.existsSync(publicDir)) {
+  // express.static skips dot directories, so /.well-known (security.txt) is
+  // served on its own; below the mount, its file names have no leading dot.
+  app.use("/.well-known", express.static(path.join(publicDir, ".well-known")));
   app.use(express.static(publicDir));
 
   // SPA fallback: a GET that isn't an API route or a real static file (e.g. a

@@ -331,6 +331,31 @@ export async function journey({ browser, app, github, fake, out, results, server
     await page.getByTestId("button-sign-in").waitFor();
   });
 
+  const note = "Does the check read Bitbucket pull requests? We are moving two clients next quarter.";
+  await step(page, "A visitor reads the terms and sends a message from the contact form", async () => {
+    await page.goto(`${app}/terms`);
+    await page.getByRole("heading", { name: "Terms of Service", level: 1 }).waitFor();
+    await page.getByTestId("link-contact-footer").click();
+    await page.getByRole("heading", { name: "Write to a person." }).waitFor();
+    await page.getByTestId("input-contact-name").fill("Mara Lindqvist");
+    await page.getByTestId("input-contact-email").fill("mara@northwind.example");
+    await page.getByTestId("select-contact-topic").selectOption("pilot");
+    await page.getByTestId("input-contact-message").fill(note);
+    await page.getByTestId("button-contact-send").click();
+    await page.getByTestId("contact-sent").getByText("mara@northwind.example").waitFor();
+  });
+
+  await step(page, "The message is in the admin inbox, and can be deleted", async () => {
+    await page.goto(`${app}/admin`);
+    await page.locator("#admin-key").fill("e2e-admin-secret-0123456789");
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.getByRole("heading", { name: "Messages" }).waitFor();
+    await page.getByText(note).waitFor();
+    await page.getByRole("button", { name: "Delete the message from Mara Lindqvist" }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: /Delete/ }).click();
+    await page.getByText(note).waitFor({ state: "detached" });
+  });
+
   results.push({
     ok: problems.length === 0,
     name: "No page errors, console errors or 5xx answers anywhere",

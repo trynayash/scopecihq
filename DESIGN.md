@@ -57,7 +57,8 @@ Facts the interface must never contradict:
 | Kind | Route | File |
 | :-- | :-- | :-- |
 | Marketing | `/` | `src/pages/home.tsx`, plus `src/landing/*` (hero stage, product tour, creep chart, policy demo) |
-| Marketing | `/privacy` | `src/pages/privacy.tsx` |
+| Legal | `/terms`, `/privacy`, `/security` | `src/pages/{terms,privacy,security}.tsx`, built on `src/components/legal-page.tsx`; their facts (operator, processors, retention) live in `src/legal.ts` |
+| Marketing | `/contact`: the contact form (no email address is published) | `src/pages/contact.tsx` |
 | Marketing and tool | `/try`: the public demo, which runs the real check without an account | `src/pages/try.tsx` |
 | Marketing | Any unknown route (404) | `src/pages/not-found.tsx` |
 | Application | `/app` (sign-in, projects, new project, project, team, invite) | `src/pages/app.tsx` |
@@ -446,7 +447,12 @@ Shared rules for all components:
   - Contents: logo, workspace switcher (a native select with a custom chevron), nav (Projects, Team) with the active page on a sunken fill, then the theme toggle, avatar and *Sign out*.
 - **Active state:** a `--bg-sunken` fill plus `--fg` text. Never a coloured underline and a fill together. In the app nav the fill is one shared mark that slides to the new page (see *Selection that moves* in section 7).
 - **Page changes:** an in-app link fades the old page out and the new one in, starting at the top of the page; both headers stay still.
-- **Footer:** brand plus two link columns, then a bottom row with © and the three-way theme switch.
+- **Footer:** brand plus three link columns (Product, ScopeCI, Legal), then a bottom row with ©, who runs ScopeCI and where, and the three-way theme switch. The app has its own one-line footer with the legal links.
+- **Legal pages:** one format for all three, from `legal-page.tsx`:
+  - a header with the serif title, the update date and a "short version" summary on paper;
+  - a sticky contents list that marks the section being read, with a 2px reading-progress line; below `lg` it becomes a picker pinned under the header;
+  - numbered sections whose mono number is the section's own link; plain paragraphs and lists; one callout per section at most (a `--brand` left rule); fact tables that turn into labelled blocks on phones;
+  - a "Read next" row of the other legal pages, so no page is a dead end.
 
 ### Buttons [Existing]
 

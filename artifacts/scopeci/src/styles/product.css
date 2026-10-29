@@ -325,7 +325,20 @@ button.text-link { margin-right: var(--space-3); font-size: var(--t-ui); }
    /app
    ================================================================== */
 
-.app { min-height: 100dvh; }
+.app { display: flex; flex-direction: column; min-height: 100dvh; }
+.app > .app-main { flex: 1 0 auto; }
+.app-foot { border-top: 1px solid var(--line); color: var(--fg-faint); font-size: var(--t-caption); }
+.app-foot .container {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-5);
+  padding-block: var(--space-4);
+}
+.app-foot nav { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); }
+.app-foot a { padding-block: var(--space-1); color: var(--fg-muted); transition: color var(--fast) var(--ease); }
+.app-foot a:hover { color: var(--fg); }
 .app-header {
   position: sticky;
   top: 0;
@@ -382,6 +395,7 @@ button.text-link { margin-right: var(--space-3); font-size: var(--t-ui); }
 .app-signin .button { margin-block: var(--space-5) var(--space-1); }
 .app-signin-button { width: 100%; }
 .app-signin .notice { margin-top: var(--space-4); }
+.app-signin-legal { margin-top: var(--space-2); color: var(--fg-faint); font-size: var(--t-caption); line-height: 1.5; }
 .app-signin-steps {
   display: grid;
   gap: var(--space-2);
@@ -781,6 +795,19 @@ button.text-link { margin-right: var(--space-3); font-size: var(--t-ui); }
 }
 .member-row:first-child { border-top: 0; }
 .member-row img { flex: none; border-radius: 50%; box-shadow: 0 0 0 1px var(--line-2); }
+.member-initial {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-s);
+  background: var(--bg-sunken);
+  color: var(--fg-muted);
+  font-size: var(--t-micro);
+  font-weight: 600;
+}
 .member-name { display: grid; gap: 2px; min-width: 0; }
 .member-name strong { font-size: var(--t-subtitle); font-weight: 600; }
 .member-name .mono { color: var(--fg-muted); font-size: var(--t-code-s); overflow-wrap: anywhere; }

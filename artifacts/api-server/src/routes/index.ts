@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
 import waitlistRouter from "./waitlist";
+import contactRouter from "./contact";
 import eventsRouter from "./events";
 import adminRouter from "./admin";
 import demoRouter from "./demo";
@@ -17,6 +18,7 @@ const router: IRouter = Router();
 // Public routes — always available
 router.use(healthRouter);
 router.use(waitlistRouter);
+router.use(contactRouter);      // the contact form; ScopeCI publishes no email address
 router.use(eventsRouter);
 router.use(adminRouter);        // already protected by requireAdminKey
 router.use(demoRouter);         // public "try it" demo; stores nothing
