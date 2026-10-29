@@ -28,7 +28,8 @@ export interface CapabilityExtractionResult {
 
 /**
  * The words of a path or text, in order: camelCase, hyphens, underscores,
- * slashes and dots all split. Capabilities are matched on whole words, so
+ * slashes and dots all split, and so do letters and digits ("saml2",
+ * "Saml2Config" hold "saml"). Capabilities are matched on whole words, so
  * "processor" holds no "sso", "reset.css" no password reset and
  * "CatalogIndex" no "login".
  */
@@ -37,6 +38,7 @@ function wordsOf(text: string): string[] {
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/([A-Z])(?=[A-Z][a-z])/g, "$1 ")
     .toLowerCase()
+    .replace(/([a-z])(?=\d)|(\d)(?=[a-z])/g, "$1$2 ")
     .split(/[^a-z0-9]+/)
     .filter(Boolean);
 }
@@ -231,8 +233,14 @@ export class CapabilityExtractor {
       });
     }
 
-    // Team Invitations
-    if (has("invitation", "invitations", "invite", "invites", "invited") || pair("team", "member", "members")) {
+    // Team Invitations, in every inflection a path uses ("invitees.ts", "PendingInvitees.tsx").
+    if (
+      has(
+        "invitation", "invitations", "invite", "invites", "invited", "inviting",
+        "invitee", "invitees", "inviter", "inviters",
+      ) ||
+      pair("team", "member", "members")
+    ) {
       results.push({
         id: `cap_invite_${index}`,
         name: "team_invitations",

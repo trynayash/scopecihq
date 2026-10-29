@@ -11,7 +11,8 @@ import { composeChangeOrder, draftChangeOrder } from "../change-order.js";
 import { matchContractPhrases, tokenize } from "../contract-matcher.js";
 import { evaluateCommercialScope } from "../evaluator.js";
 import { describeEstimate } from "../formatter.js";
-import { baselineFromChecklist } from "../scope-checklist.js";
+import { baselineFromChecklist, checklistFromBaseline } from "../scope-checklist.js";
+import { SOWDecomposer } from "../sow-decomposer.js";
 import type { ChangedFile, CommercialEvaluation, LinearIssue, PullRequest, ScopeBaseline } from "../types.js";
 import { pullRequestAsWorkItem } from "../work-item.js";
 
@@ -98,6 +99,19 @@ function expectNotExcluded(baseline: ScopeBaseline, pullRequest: PullRequest): v
     `"${pullRequest.title}" should not need a change order: ${result.detectedDelta.join(" | ")}`,
   );
   assert.strictEqual(draftChangeOrder({ evaluation: result, pullRequestTitle: pullRequest.title }), undefined);
+}
+
+/** A question for a person: never in scope, never a change order. Returns the evaluation for further checks. */
+function expectReview(baseline: ScopeBaseline, pullRequest: PullRequest): CommercialEvaluation {
+  expectNotExcluded(baseline, pullRequest);
+  const result = evaluate(baseline, pullRequest);
+  assert.strictEqual(result.state, "REVIEW_REQUIRED", `"${pullRequest.title}": ${result.state}: ${result.detectedDelta.join(" | ")}`);
+  return result;
+}
+
+/** A pasted SOW, read the way /demo/sow and the app's scope section read it, then saved as a checklist. */
+function scopeFromSow(markdown: string): ScopeBaseline {
+  return baselineFromChecklist(checklistFromBaseline(new SOWDecomposer().decompose(markdown).baseline));
 }
 
 function capabilitiesOf(...paths: string[]): string[] {
@@ -251,7 +265,10 @@ test("exclusions written around a capability still catch it", () => {
 console.log("\n▶ Qualifiers (multi, advanced, custom, enterprise) are part of an exclusion");
 
 test("single-currency price work is not multi-currency pricing", () => {
-  expectState(STORE, pr("Fix GBP price rounding on product pages", ["src/pricing/currency.ts"]), "IN_SCOPE");
+  // Currency pricing work that never says "multi" is a question for a person,
+  // not a change order: the words can't tell GBP rounding from a EUR/USD
+  // switcher, and the sample SOW includes no plain "pricing" to settle it.
+  expectReview(STORE, pr("Fix GBP price rounding on product pages", ["src/pricing/currency.ts"]));
   expectNotExcluded(STORE, pr("Show prices with currency symbol", ["src/catalogue/price-label.tsx"]));
   expectNotExcluded(STORE, pr("Format GBP prices", ["src/lib/formatCurrency.ts"]));
   expectState(STORE, pr("Add multi-currency pricing", ["src/pricing/multi-currency.ts"]), "CHANGE_REQUIRED");
@@ -474,6 +491,229 @@ test("a title that names the whole capability still puts it in scope", () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* Excluded work must not pass as in scope                              */
+/* ------------------------------------------------------------------ */
+console.log("\n▶ Excluded work listed after an exception is still excluded");
+
+const GIFT_CARDS_PR = (): PullRequest =>
+  pr("Add gift cards", ["src/giftcards/redeem.ts", ["src/checkout/cart.ts", "modified"]], { branch: "feat/gift-cards" });
+
+test("'excludes payment providers other than Stripe, native mobile apps, loyalty points and gift cards' excludes gift cards", () => {
+  const baseline = scopeFromSow(
+    "# SOW\n## 2.1 Storefront\nIncludes product catalogue, shopping cart and Stripe checkout.\nExplicitly excludes payment providers other than Stripe, native mobile apps, loyalty points and gift cards.\n",
+  );
+  expectState(baseline, GIFT_CARDS_PR(), "CHANGE_REQUIRED");
+  expectState(
+    baseline,
+    pr("Add loyalty points at checkout", ["src/loyalty/points.ts", ["src/checkout/cart.ts", "modified"]], { branch: "feat/loyalty-points" }),
+    "CHANGE_REQUIRED",
+  );
+  expectState(
+    baseline,
+    pr("Native mobile app shell", ["mobile/native/App.tsx", "mobile/native/screens/CartScreen.tsx"], { branch: "feat/mobile-app" }),
+    "CHANGE_REQUIRED",
+  );
+  // The exception itself is still allowed.
+  expectState(baseline, pr("Retry failed Stripe checkout payments", ["src/checkout/stripe-retry.ts"]), "IN_SCOPE");
+});
+
+test("'except Stripe, gift cards' and '(other than Stripe), gift cards' exclude gift cards", () => {
+  const except = scopeFromSow(
+    "# SOW\n## 2.1 Storefront\nIncludes product catalogue, shopping cart and Stripe checkout.\nExcluded: all third-party integrations except Stripe, gift cards, loyalty points.\n",
+  );
+  expectState(except, GIFT_CARDS_PR(), "CHANGE_REQUIRED");
+  const bracketed = scopeFromSow(
+    "# SOW\n## 2.1 Storefront\nIncludes product catalogue, shopping cart and Stripe checkout.\nThird-party integrations (other than Stripe), gift cards and loyalty points are out of scope.\n",
+  );
+  expectState(bracketed, GIFT_CARDS_PR(), "CHANGE_REQUIRED");
+  const outOfScope = scopeFromSow(
+    "# SOW\n## 2.1 Storefront\nIncludes product catalogue, shopping cart and Stripe checkout.\nPayment providers other than Stripe, gift cards and native mobile apps are out of scope.\n",
+  );
+  expectState(outOfScope, GIFT_CARDS_PR(), "CHANGE_REQUIRED");
+});
+
+console.log("\n▶ A bracketed example named without its head is a question, not in scope");
+
+const PAYMENTS = scope({
+  included: ["shopping cart"],
+  excluded: ["additional payment providers (paypal, klarna, apple pay)"],
+});
+
+test("'Add PayPal to checkout' against excluded 'additional payment providers (paypal, …)' is REVIEW_REQUIRED", () => {
+  const result = expectReview(
+    PAYMENTS,
+    pr("Add PayPal to checkout", ["src/checkout/paypal.ts", ["src/checkout/cart.ts", "modified"]], { branch: "feat/paypal" }),
+  );
+  assert.ok(
+    result.detectedDelta.some((d) => d.includes("as an example of")),
+    `the reason should say it is an example: ${result.detectedDelta.join(" | ")}`,
+  );
+});
+
+test("vendor-only PRs against bracketed exclusions (Salesforce, Mixpanel, i18n, WCAG) are REVIEW_REQUIRED", () => {
+  const brackets = scopeFromSow(
+    "# SOW\n\n## 1. Storefront\n**Explicit Inclusions**:\n- Product catalogue and search\n- Shopping cart\n- Stripe checkout\n\n**Explicit Exclusions**:\n- Additional payment providers (PayPal, Klarna, Apple Pay)\n- Multi-language support (i18n)\n- Accessibility compliance (WCAG 2.1 AA)\n- Native mobile apps (iOS, Android)\n- Third-party integrations (Salesforce, HubSpot)\n",
+  );
+  expectReview(
+    brackets,
+    pr("Add PayPal to checkout", ["src/checkout/paypal.ts", ["src/checkout/cart.ts", "modified"]], { branch: "feat/paypal" }),
+  );
+  expectReview(
+    brackets,
+    pr("Sync orders to Salesforce", ["src/crm/salesforce.ts", ["src/checkout/cart.ts", "modified"]], { branch: "feat/salesforce-sync" }),
+  );
+  expectReview(
+    brackets,
+    pr("Add French translations for the product catalogue", ["src/i18n/fr.json", ["src/catalog/ProductPage.tsx", "modified"]], {
+      branch: "feat/i18n-fr",
+    }),
+  );
+  expectReview(
+    brackets,
+    pr("WCAG contrast fixes on product pages", [["src/catalog/ProductPage.tsx", "modified"]], { branch: "fix/wcag-contrast" }),
+  );
+  const analytics = scope({ included: ["product catalogue", "shopping cart"], excluded: ["analytics (google analytics, mixpanel)"] });
+  expectReview(
+    analytics,
+    pr("Track add-to-cart in Mixpanel", ["src/tracking/mixpanel.ts", ["src/checkout/cart.ts", "modified"]], { branch: "feat/mixpanel" }),
+  );
+  const crm = scope({ included: ["product catalogue", "shopping cart"], excluded: ["crm integration (salesforce, hubspot)"] });
+  expectReview(
+    crm,
+    pr("Sync orders to Salesforce", ["src/orders/salesforce-sync.ts", ["src/checkout/cart.ts", "modified"]], { branch: "feat/salesforce" }),
+  );
+});
+
+test("an example found next to its head is still excluded; one the PR names as an exception is not asked about", () => {
+  expectState(
+    PAYMENTS,
+    pr("Add PayPal payment provider", ["src/payments/paypal-provider.ts", ["src/checkout/cart.ts", "modified"]]),
+    "CHANGE_REQUIRED",
+  );
+  const withException = scope({
+    included: ["shopping cart"],
+    excluded: ["analytics (mixpanel, segment) other than plausible"],
+  });
+  expectState(withException, pr("Send cart events to Mixpanel and Plausible", ["src/cart/mixpanel-plausible.ts"]), "IN_SCOPE");
+});
+
+console.log("\n▶ 'Including but not limited to' is not an exception");
+
+const HUBSPOT_PR = (): PullRequest =>
+  pr("Sync new customers to HubSpot", ["src/crm/hubspot.ts", ["src/checkout/cart.ts", "modified"]], { branch: "feat/hubspot-sync" });
+
+test("'crm integrations, including but not limited to salesforce and hubspot' excludes HubSpot work", () => {
+  const typed = scope({ included: ["shopping cart"], excluded: ["crm integrations, including but not limited to salesforce and hubspot"] });
+  expectState(typed, HUBSPOT_PR(), "CHANGE_REQUIRED");
+  const restricted = scope({ included: ["shopping cart"], excluded: ["crm integrations, including but not restricted to salesforce and hubspot"] });
+  expectState(restricted, HUBSPOT_PR(), "CHANGE_REQUIRED");
+  const parsed = scopeFromSow(
+    "# SOW\n## 1.1 Store\nIncludes product catalogue, shopping cart and Stripe checkout.\nExcludes: CRM integrations including but not limited to Salesforce and HubSpot.\n",
+  );
+  expectState(parsed, HUBSPOT_PR(), "CHANGE_REQUIRED");
+  const predicate = scopeFromSow(
+    "# SOW\n## 1.1 Integrations\nThe following integrations are in scope: Stripe, Mailchimp.\nAll other third-party integrations, including but not limited to Salesforce and HubSpot, are out of scope.\n",
+  );
+  expectState(predicate, pr("Sync new customers to HubSpot", ["src/crm/hubspot.ts"], { branch: "feat/hubspot-sync" }), "CHANGE_REQUIRED");
+});
+
+test("the first example after 'including but not limited to' is excluded too", () => {
+  const parsed = scopeFromSow(
+    "# SOW\n## 1.1 Store\nIncludes product catalogue, shopping cart and Stripe checkout.\nExcludes: CRM integrations including but not limited to Salesforce and HubSpot.\n",
+  );
+  expectState(
+    parsed,
+    pr("Sync orders to Salesforce", ["src/crm/salesforce.ts", ["src/checkout/cart.ts", "modified"]], { branch: "feat/salesforce" }),
+    "CHANGE_REQUIRED",
+  );
+});
+
+test("a real 'but not' exception still works", () => {
+  const baseline = scope({ included: ["stripe checkout"], excluded: ["payment providers but not stripe"] });
+  expectNotExcluded(baseline, pr("Stripe provider config", [["src/payments/providers/stripe.ts", "modified"]]));
+  expectState(baseline, pr("Add PayPal payment provider", ["src/payments/paypal-provider.ts"]), "CHANGE_REQUIRED");
+});
+
+console.log("\n▶ Excluded work described without its qualifier is a question, not in scope");
+
+const SOW6 = scopeFromSow(
+  "# SOW\n## 2.1 Storefront\n**Explicit Inclusions**:\n- Product catalogue and search\n- Shopping cart\n- Stripe checkout\n\n**Explicit Exclusions**:\n- Multi-language support\n- Multi-currency pricing\n- Advanced search\n- Custom reports\n",
+);
+
+test("'Currency switcher (EUR, USD)' against excluded 'Multi-currency pricing' is REVIEW_REQUIRED", () => {
+  const switcher = pr("Currency switcher (EUR, USD) on product pages", ["src/catalog/CurrencySwitcher.tsx", ["src/catalog/ProductPrice.tsx", "modified"]], {
+    branch: "feat/currency-switcher",
+  });
+  const result = expectReview(STORE, switcher);
+  assert.ok(
+    result.detectedDelta.some((d) => d.includes('"multi"')),
+    `the reason should name the missing qualifier: ${result.detectedDelta.join(" | ")}`,
+  );
+  expectReview(SOW6, switcher);
+});
+
+test("language switcher, faceted search and report builder are REVIEW_REQUIRED, not IN_SCOPE", () => {
+  expectReview(
+    SOW6,
+    pr("Add language switcher to product pages", ["src/catalog/LanguageSwitcher.tsx", "src/i18n/fr.json", ["src/catalog/ProductPage.tsx", "modified"]], {
+      branch: "feat/language-switcher",
+    }),
+  );
+  expectReview(SOW6, pr("Report builder for sales", ["src/catalog/reports/ReportBuilder.tsx"], { branch: "feat/report-builder" }));
+  const facets = pr("Faceted search filters", ["src/search/facets.ts", ["src/search/SearchPage.tsx", "modified"]], { branch: "feat/search-facets" });
+  expectReview(scope({ included: ["shopping cart"], excluded: ["advanced search"] }), facets);
+  // SOW6 also includes plain "search", which this pull request matches: no
+  // word says it is the advanced kind, so it reads as the included search.
+  expectNotExcluded(SOW6, facets);
+});
+
+test("work the SOW includes in its plain form stays in scope; the qualified form is still excluded", () => {
+  const search = scope({ included: ["basic keyword search"], excluded: ["advanced search"] });
+  expectState(search, pr("Fix keyword search pagination", ["src/search/keyword.ts"]), "IN_SCOPE");
+  const reporting = scope({ included: ["reporting dashboard"], excluded: ["enterprise reporting"] });
+  expectState(reporting, pr("Fix reporting date filter", ["src/reporting/filters.ts"]), "IN_SCOPE");
+  expectState(STORE, pr("Add multi-currency pricing", ["src/pricing/multi-currency.ts"]), "CHANGE_REQUIRED");
+  // Only described, never built: nothing to ask about.
+  expectState(STORE, pr("Fix cart totals", ["src/checkout/cart.ts"], { body: "Unrelated to currency pricing." }), "IN_SCOPE");
+});
+
+console.log("\n▶ Capabilities in digit-suffixed and inflected paths");
+
+const ACCOUNTS = (excluded: string): ScopeBaseline =>
+  scope({ title: "Accounts", included: ["email and password login", "password reset", "user profile pages"], excluded: [excluded] });
+
+test("saml2 paths name enterprise SSO, invitee paths name team invitations", () => {
+  assert.deepStrictEqual(capabilitiesOf("src/main/java/com/acme/security/saml2/Saml2Config.java"), ["enterprise_sso_saml"]);
+  assert.deepStrictEqual(capabilitiesOf("config/saml2_settings.php"), ["enterprise_sso_saml"]);
+  assert.deepStrictEqual(capabilitiesOf("app/Http/Controllers/Saml2Controller.php"), ["enterprise_sso_saml"]);
+  assert.deepStrictEqual(capabilitiesOf("accounts/saml2_config.py"), ["enterprise_sso_saml"]);
+  assert.deepStrictEqual(capabilitiesOf("src/team/invitees.ts"), ["team_invitations"]);
+  assert.deepStrictEqual(capabilitiesOf("src/team/PendingInvitees.tsx"), ["team_invitations"]);
+  assert.deepStrictEqual(capabilitiesOf("src/team/inviter.ts"), ["team_invitations"]);
+  // Splitting digits off doesn't invent words.
+  assert.deepStrictEqual(capabilitiesOf("src/oauth2/client.ts"), []);
+  assert.deepStrictEqual(capabilitiesOf("src/s3/upload-v2.ts"), []);
+});
+
+test("SAML2 and invitee PRs against excluded SSO and team invitations are CHANGE_REQUIRED", () => {
+  expectState(
+    ACCOUNTS("single sign-on (saml)"),
+    pr(
+      "Acme staff login via SAML2",
+      ["src/main/java/com/acme/security/saml2/Saml2Config.java", ["src/main/java/com/acme/security/LoginController.java", "modified"]],
+      { branch: "feat/acme-saml2" },
+    ),
+    "CHANGE_REQUIRED",
+  );
+  expectState(
+    ACCOUNTS("enterprise sso (saml, okta)"),
+    pr("Okta login for Acme", ["config/saml2_settings.php", "app/Http/Controllers/Saml2Controller.php"], { branch: "feat/okta-login" }),
+    "CHANGE_REQUIRED",
+  );
+  expectState(ACCOUNTS("team invitations"), pr("Pending invitees list", ["src/team/invitees.ts"]), "CHANGE_REQUIRED");
+});
+
+/* ------------------------------------------------------------------ */
 /* Large inputs                                                         */
 /* ------------------------------------------------------------------ */
 console.log("\n▶ Large inputs stay fast");
@@ -504,6 +744,52 @@ test("a scope whose every part matches the pull request evaluates in well under 
   const files = Array.from({ length: 300 }, (_, i) => `src/${shared.join("/")}/f${i}.ts`);
   const elapsed = time(() => evaluate(baseline, pr(shared.join(" "), files)));
   assert.ok(elapsed < 1500, `took ${Math.round(elapsed)} ms`);
+});
+
+/**
+ * The public demo's largest scope (40,000 characters of items of at most 300)
+ * against 300 paths that each hold every part word: items of `parts` words,
+ * `head` words before a bracket, and `exceptions` words after "other than".
+ */
+function adversarialScope(parts: number, exceptions: number, head: number): { baseline: ScopeBaseline; pullRequest: PullRequest } {
+  let n = 0;
+  const unique = () => {
+    const s = (n++).toString(26).padStart(3, "0").split("").map((c) => String.fromCharCode(97 + parseInt(c, 26))).join("");
+    return "k" + s.slice(-2);
+  };
+  const partWords = Array.from({ length: 90 }, (_, i) => "p" + String.fromCharCode(97 + Math.floor(i / 26)) + String.fromCharCode(97 + (i % 26)));
+  const files = Array.from({ length: 300 }, (_, i) => [...partWords, "hhh"].join("/").slice(0, 380) + "/f" + i);
+  const items: string[] = [];
+  let total = 0;
+  for (let i = 0; ; i++) {
+    const listed = Array.from({ length: parts }, (_, j) => partWords[(i + j) % partWords.length]);
+    const except = Array.from({ length: exceptions }, unique);
+    const heads = Array.from({ length: head }, unique);
+    const item = (
+      head > 0
+        ? `${heads.join(" ")} hhh (${listed.join(", ")})${exceptions ? " other than " + except.join(", ") : ""}`
+        : `${listed.join(", ")} other than ${except.join(", ")}`
+    ).slice(0, 300);
+    if (total + item.length > 40_000) break;
+    items.push(item);
+    total += item.length;
+  }
+  const clauses: Clause[] = [];
+  for (let i = 0; i < items.length; i += 100) clauses.push({ excluded: items.slice(i, i + 100) });
+  return { baseline: scope(...clauses), pullRequest: pr("x", files) };
+}
+
+test("the demo's largest scope of exceptions and bracketed examples evaluates in well under a second", () => {
+  for (const [parts, exceptions, head] of [
+    [30, 30, 0],
+    [25, 15, 10],
+    [30, 0, 30],
+    [40, 20, 0],
+  ]) {
+    const { baseline, pullRequest } = adversarialScope(parts, exceptions, head);
+    const elapsed = time(() => evaluate(baseline, pullRequest));
+    assert.ok(elapsed < 1000, `parts ${parts}, exceptions ${exceptions}, head ${head}: took ${Math.round(elapsed)} ms`);
+  }
 });
 
 test("a body that is one 65,536-character run of capitals tokenizes in linear time", () => {

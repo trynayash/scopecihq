@@ -380,22 +380,56 @@ function cleanItem(item: string): string {
  *
  * An exception stays with its item: "integrations other than Stripe and
  * SendGrid" is one exclusion, not three, and "social login (Google,
- * Facebook)" keeps its examples. The matcher reads both forms.
+ * Facebook)" keeps its examples. The matcher reads both forms. The exception
+ * ends at the next comma or semicolon, so in "payment providers other than
+ * Stripe, native mobile apps and gift cards" the mobile apps and gift cards
+ * are still excluded.
  */
 function splitList(text: string): string[] {
   const listed = text.split(/,\s*(?:which|unless|except|where|provided|because|but|as)\b/i)[0];
-  const marker = listed.search(EXCEPTION_MARKER);
-  const items = splitTopLevel(marker >= 0 ? listed.slice(0, marker) : listed);
-  if (marker >= 0) {
-    // The exception runs to the next semicolon; anything after it is listed as usual.
-    const rest = listed.slice(marker);
-    const stop = rest.indexOf(";");
-    const exception = stop >= 0 ? rest.slice(0, stop) : rest;
-    if (items.length > 0) items[items.length - 1] = `${items[items.length - 1].trimEnd()} ${exception.trim()}`;
-    else items.push(exception);
-    if (stop >= 0) items.push(...splitTopLevel(rest.slice(stop + 1)));
+  const items: string[] = [];
+  let rest = listed;
+  for (;;) {
+    const marker = rest.search(EXCEPTION_MARKER);
+    if (marker < 0) {
+      items.push(...splitTopLevel(rest));
+      break;
+    }
+    const before = splitTopLevel(rest.slice(0, marker));
+    const after = rest.slice(marker);
+    const end = exceptionEnd(after, openBrackets(rest.slice(0, marker)));
+    const exception = after.slice(0, end).trim();
+    // "integrations (" + "other than Stripe)" reads "integrations (other than stripe)".
+    const item = (before.pop() ?? "").trimEnd();
+    items.push(...before, /[([]$/.test(item) || !item ? `${item}${exception}` : `${item} ${exception}`);
+    rest = after.slice(end);
   }
   return items.map(cleanItem).filter((item) => item.length > 2);
+}
+
+/** How many brackets are still open at the end of `text`. */
+function openBrackets(text: string): number {
+  let depth = 0;
+  for (const ch of text) {
+    if (ch === "(" || ch === "[") depth++;
+    else if ((ch === ")" || ch === "]") && depth > 0) depth--;
+  }
+  return depth;
+}
+
+/**
+ * Where an exception ends: at the first comma or semicolon outside brackets.
+ * An exception inside brackets, "(other than Stripe, SendGrid)", runs to the
+ * bracket's end, so its own list stays with it.
+ */
+function exceptionEnd(text: string, depth: number): number {
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "(" || ch === "[") depth++;
+    else if (ch === ")" || ch === "]") depth = Math.max(0, depth - 1);
+    else if ((ch === "," || ch === ";") && depth === 0) return i;
+  }
+  return text.length;
 }
 
 /** Splits on commas, semicolons and "and" outside brackets, in one pass. */
