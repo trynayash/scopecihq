@@ -393,6 +393,11 @@ export interface AcceptanceInput {
      * @maxLength 500
      */
   reason: string;
+  /**
+     * The result the PM accepted (PullRequestResult.evaluationId). Names the exact pull request when a project's results hold two with the same number (it moved to another repository); 409 if it isn't that pull request's latest result.
+     * @maxLength 36
+     */
+  evaluationId?: string;
 }
 
 export interface RecheckStarted {
@@ -553,6 +558,12 @@ export interface ChangeOrderUpdateInput {
   subject?: string;
   /** @maxLength 10000 */
   body?: string;
+  /**
+     * The change order's items as the PM saw them. With status SENT or APPROVED, if the change order now lists different items (a push added work since the page loaded) the answer is 409, so nothing is sent or approved that the PM hasn't seen.
+     * @maxItems 200
+     * @items.maxLength 300
+     */
+  items?: string[];
 }
 
 export interface SwitchWorkspaceInput {
@@ -644,5 +655,13 @@ export type GetDemoGithubPrParams = {
  * @maxLength 300
  */
 url: string;
+};
+
+export type WithdrawPullRequestAcceptanceParams = {
+/**
+ * The result shown (PullRequestResult.evaluationId), naming the exact pull request as for accepting.
+ * @maxLength 36
+ */
+evaluationId?: string;
 };
 

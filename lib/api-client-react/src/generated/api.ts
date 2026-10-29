@@ -52,6 +52,7 @@ import type {
   TrackedChangeOrder,
   WaitlistSignup,
   WaitlistSignupInput,
+  WithdrawPullRequestAcceptanceParams,
   WorkspaceInfo,
   WorkspaceMember,
   WorkspaceUpdateInput
@@ -2141,21 +2142,30 @@ export const useAcceptPullRequest = <TError = ErrorType<ErrorResponse>,
     }
 
 export const getWithdrawPullRequestAcceptanceUrl = (projectId: string,
-    number: number,) => {
+    number: number,
+    params?: WithdrawPullRequestAcceptanceParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/projects/${projectId}/pull-requests/${number}/acceptance`
+  return stringifiedParams.length > 0 ? `/api/projects/${projectId}/pull-requests/${number}/acceptance?${stringifiedParams}` : `/api/projects/${projectId}/pull-requests/${number}/acceptance`
 }
 
 /**
  * @summary Withdraw an acceptance, so the pull request is judged on its own again
  */
 export const withdrawPullRequestAcceptance = async (projectId: string,
-    number: number, options?: Parameters<typeof customFetch>[1]): Promise<AcceptanceWithdrawn> => {
+    number: number,
+    params?: WithdrawPullRequestAcceptanceParams, options?: Parameters<typeof customFetch>[1]): Promise<AcceptanceWithdrawn> => {
 
-  return customFetch<AcceptanceWithdrawn>(getWithdrawPullRequestAcceptanceUrl(projectId,number),
+  return customFetch<AcceptanceWithdrawn>(getWithdrawPullRequestAcceptanceUrl(projectId,number,params),
   {
     ...options,
     method: 'DELETE'
@@ -2169,8 +2179,8 @@ export const withdrawPullRequestAcceptance = async (projectId: string,
 
 
 export const getWithdrawPullRequestAcceptanceMutationOptions = <TError = ErrorType<ErrorResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof withdrawPullRequestAcceptance>>, TError,{projectId: string;number: number}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof withdrawPullRequestAcceptance>>, TError,{projectId: string;number: number}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof withdrawPullRequestAcceptance>>, TError,{projectId: string;number: number;params?: WithdrawPullRequestAcceptanceParams}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof withdrawPullRequestAcceptance>>, TError,{projectId: string;number: number;params?: WithdrawPullRequestAcceptanceParams}, TContext> => {
 
 const mutationKey = ['withdrawPullRequestAcceptance'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
@@ -2182,10 +2192,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof withdrawPullRequestAcceptance>>, {projectId: string;number: number}> = (props) => {
-          const {projectId,number} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof withdrawPullRequestAcceptance>>, {projectId: string;number: number;params?: WithdrawPullRequestAcceptanceParams}> = (props) => {
+          const {projectId,number,params} = props ?? {};
 
-          return  withdrawPullRequestAcceptance(projectId,number,requestOptions)
+          return  withdrawPullRequestAcceptance(projectId,number,params,requestOptions)
         }
 
 
@@ -2203,11 +2213,11 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
  * @summary Withdraw an acceptance, so the pull request is judged on its own again
  */
 export const useWithdrawPullRequestAcceptance = <TError = ErrorType<ErrorResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof withdrawPullRequestAcceptance>>, TError,{projectId: string;number: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof withdrawPullRequestAcceptance>>, TError,{projectId: string;number: number;params?: WithdrawPullRequestAcceptanceParams}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof withdrawPullRequestAcceptance>>,
         TError,
-        {projectId: string;number: number},
+        {projectId: string;number: number;params?: WithdrawPullRequestAcceptanceParams},
         TContext
       > => {
       return useMutation(getWithdrawPullRequestAcceptanceMutationOptions(options));

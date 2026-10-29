@@ -1,8 +1,17 @@
+import crypto from "node:crypto";
 import type { changeOrdersTable } from "@workspace/db/schema";
 import type { ChangeOrderItem } from "@workspace/commercial-engine";
 import { itemKey } from "./acceptance.js";
 
 type ChangeOrderRow = typeof changeOrdersTable.$inferSelect;
+
+/**
+ * Identifies a letter ScopeCI wrote. Stored with the change order whenever
+ * ScopeCI writes its letter; a stored letter that no longer matches was
+ * edited by the PM and is theirs, never redrawn.
+ */
+export const letterHash = (subject: string, body: string) =>
+  crypto.createHash("sha256").update(`${subject}\n\n${body}`).digest("hex");
 
 export const isDecided = (status: string) => status === "APPROVED" || status === "REJECTED";
 

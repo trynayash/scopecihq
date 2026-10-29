@@ -21,4 +21,10 @@ export interface ChangeOrderUpdateInput {
   subject?: string;
   /** @maxLength 10000 */
   body?: string;
+  /**
+     * The change order's items as the PM saw them. With status SENT or APPROVED, if the change order now lists different items (a push added work since the page loaded) the answer is 409, so nothing is sent or approved that the PM hasn't seen.
+     * @maxItems 200
+     * @items.maxLength 300
+     */
+  items?: string[];
 }

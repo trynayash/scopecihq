@@ -12,4 +12,9 @@ export interface AcceptanceInput {
      * @maxLength 500
      */
   reason: string;
+  /**
+     * The result the PM accepted (PullRequestResult.evaluationId). Names the exact pull request when a project's results hold two with the same number (it moved to another repository); 409 if it isn't that pull request's latest result.
+     * @maxLength 36
+     */
+  evaluationId?: string;
 }

@@ -862,6 +862,10 @@ export const updateChangeOrderBodySubjectMax = 300;
 
 export const updateChangeOrderBodyBodyMax = 10000;
 
+export const updateChangeOrderBodyItemsItemMax = 300;
+
+export const updateChangeOrderBodyItemsMax = 200;
+
 
 
 export const UpdateChangeOrderBody = zod.object({
@@ -869,7 +873,8 @@ export const UpdateChangeOrderBody = zod.object({
   "hours": zod.number().int().min(updateChangeOrderBodyHoursMin).max(updateChangeOrderBodyHoursMax).nullish(),
   "status": zod.enum(['SENT', 'APPROVED', 'DECLINED']).optional(),
   "subject": zod.string().max(updateChangeOrderBodySubjectMax).optional(),
-  "body": zod.string().max(updateChangeOrderBodyBodyMax).optional()
+  "body": zod.string().max(updateChangeOrderBodyBodyMax).optional(),
+  "items": zod.array(zod.string().max(updateChangeOrderBodyItemsItemMax)).max(updateChangeOrderBodyItemsMax).optional().describe('The change order\'s items as the PM saw them. With status SENT or APPROVED, if the change order now lists different items (a push added work since the page loaded) the answer is 409, so nothing is sent or approved that the PM hasn\'t seen.')
 })
 
 export const UpdateChangeOrderResponse = zod.object({
@@ -902,10 +907,13 @@ export const AcceptPullRequestParams = zod.object({
 
 export const acceptPullRequestBodyReasonMax = 500;
 
+export const acceptPullRequestBodyEvaluationIdMax = 36;
+
 
 
 export const AcceptPullRequestBody = zod.object({
-  "reason": zod.string().min(1).max(acceptPullRequestBodyReasonMax)
+  "reason": zod.string().min(1).max(acceptPullRequestBodyReasonMax),
+  "evaluationId": zod.string().max(acceptPullRequestBodyEvaluationIdMax).optional().describe('The result the PM accepted (PullRequestResult.evaluationId). Names the exact pull request when a project\'s results hold two with the same number (it moved to another repository); 409 if it isn\'t that pull request\'s latest result.')
 })
 
 export const AcceptPullRequestResponse = zod.object({
@@ -926,6 +934,14 @@ export const withdrawPullRequestAcceptancePathProjectIdMax = 36;
 export const WithdrawPullRequestAcceptanceParams = zod.object({
   "projectId": zod.coerce.string().max(withdrawPullRequestAcceptancePathProjectIdMax),
   "number": zod.coerce.number().int()
+})
+
+export const withdrawPullRequestAcceptanceQueryEvaluationIdMax = 36;
+
+
+
+export const WithdrawPullRequestAcceptanceQueryParams = zod.object({
+  "evaluationId": zod.coerce.string().max(withdrawPullRequestAcceptanceQueryEvaluationIdMax).optional().describe('The result shown (PullRequestResult.evaluationId), naming the exact pull request as for accepting.')
 })
 
 export const WithdrawPullRequestAcceptanceResponse = zod.object({

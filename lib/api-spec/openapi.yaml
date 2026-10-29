@@ -708,6 +708,14 @@ paths:
       operationId: withdrawPullRequestAcceptance
       tags: [projects]
       summary: Withdraw an acceptance, so the pull request is judged on its own again
+      parameters:
+        - name: evaluationId
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 36
+          description: The result shown (PullRequestResult.evaluationId), naming the exact pull request as for accepting.
       responses:
         "200":
           description: Withdrawn
@@ -1346,6 +1354,13 @@ components:
           type: string
           minLength: 1
           maxLength: 500
+        evaluationId:
+          type: string
+          maxLength: 36
+          description: >-
+            The result the PM accepted (PullRequestResult.evaluationId). Names the exact pull request when a project's
+            results hold two with the same number (it moved to another repository); 409 if it isn't that pull
+            request's latest result.
       required:
         - reason
     RecheckStarted:
@@ -1577,6 +1592,16 @@ components:
         body:
           type: string
           maxLength: 10000
+        items:
+          type: array
+          maxItems: 200
+          items:
+            type: string
+            maxLength: 300
+          description: >-
+            The change order's items as the PM saw them. With status SENT or APPROVED, if the change order now lists
+            different items (a push added work since the page loaded) the answer is 409, so nothing is sent or approved
+            that the PM hasn't seen.
       required:
         - evaluationId
     SwitchWorkspaceInput:

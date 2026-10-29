@@ -158,6 +158,9 @@ export const changeOrdersTable = pgTable(
     hours: integer("hours"),
     messageSubject: text("message_subject"),
     messageBody: text("message_body"),
+    // A hash of the letter ScopeCI last wrote (see letterHash): while the
+    // stored letter still matches it, nobody edited it, so it may be redrawn.
+    letterHash: varchar("letter_hash", { length: 64 }),
     sentAt: timestamp("sent_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
