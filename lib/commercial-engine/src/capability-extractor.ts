@@ -27,6 +27,32 @@ export interface CapabilityExtractionResult {
 }
 
 /**
+ * The words of a path or text, in order: camelCase, hyphens, underscores,
+ * slashes and dots all split. Capabilities are matched on whole words, so
+ * "processor" holds no "sso", "reset.css" no password reset and
+ * "CatalogIndex" no "login".
+ */
+function wordsOf(text: string): string[] {
+  return text
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z])(?=[A-Z][a-z])/g, "$1 ")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+/** Lookups on a text's words: any of some words, or two words side by side ("sign in"). */
+function wordLookup(text: string) {
+  const words = wordsOf(text);
+  const set = new Set(words);
+  return {
+    has: (...candidates: string[]) => candidates.some((word) => set.has(word)),
+    pair: (first: string, ...seconds: string[]) =>
+      words.some((word, i) => word === first && seconds.includes(words[i + 1] ?? "")),
+  };
+}
+
+/**
  * Capability Extractor for ScopeCI Phase 4.
  *
  * Architecture Invariant (Hard Requirement 4):
@@ -39,7 +65,7 @@ export interface CapabilityExtractionResult {
  * Hard Requirements 21 & 22: Distinguishes pure refactors/tests from true capability additions.
  */
 export class CapabilityExtractor {
-  public static readonly TAXONOMY_VERSION = "cap_tax_2026_10_v2";
+  public static readonly TAXONOMY_VERSION = "cap_tax_2026_10_v3";
 
   extract(input: CapabilityExtractionInput): CapabilityExtractionResult {
     const { pullRequest, issue } = input;
@@ -183,15 +209,15 @@ export class CapabilityExtractor {
    */
   private detectCapabilitiesFromFile(file: ChangedFile, index: number): DetectedCapability[] {
     const p = file.path.toLowerCase();
+    const { has, pair } = wordLookup(file.path);
     const results: DetectedCapability[] = [];
 
     // Organization & Multi-Tenancy / RBAC
     if (
-      p.includes("organization") ||
-      p.includes("rbac") ||
-      p.includes("membership") ||
-      p.includes("permissions") ||
-      p.includes("tenant")
+      has(
+        "organization", "organizations", "organisation", "organisations", "rbac", "membership", "memberships",
+        "permission", "permissions", "tenant", "tenants",
+      )
     ) {
       results.push({
         id: `cap_rbac_${index}`,
@@ -206,7 +232,7 @@ export class CapabilityExtractor {
     }
 
     // Team Invitations
-    if (p.includes("invitation") || p.includes("invite") || p.includes("team-member")) {
+    if (has("invitation", "invitations", "invite", "invites", "invited") || pair("team", "member", "members")) {
       results.push({
         id: `cap_invite_${index}`,
         name: "team_invitations",
@@ -220,7 +246,7 @@ export class CapabilityExtractor {
     }
 
     // Password Reset
-    if (p.includes("reset") || p.includes("password-reset") || p.includes("forgot-password")) {
+    if ((has("reset") && has("password", "passwords", "auth", "authentication", "forgot")) || has("forgot")) {
       results.push({
         id: `cap_pwreset_${index}`,
         name: "password_reset",
@@ -234,13 +260,7 @@ export class CapabilityExtractor {
     }
 
     // Enterprise SSO / SAML / Okta / SCIM
-    if (
-      p.includes("saml") ||
-      p.includes("sso") ||
-      p.includes("okta") ||
-      p.includes("federation") ||
-      p.includes("scim")
-    ) {
+    if (has("saml", "sso", "okta", "federation", "federated", "scim")) {
       results.push({
         id: `cap_sso_${index}`,
         name: "enterprise_sso_saml",
@@ -253,9 +273,9 @@ export class CapabilityExtractor {
       });
     }
 
-    // User Authentication
+    // User Authentication. A bare "session" isn't one: a checkout session is payments.
     if (
-      (p.includes("/auth/") || p.includes("login") || p.includes("session")) &&
+      (has("auth", "authentication", "login", "logout", "signin", "signout") || pair("sign", "in", "out") || pair("log", "in", "out")) &&
       !results.some((r) => r.name === "organization_rbac" || r.name === "enterprise_sso_saml")
     ) {
       results.push({
@@ -306,16 +326,12 @@ export class CapabilityExtractor {
    */
   private detectCapabilitiesFromIssue(issue: LinearIssue, startIndex: number): DetectedCapability[] {
     const text = `${issue.title || ""} ${issue.description || ""}`.toLowerCase();
+    // Whole words, as for paths: "payment processor" is not SSO.
+    const { has } = wordLookup(`${issue.title || ""} ${issue.description || ""}`);
     const results: DetectedCapability[] = [];
     let idx = startIndex;
 
-    if (
-      text.includes("saml") ||
-      text.includes("sso") ||
-      text.includes("okta") ||
-      text.includes("federation") ||
-      text.includes("scim")
-    ) {
+    if (has("saml", "sso", "okta", "federation", "federated", "scim")) {
       results.push({
         id: `cap_iss_sso_${idx++}`,
         name: "enterprise_sso_saml",
@@ -328,7 +344,7 @@ export class CapabilityExtractor {
       });
     }
 
-    if (text.includes("organization") || text.includes("rbac") || text.includes("roles") || text.includes("permissions")) {
+    if (has("organization", "organizations", "organisation", "organisations", "rbac", "roles", "permissions")) {
       results.push({
         id: `cap_iss_rbac_${idx++}`,
         name: "organization_rbac",
