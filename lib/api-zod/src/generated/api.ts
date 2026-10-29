@@ -49,6 +49,35 @@ export const CreateWaitlistSignupResponse = zod.object({
 
 
 /**
+ * Stores the message for ScopeCI to read on the admin page and answer by email. Text is trimmed and control characters are removed before the limits are checked. Only what the form asks for is kept: no IP address, user agent or cookie. Messages are deleted after 365 days.
+ * @summary Send ScopeCI a message
+ */
+export const createContactMessageBodyNameMax = 120;
+
+export const createContactMessageBodyEmailMax = 254;
+
+export const createContactMessageBodyCompanyMax = 200;
+
+export const createContactMessageBodyMessageMin = 10;
+export const createContactMessageBodyMessageMax = 5000;
+
+
+
+export const CreateContactMessageBody = zod.object({
+  "name": zod.string().min(1).max(createContactMessageBodyNameMax),
+  "email": zod.string().email().max(createContactMessageBodyEmailMax).describe('Stored lowercased.'),
+  "company": zod.string().max(createContactMessageBodyCompanyMax).nullish().describe('Optional; empty is stored as no company.'),
+  "topic": zod.enum(['general', 'pilot', 'privacy', 'security', 'grievance', 'legal']).describe('What the message is about, chosen on the contact form.'),
+  "message": zod.string().min(createContactMessageBodyMessageMin).max(createContactMessageBodyMessageMax),
+  "website": zod.string().nullish().describe('Anti-spam field rendered hidden in the form. People leave it empty; a value means a bot filled it.')
+}).describe('What the contact form sends. Text is trimmed, and control characters removed (line breaks in `message` are kept), before the limits below are checked.')
+
+export const CreateContactMessageResponse = zod.object({
+  "ok": zod.boolean()
+})
+
+
+/**
  * Splits the document into clauses and lists what each one includes and excludes, for the visitor to review and correct.
  * @summary Read the scope out of a statement of work
  */
@@ -1061,5 +1090,35 @@ export const ListGitHubRepositoriesResponse = zod.object({
 })),
   "truncatedAccounts": zod.array(zod.string()).optional().describe('GitHub accounts whose installation has more repositories than ScopeCI lists (5,000); their list is cut short.')
 })
+
+
+/**
+ * @summary Messages sent through the contact form, newest first (at most 500)
+ */
+export const ListContactMessagesResponse = zod.object({
+  "messages": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "email": zod.string(),
+  "company": zod.string().nullable(),
+  "topic": zod.enum(['general', 'pilot', 'privacy', 'security', 'grievance', 'legal']).describe('What the message is about, chosen on the contact form.'),
+  "message": zod.string(),
+  "createdAt": zod.coerce.date()
+}))
+})
+
+
+/**
+ * @summary Delete one message
+ */
+export const deleteContactMessagePathIdMax = 36;
+
+
+
+export const DeleteContactMessageParams = zod.object({
+  "id": zod.coerce.string().max(deleteContactMessagePathIdMax)
+})
+
+export const DeleteContactMessageResponse = zod.void()
 
 
