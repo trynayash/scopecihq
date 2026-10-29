@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { z } from "zod";
 import type { ContractClause, Deliverable, ScopeBaseline } from "./types.js";
 import { SOW_DECOMPOSITION_PROMPT_V1 } from "./prompts/v1/sow-decomposition.js";
-import { EXCEPTION_MARKER } from "./contract-matcher.js";
+import { EXCEPTION_MARKER, plainHyphens, withoutUnclosedBrackets } from "./contract-matcher.js";
 
 export const DecomposedClauseSchema = z.object({
   clauseRef: z.string(),
@@ -206,6 +206,9 @@ export class SOWDecomposer {
 
     let currentClause: Partial<z.infer<typeof DecomposedClauseSchema>> | null = null;
     let currentTextLines: string[] = [];
+    // "4." after a "4. Exclusions" heading: the numbered lines under it
+    // ("4.1 Gift card functionality.") are the excluded items.
+    let excludedUnder: string | undefined;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
@@ -225,6 +228,11 @@ export class SOWDecomposer {
       // Look for clause header (§4.2 or Section 4.2 or ## 4.2 or Clause 4.2).
       // The separator before the title is stripped below rather than matched
       // here, so no two parts of the pattern compete for the same spaces.
+      // A numbered "Out of scope" heading ("4. Exclusions", "## 2. Exclusions")
+      // is remembered even when it is not a clause of its own.
+      const outLine = scopeHeading(line) === "Out of scope:" ? line.match(/^[#*_§\s]*(\d+(?:\.\d+)*)/) : null;
+      if (outLine) excludedUnder = `${outLine[1]}.`;
+
       let clauseHeaderMatch = line.match(/^(?:##+\s*)?(?:§|Section\s+|Clause\s+)?(\d+(?:\.\d+)+)(.+)$/i);
       if (!clauseHeaderMatch && currentClause) {
         // "## 3. Out of Scope" after numbered clauses starts its own clause, so
@@ -251,7 +259,21 @@ export class SOWDecomposer {
           exclusions: [],
           location: `Section ${clauseHeaderMatch[1]}`,
         };
-        currentTextLines = [];
+        // A numbered line can be the clause's text, not only its heading:
+        // "2.1 Gift cards are out of scope." is a sentence, and under
+        // "4. Exclusions", "4.1 Gift card functionality." is an excluded item.
+        const heading = scopeHeading(title);
+        const listed = !heading && excludedUnder !== undefined && clauseHeaderMatch[1].startsWith(excludedUnder);
+        currentTextLines = heading
+          ? []
+          : listed && !/\b(?:is|are|will|shall)\b/i.test(title) && !statesOwnExclusions(title)
+            ? // The blank line ends the list, so "5. Fees and Payment" below isn't read as an item.
+              ["Out of scope:", `- ${title}`, ""]
+            : /[.;]$|:\s*\S/.test(title)
+              ? [title]
+              : [];
+        if (heading === "Out of scope:") excludedUnder = `${clauseHeaderMatch[1]}.`;
+        else if (!listed) excludedUnder = undefined;
         continue;
       }
 
@@ -361,12 +383,20 @@ export class SOWDecomposer {
 
 const BULLET = /^\s*(?:[-*•]|\d+[.)])\s+/;
 
-/** Lowercases an item and trims list markers, markdown emphasis and trailing punctuation. */
+/**
+ * Lowercases an item and trims list markers, markdown emphasis and trailing
+ * punctuation. A typographic hyphen is saved as "-" (see plainHyphens).
+ */
 function cleanItem(item: string): string {
-  const cleaned = item
+  const cleaned = plainHyphens(item)
     .replace(BULLET, "")
     .replace(/\*\*|__/g, "")
-    .replace(/^(?:and|or)\s+/i, "");
+    .replace(/^(?:and|or)\s+/i, "")
+    // ", including CRM and ERP systems": the item is "crm", not "including crm".
+    .replace(
+      /^\s*(?:(?:including[\s,]+)?but\s+not\s+(?:necessarily\s+)?(?:limited|restricted)\s+to|including|such\s+as|for\s+(?:example|instance)|namely)\s+(?=\S)/i,
+      "",
+    );
   // Trailing punctuation is trimmed with a loop: the pattern /[\s.;:,]+$/
   // restarts at every character of a long run of spaces or dots.
   let end = cleaned.length;
@@ -384,9 +414,19 @@ function cleanItem(item: string): string {
  * ends at the next comma or semicolon, so in "payment providers other than
  * Stripe, native mobile apps and gift cards" the mobile apps and gift cards
  * are still excluded.
+ *
+ * ", except Stripe," and ", but not Stripe" are exceptions, not commentary,
+ * and "as well as" joins two items like "and". ", save for Stripe" before a
+ * name is an exception too; "save for later" is a feature, so "save for" is
+ * no exception word anywhere else.
  */
 function splitList(text: string): string[] {
-  const listed = text.split(/,\s*(?:which|unless|except|where|provided|because|but|as)\b/i)[0];
+  const listed = withoutUnclosedBrackets(
+    text
+      .replace(/,(\s*)save\s+for(?=\s+[A-Z0-9])/g, ",$1except for")
+      .replace(/\bas\s+well\s+as\b/gi, ",")
+      .split(/,\s*(?:which|unless|where|provided|because|but(?!\s+not\b)|as)\b/i)[0],
+  );
   const items: string[] = [];
   let rest = listed;
   for (;;) {
@@ -400,12 +440,19 @@ function splitList(text: string): string[] {
     const end = exceptionEnd(after, openBrackets(rest.slice(0, marker)));
     const exception = after.slice(0, end).trim();
     // "integrations (" + "other than Stripe)" reads "integrations (other than stripe)".
-    const item = (before.pop() ?? "").trimEnd();
+    let item = (before.pop() ?? "").trimEnd();
+    // "Payment providers, other than Stripe,": the exception belongs to the
+    // item before the comma, not to an empty one.
+    if (!item.trim() && before.length > 0) item = (before.pop() ?? "").trimEnd();
     items.push(...before, /[([]$/.test(item) || !item ? `${item}${exception}` : `${item} ${exception}`);
     rest = after.slice(end);
   }
-  return items.map(cleanItem).filter((item) => item.length > 2);
+  return items.map(cleanItem).filter((item) => item.length > 2 && !INTRODUCER_ONLY.test(item));
 }
+
+/** What is left of ", including, but not limited to, X" or "The following items are excluded": no item. */
+const INTRODUCER_ONLY =
+  /^(?:including|includes|such\s+as|for\s+(?:example|instance)|e\.?\s?g|i\.?\s?e|namely|(?:including\s+)?but\s+not\s+(?:necessarily\s+)?(?:limited|restricted)\s+to|the\s+following(?:\s+items)?)$/;
 
 /** How many brackets are still open at the end of `text`. */
 function openBrackets(text: string): number {
@@ -487,7 +534,8 @@ function listsAfter(text: string, header: RegExp): string[] {
 
     if (/\S/.test(text.slice(end, lineEnd))) {
       const next = matches[index + 1]?.index ?? lineEnd;
-      items.push(...splitList(text.slice(end, Math.min(lineEnd, next)).split(".")[0]));
+      // Only a "." before a space or the end ends the list: "WCAG 2.1" and "Next.js" don't.
+      items.push(...splitList(text.slice(end, Math.min(lineEnd, next)).split(/\.(?!\S)/)[0]));
       return;
     }
     if (line < lastItemLine) return;
@@ -513,14 +561,28 @@ function listsAfter(text: string, header: RegExp): string[] {
 // "Not in scope:" holds "in scope:", and "Not included:" holds "included:", so
 // the inclusion header checks for a "not" before those two. The check comes
 // after the words so it only runs where they appear.
+//
+// An exclusion header may name what it is out of before its colon, in a few
+// words or a bracket: "Out of scope for Phase 1 (may be quoted separately):",
+// "excluded from this SOW:". Both are bounded, so nothing is rescanned.
 const EXCLUSION_HEADER =
-  /\*{0,2}(?:explicit\s+exclusions?\*{0,2}[ \t]*:?|(?:exclusions|out[\s-]+of[\s-]+scope|not\s+in\s+scope|outside\s+(?:of\s+)?(?:the\s+)?scope|not\s+included|excluded|excluding|excludes)\*{0,2}[ \t]*:)/gi;
+  /\*{0,2}(?:explicit\s+exclusions?\*{0,2}[ \t]*:?|(?:exclusions|out[\s-]+of[\s-]+scope|not\s+in\s+scope|outside\s+(?:of\s+)?(?:the\s+)?scope|not\s+included|excluded|excluding|excludes|(?:(?:does|do|will|shall)\s+not|(?:does|do|wo|sha)n['\u2019]t)\s+include(?:[ \t]+the[ \t]+following)?)(?:[ \t]+(?:for|from|in|of|during|under)\b[^:\n]{0,60}|[ \t]*\([^)\n]{0,40}\))?\*{0,2}[ \t]*:)/gi;
 const INCLUSION_HEADER =
   /\*{0,2}(?:explicit\s+inclusions?\*{0,2}[ \t]*:?|(?:inclusions|in\s+scope(?<!\bnot\s+in\s+scope)|included(?<!\bnot\s+included)|including|includes)\*{0,2}[ \t]*:)/gi;
 
-/** A line or title that only names a scope list: "Out of Scope", "3. Exclusions", "Not included:". */
+/** "The following are excluded: gift cards": a numbered line that is a sentence about scope, not an item. */
+function statesOwnExclusions(text: string): boolean {
+  return /exclu|scope|include/i.test(text) && extractScopeBoundaries(text).exclusions.length > 0;
+}
+
+/**
+ * A line or title that only names a scope list: "Out of Scope", "3. Exclusions",
+ * "Not included:", "Scope Exclusions", "Out-of-Scope Items", "What's not
+ * included", "Out of Scope (Phase 2):". "Assumptions and Exclusions" is not
+ * one: its lines are mostly assumptions, which are not excluded work.
+ */
 const OUT_HEADING =
-  /^(?:\d+(?:\.\d+)*\.?\s*)?(?:(?:explicit\s+)?exclusions?|excluded|not\s+included|not\s+in\s+scope|out[\s-]+of[\s-]+scope|outside\s+(?:of\s+)?(?:the\s+)?scope)\s*:?$/i;
+  /^(?:\d+(?:\.\d+)*\.?\s*)?(?:(?:explicit\s+|scope\s+|project\s+)?exclusions?|excluded(?:\s+(?:items|services|work))?|(?:what['\u2019]?s\s+|items\s+)?not\s+included|not\s+in\s+scope|(?:items\s+)?out[\s-]+of[\s-]+scope(?:\s+(?:items|work|services))?|outside\s+(?:of\s+)?(?:the\s+)?scope)(?:\s*\([^)]*\))?\s*[:\-–]?$/i;
 const IN_HEADING = /^(?:\d+(?:\.\d+)*\.?\s*)?(?:(?:explicit\s+)?inclusions?|included|in\s+scope|deliverables)\s*:?$/i;
 
 /** The header a scope heading stands for, once markdown ("##", "**", "§") is set aside. */
@@ -537,14 +599,33 @@ function withScopeHeading(title: string | undefined, body: string): string {
   return header ? `${header}\n${body}` : body;
 }
 
-/** "Explicitly excludes X, Y and Z." / "Does not include X." on one line. The list starts at its first non-space character. */
-const EXCLUSION_PROSE = /(?:explicitly\s+excludes?|does\s+not\s+include|\bexcludes?)\b(?:[ \t]*:)?[ \t]*([^.\n \t][^.\n]*)/gi;
-/** " are explicitly out of scope": the end of "X, Y and Z are explicitly out of scope." */
+/**
+ * "Explicitly excludes X, Y and Z." / "Does not include X." / "Phase 1 will
+ * not include X." / "This SOW doesn’t include X." on one line. The list
+ * starts at its first non-space character, and a "." ends it only before a
+ * space or the end ("WCAG 2.1" and "Next.js" don't). "Should not include" and
+ * "must not include" are requirements ("Error pages should not include stack
+ * traces"), not scope, so they are neither excluded nor included.
+ */
+const EXCLUSION_PROSE =
+  /(?:explicitly\s+excludes?|\b(?:(?:does|do|will|shall)\s+not|(?:does|do|wo|sha)n['\u2019]t)\s+include|\bexcludes?)\b(?:[ \t]*:)?[ \t]*([^.\n \t](?:[^.\n]|\.(?=\S))*)/gi;
+/**
+ * " are explicitly out of scope": the end of "X, Y and Z are explicitly out of
+ * scope." Also "are outside the scope of", "fall outside the scope" and "will
+ * be out of scope". "Will not be included" and "shall be excluded" count only
+ * at the end of the sentence or before "in/from this SOW (scope, project…)":
+ * "Out-of-stock products will not be included in search results" describes
+ * how the product behaves, not what the contract leaves out.
+ */
 const EXCLUSION_PREDICATE =
-  /\s+(?:is|are)\s+(?:explicitly\s+|expressly\s+|strictly\s+)?(?:out\s+of\s+scope|excluded|not\s+included|not\s+in\s+scope)/gi;
-/** "Includes X and Y." / "shall deliver X." / "is authorized to deliver X." on one line. */
+  /\s+(?:(?:is|are)\s+(?:explicitly\s+|expressly\s+|strictly\s+)?(?:out\s+of\s+scope|excluded|not\s+included|not\s+in\s+scope|outside\s+(?:of\s+)?(?:the\s+)?scope)|falls?\s+outside\s+(?:of\s+)?(?:the\s+)?scope|(?:will|shall)\s+(?:be\s+(?:out\s+of|outside\s+(?:of\s+)?(?:the\s+)?)scope|(?:not\s+be\s+included|be\s+excluded)(?=[.;]?$|\s+(?:in|from|under)\s+(?:this|the)\s+(?:sow|scope|engagement|project|agreement|contract|statement|proposal|quote|estimate|phase)\b)))/gi;
+/**
+ * "Includes X and Y." / "shall deliver X." / "is authorized to deliver X." on
+ * one line. A negated "include" ("will not include", "doesn’t include") is
+ * never an inclusion.
+ */
 const INCLUSION_PROSE =
-  /(?:\bincludes?|(?:shall|will|(?:is|are)\s+authori[sz]ed\s+to)\s+(?:deliver|implement|build|provide)|\bfeatures?)\b[ \t]+([^.\n: \t][^.\n:]*)/gi;
+  /(?:(?<!\bnot\s|n['\u2019]t\s|\bcannot\s|\bnot\sto\s)\bincludes?|(?:shall|will|(?:is|are)\s+authori[sz]ed\s+to)\s+(?:deliver|implement|build|provide)|\bfeatures?)\b[ \t]+([^.\n: \t](?:[^.\n:]|\.(?=\S))*)/gi;
 
 /**
  * What comes before each "is out of scope" in a sentence: the words since the
@@ -559,7 +640,9 @@ function excludedSubjects(sentence: string): string[] {
   for (const match of sentence.matchAll(EXCLUSION_PREDICATE)) {
     const at = match.index ?? 0;
     for (; scanned < at; scanned++) {
-      if (".:\n".includes(sentence[scanned])) start = scanned + 1;
+      const ch = sentence[scanned];
+      // "WCAG 2.1 AA compliance is out of scope": a "." inside a word starts nothing.
+      if (ch === ":" || ch === "\n" || (ch === "." && !/\S/.test(sentence[scanned + 1] ?? ""))) start = scanned + 1;
     }
     // A predicate with nothing before it is part of the next subject.
     if (at <= start) continue;
@@ -578,7 +661,7 @@ function excludedSubjects(sentence: string): string[] {
 export function extractScopeBoundaries(legalText: string): { inclusions: string[]; exclusions: string[] } {
   // A line that only names a list ("## Out of Scope", "**Not included**")
   // becomes that list's header, so the bullets under it are read.
-  const text = legalText
+  const text = readAbbreviations(legalText)
     .split("\n")
     .map((line) => scopeHeading(line) ?? line)
     .join("\n");
@@ -600,12 +683,45 @@ export function extractScopeBoundaries(legalText: string): { inclusions: string[
     ...inSentences(INCLUSION_PROSE).flatMap((m) => splitList(m[1])),
   ];
 
+  // "Includes card payments via Stripe, excluding PayPal" or "email
+  // notifications, but not SMS": what an included item leaves out is
+  // excluded. "Except as agreed in writing" names no work.
+  for (const item of inclusions) {
+    const at = item.search(EXCEPTION_MARKER);
+    if (at < 0) continue;
+    const leftOut = item.slice(at).replace(EXCEPTION_MARKER, "");
+    if (!/^\s*(?:as|where|when|if|unless|otherwise|to\s+the\s+extent|in\s+accordance)\b/i.test(leftOut)) {
+      exclusions.push(...splitList(leftOut));
+    }
+  }
+
   const excluded = new Set(exclusions);
-  // A phrase the contract excludes is never also counted as included.
+  // A phrase the contract excludes is never also counted as included, and
+  // neither is what is left of "excluding PayPal" on its own.
   return {
-    inclusions: Array.from(new Set(inclusions)).filter((item) => !excluded.has(item)),
+    inclusions: Array.from(new Set(inclusions)).filter((item) => !excluded.has(item) && item.search(EXCEPTION_MARKER) !== 0),
     exclusions: Array.from(excluded),
   };
+}
+
+/**
+ * The periods of "e.g.", "i.e." and "etc." end no sentence or list.
+ * - "(e.g. PayPal)" becomes "(PayPal)": the bracket already marks the examples.
+ * - "social login, e.g. Google, Facebook." becomes "social login (Google,
+ *   Facebook).": examples of the item before them, which need a word of that
+ *   item to count, as bracketed examples do.
+ * - "etc." loses its period unless the sentence ends there.
+ * Every pattern starts at a fixed letter or bracket and reads forward once.
+ */
+function readAbbreviations(text: string): string {
+  return text
+    .replace(/\([ \t]?(?:e\.[ \t]?g|i\.[ \t]?e)\.,?[ \t]*/gi, "(")
+    .replace(
+      /,?[ \t]?\b(?:e\.[ \t]?g|i\.[ \t]?e)\.,?[ \t]*((?:[^.;:\n()]|\.(?=\S))*)/gi,
+      (match: string, examples: string, at: number, all: string) =>
+        all[at + match.length] === ")" ? `, ${examples}` : ` (${examples.trim()})`,
+    )
+    .replace(/\b([Ee]tc|[Ii]ncl|[Aa]pprox)\.(?![ \t]*(?:\n|$|[A-Z]))/g, "$1");
 }
 
 /**

@@ -31,6 +31,7 @@ import {
   type ContractPhraseMatch,
   matchContractPhrases,
   textCoversMatch,
+  tokenize,
 } from "./contract-matcher.js";
 import { isPullRequestWorkItem } from "./work-item.js";
 
@@ -356,7 +357,18 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
   // Whether SOW wording names a built-in capability. A word that is only part
   // of one ("team" in "Team Dashboard", "authentication" in "two-factor
   // authentication") doesn't.
-  const names = capabilityNames();
+  // What the pull request builds or names in a title, so an item's exception
+  // it names ("single sign-on except Google" for Google SSO) is left to the
+  // phrase matcher, which asks about it rather than drafting a change order.
+  const names = capabilityNames(() =>
+    tokenize(
+      [
+        pullRequest.title,
+        pullRequest.branch ?? pullRequest.headBranch ?? "",
+        ...pullRequest.changedFiles.filter((f) => f.status !== "deleted").map((f) => f.path),
+      ].join(" "),
+    ),
+  );
   // Best evidence first: it is the one named when the work is in scope.
   const inclusionMatches = phraseMatches
     .filter((m) => m.kind === "inclusion")
@@ -400,6 +412,10 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
   // Locate associated clauses
   const contractEvidenceList: ContractEvidence[] = [];
   const relevantClauses: ContractClause[] = [];
+  // Clauses whose wording matched, looked up once rather than per clause: a
+  // numbered SOW can have a clause per line.
+  const excludedByWording = new Set(phraseMatches.filter((m) => m.kind === "exclusion").map((m) => m.clause.id));
+  const includedByWording = new Set(inclusionMatches.map((m) => m.clause.id));
 
   for (const clause of baseline.clauses) {
     // Check if deliverable references this clause
@@ -407,7 +423,7 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
     // Check if clause mentions any detected capability, or its wording matched the PR
     const mentionsExclusion =
       clause.exclusions.some((exc) => detectedCapabilities.some((cap) => names.item("exclusion", exc, cap.name))) ||
-      phraseMatches.some((m) => m.kind === "exclusion" && m.clause.id === clause.id);
+      excludedByWording.has(clause.id);
     const mentionsInclusion =
       clause.inclusions.some((inc) => {
         const i = normalizeKeyword(inc);
@@ -415,7 +431,7 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
           const c = normalizeKeyword(cap.name);
           return i === c || i.includes(c) || c.includes(i);
         });
-      }) || inclusionMatches.some((m) => m.clause.id === clause.id);
+      }) || includedByWording.has(clause.id);
 
     if (isDeliverableClause || mentionsExclusion || mentionsInclusion) {
       relevantClauses.push(clause);
@@ -625,6 +641,16 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
         const { qualifier, plain } = match.missingQualifier;
         deltaMsg = `Builds ${plain} (${where}); contract ${clause.clauseRef} excludes ${capability.name}, and nothing says whether this is the "${qualifier}" kind`;
         reason = `${capability.name} is excluded by ${clause.clauseRef}, and this builds ${plain} without saying "${qualifier}"`;
+      } else if (match?.exceptionQuestion?.listedAfter) {
+        // "Payment providers other than Stripe, gift cards": gift cards may be excluded or excepted.
+        const { exception } = match.exceptionQuestion;
+        deltaMsg = `Names ${capability.name} (${where}), which contract ${clause.clauseRef} lists after its exception for ${exception}; nothing says whether it is excluded or part of that exception`;
+        reason = `${capability.name} is listed after the exception for ${exception} in ${clause.clauseRef}, so it may be excluded or allowed`;
+      } else if (match?.exceptionQuestion) {
+        // "Payment providers other than Stripe" with stripe.ts and providers/index.ts.
+        const { exception } = match.exceptionQuestion;
+        deltaMsg = `Builds ${capability.name} (${where}); contract ${clause.clauseRef} excludes it apart from ${exception}, and nothing says whether this is the ${exception} work it allows`;
+        reason = `${capability.name} is excluded by ${clause.clauseRef} apart from ${exception}, and nothing says whether this is that exception`;
       } else if (match?.missingHead) {
         // "Add PayPal" against excluded "additional payment providers (PayPal, Klarna)".
         const head = match.missingHead;

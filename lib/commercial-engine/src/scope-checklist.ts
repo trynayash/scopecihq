@@ -1,4 +1,5 @@
 import type { ContractClause, Deliverable, ScopeBaseline } from "./types.js";
+import { plainHyphens } from "./contract-matcher.js";
 
 /**
  * Scope Checklist.
@@ -20,9 +21,15 @@ export interface ScopeChecklist {
   clauses: ScopeChecklistClause[];
 }
 
-/** Trims, lowercases and de-duplicates items, dropping empty ones. */
+/**
+ * Trims, lowercases and de-duplicates items, dropping empty ones.
+ * "Multi-currency pricing" pasted with a typographic hyphen (U+2010, U+2011)
+ * is saved with "-", the way it reads.
+ */
 function normaliseItems(items: string[]): string[] {
-  return Array.from(new Set(items.map((item) => item.trim().replace(/\s+/g, " ").toLowerCase()).filter(Boolean)));
+  return Array.from(
+    new Set(items.map((item) => plainHyphens(item).trim().replace(/\s+/g, " ").toLowerCase()).filter(Boolean)),
+  );
 }
 
 export function checklistFromBaseline(baseline: ScopeBaseline): ScopeChecklist {

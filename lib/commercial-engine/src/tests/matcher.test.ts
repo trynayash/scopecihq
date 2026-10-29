@@ -286,7 +286,10 @@ test("basic search is not advanced search; standard reports are not custom repor
 
 test("enterprise reporting is not the reporting the SOW includes", () => {
   const baseline = scope({ included: ["reporting dashboard"], excluded: ["enterprise reporting"] });
-  expectState(baseline, pr("Fix reporting date filter", ["src/reporting/filters.ts"]), "IN_SCOPE");
+  expectState(baseline, pr("Fix reporting dashboard date filter", ["src/reporting/dashboard/filters.ts"]), "IN_SCOPE");
+  // "Reporting dashboard" is narrower than reporting: work that never names
+  // the dashboard may be the enterprise kind. A question, never a change order.
+  expectReview(baseline, pr("Fix reporting date filter", ["src/reporting/filters.ts"]));
   expectState(baseline, pr("Enterprise reporting exports", ["src/reporting/enterprise.ts"]), "CHANGE_REQUIRED");
 });
 
@@ -677,7 +680,7 @@ test("work the SOW includes in its plain form stays in scope; the qualified form
   const search = scope({ included: ["basic keyword search"], excluded: ["advanced search"] });
   expectState(search, pr("Fix keyword search pagination", ["src/search/keyword.ts"]), "IN_SCOPE");
   const reporting = scope({ included: ["reporting dashboard"], excluded: ["enterprise reporting"] });
-  expectState(reporting, pr("Fix reporting date filter", ["src/reporting/filters.ts"]), "IN_SCOPE");
+  expectState(reporting, pr("Fix reporting dashboard date filter", ["src/reporting/dashboard/filters.ts"]), "IN_SCOPE");
   expectState(STORE, pr("Add multi-currency pricing", ["src/pricing/multi-currency.ts"]), "CHANGE_REQUIRED");
   // Only described, never built: nothing to ask about.
   expectState(STORE, pr("Fix cart totals", ["src/checkout/cart.ts"], { body: "Unrelated to currency pricing." }), "IN_SCOPE");
@@ -891,6 +894,523 @@ test("a qualified inclusion doesn't clear excluded work built without the qualif
 test("a plain inclusion still keeps its own work in scope", () => {
   const plain = scope({ included: ["basic keyword search"], excluded: ["advanced search"] });
   expectNotExcluded(plain, pr("Keyword search results page", ["src/search/keyword-results.tsx"]));
+});
+
+/* ------------------------------------------------------------------ */
+/* Contract wording read the way it is written                          */
+/* ------------------------------------------------------------------ */
+// One test per confirmed wrong verdict from the wording sweep, with the
+// reproduction it was confirmed on and the false change orders its fix must
+// not cause.
+
+const M = (path: string): FileSpec => [path, "modified"];
+const LOYALTY_PR = (): PullRequest => pr("Loyalty points on orders", ["src/loyalty/points.ts", M("src/checkout/cart.ts")]);
+const STORE_INCLUDED = ["product catalogue", "shopping cart", "stripe checkout"];
+
+console.log("\n▶ Contract wording read the way it is written");
+
+test("1. 'will not include', 'shall not include', 'won't include' and 'doesn’t include' exclude, never include", () => {
+  const sow = (line: string) =>
+    scopeFromSow(`# Statement of Work: Acme Shop\n\n## 1.1 Storefront\nThe project includes product catalogue, shopping cart and Stripe checkout.\n${line}\n`);
+  expectState(sow("Phase 1 will not include gift cards, loyalty points or a native mobile app."), GIFT_CARDS_PR(), "CHANGE_REQUIRED");
+  expectState(sow("This SOW doesn’t include gift cards or loyalty points."), LOYALTY_PR(), "CHANGE_REQUIRED");
+  const ownClause = scopeFromSow(
+    "# SOW\n\n## 1.1 Storefront\nThe project includes product catalogue, shopping cart and Stripe checkout.\n\n## 2.1 Exclusions\nThe project will not include gift cards or loyalty points.\n",
+  );
+  expectState(ownClause, GIFT_CARDS_PR(), "CHANGE_REQUIRED");
+  // The words are only in separate places: a question, no longer "included".
+  expectReview(sow("The project will not include native mobile apps."), pr("React Native app: cart screen", ["apps/mobile/src/screens/CartScreen.tsx"]));
+  expectState(sow("The Services shall not include gift cards or loyalty points."), GIFT_CARDS_PR(), "CHANGE_REQUIRED");
+  expectState(sow("The project won't include gift cards or loyalty points."), GIFT_CARDS_PR(), "CHANGE_REQUIRED");
+  expectState(
+    sow("Phase 1 will not include gift cards, loyalty points or a native mobile app."),
+    pr("Shopping cart quantity update", [M("src/checkout/cart.ts")]),
+    "IN_SCOPE",
+  );
+  // "Should not" and "must not" state requirements, not scope.
+  const stackTraces = pr("Hide stack traces on error pages", [M("src/errors/ErrorPage.tsx")]);
+  expectNotExcluded(sow("Error pages should not include stack traces."), stackTraces);
+  expectNotExcluded(sow("Error pages must not include stack traces."), stackTraces);
+});
+
+test("2. 'e.g.', 'i.e.' and 'etc.' end neither the sentence nor the list", () => {
+  const sow = (line: string) =>
+    scopeFromSow(
+      `# Acme Storefront SOW\n\n## 1.1 Storefront and Checkout\nThe Supplier shall deliver a product catalogue and search, a shopping cart, Stripe checkout and email and password login.\n${line}\n`,
+    );
+  const gift = pr("Add gift cards", ["src/giftcards/redeem.ts", M("src/checkout/cart.ts")]);
+  expectState(sow("Out of scope: CRM integrations (e.g. Salesforce), gift cards and loyalty points."), gift, "CHANGE_REQUIRED");
+  expectState(sow("Explicitly excludes payment providers other than Stripe (e.g. PayPal), gift cards and loyalty points."), LOYALTY_PR(), "CHANGE_REQUIRED");
+  expectState(sow("Gift cards, loyalty points, etc. are out of scope."), gift, "CHANGE_REQUIRED");
+  expectState(sow("Explicitly excludes native mobile apps (i.e. iOS and Android), gift cards and loyalty points."), gift, "CHANGE_REQUIRED");
+  expectState(sow("Out of scope: CRM integrations (Salesforce, HubSpot, etc.), gift cards and loyalty points."), gift, "CHANGE_REQUIRED");
+  const social = sow("Out of scope: social login, e.g. Google, Facebook, Apple.");
+  expectState(social, pr("Google login", ["src/auth/google-oauth.ts", M("src/auth/login.ts")]), "CHANGE_REQUIRED");
+  // Trailing examples need a word of what they are examples of, as bracketed ones do.
+  expectReview(social, pr("Facebook pixel on product pages", ["src/catalog/facebook-pixel.ts"]));
+  expectReview(social, pr("Add home screen icons", ["public/apple-touch-icon.png"]));
+  // "etc" is no item: an etc/ directory is not excluded work.
+  const phpIni = pr("Raise PHP memory limit for cart", [M("etc/php/php.ini"), M("src/checkout/cart.ts")]);
+  expectNotExcluded(sow("Gift cards, loyalty points, etc. are out of scope."), phpIni);
+  expectNotExcluded(sow("Out of scope: gift cards, loyalty points, etc."), phpIni);
+});
+
+test("3. ', except Stripe,', ', other than Stripe,' and ', as well as' keep the list and the exception", () => {
+  const sow = (line: string) =>
+    scopeFromSow(`# Statement of Work\n\n## 1. Storefront and Checkout\n\nIncluded: product catalogue and search, shopping cart, Stripe checkout.\n\n${line}\n`);
+  const stripe = pr("Stripe payment provider: 3D Secure", [M("src/payments/providers/stripe.ts"), M("src/checkout/cart.ts")], {
+    branch: "feature/stripe-3ds",
+  });
+  const gift = pr("Add gift cards", ["src/giftcards/redeem.ts", M("src/checkout/cart.ts")], { branch: "feature/gift-cards" });
+  const exceptFor = sow("Out of scope: payment providers, except for Stripe, gift cards and loyalty points.");
+  expectState(exceptFor, gift, "CHANGE_REQUIRED");
+  expectState(exceptFor, stripe, "IN_SCOPE");
+  expectState(sow("Out of scope: native mobile apps, as well as gift cards and loyalty points."), LOYALTY_PR(), "CHANGE_REQUIRED");
+  expectState(sow("Gift cards, as well as loyalty points, are out of scope."), LOYALTY_PR(), "CHANGE_REQUIRED");
+  expectState(sow("Excludes gift cards, as well as loyalty points."), LOYALTY_PR(), "CHANGE_REQUIRED");
+  const commaSet = sow("Payment providers, other than Stripe, are out of scope.");
+  expectState(commaSet, stripe, "IN_SCOPE");
+  expectState(commaSet, pr("Add PayPal payment provider", ["src/payments/providers/paypal.ts", M("src/checkout/cart.ts")]), "CHANGE_REQUIRED");
+  expectState(sow("Payment providers, except Stripe, are out of scope."), stripe, "IN_SCOPE");
+  expectState(
+    sow("Out of scope: third-party integrations, including, but not limited to, Salesforce and HubSpot."),
+    pr("Sync orders to Salesforce", ["src/integrations/salesforce/client.ts", M("src/checkout/cart.ts")]),
+    "CHANGE_REQUIRED",
+  );
+  // Commentary after the list is still not an item.
+  expectState(sow("Out of scope: hosting, as agreed with the Client."), pr("Production hosting on AWS", ["infra/hosting/aws.tf"]), "CHANGE_REQUIRED");
+});
+
+test("4. 'with the exception of', 'excluding' and 'not including' are exceptions; 'save for later' and 'excluding VAT' are not", () => {
+  const sow = (line: string) =>
+    scopeFromSow(`# Statement of Work\n\n## 1. Storefront\n\n### 1.1 Checkout\n\nThe Supplier will build the product catalogue, shopping cart and checkout. ${line}\n`);
+  const gateways = sow("Out of scope: all payment gateways with the exception of Stripe.");
+  expectState(gateways, pr("Add PayPal payment gateway", ["src/payments/gateways/paypal.ts", M("src/checkout/cart.ts")], { branch: "feat/paypal" }), "CHANGE_REQUIRED");
+  expectState(gateways, pr("Add Adyen gateway", ["src/payments/gateways/adyen.ts", M("src/checkout/payment-step.tsx")]), "CHANGE_REQUIRED");
+  const retries = pr("Stripe gateway retries", [M("src/payments/gateways/stripe.ts")]);
+  expectNotExcluded(sow("All payment gateways, with the exception of Stripe, are out of scope."), retries);
+  const checkout = { included: ["product catalogue", "shopping cart", "checkout"] };
+  expectNotExcluded(scope({ ...checkout, excluded: ["payment gateways with the exception of stripe"] }), retries);
+  const refunds = pr("Stripe webhooks for refunds", ["src/payments/stripe/webhooks.ts", M("src/checkout/cart.ts")], { branch: "feat/stripe-refunds" });
+  expectNotExcluded(sow("Payment providers (excluding Stripe) are out of scope."), refunds);
+  const typed = scope({ ...checkout, excluded: ["payment providers (excluding stripe)"] });
+  expectNotExcluded(typed, refunds);
+  expectState(typed, pr("Add Klarna payment provider", ["src/payments/providers/klarna.ts", M("src/checkout/cart.ts")]), "CHANGE_REQUIRED");
+  expectNotExcluded(sow("Payment providers, not including Stripe, are out of scope."), refunds);
+  expectNotExcluded(
+    sow("Payment providers, save for Stripe, are excluded."),
+    pr("Stripe payment provider: 3D Secure", [M("src/payments/providers/stripe.ts"), M("src/checkout/cart.ts")]),
+  );
+  // Features and prices that only use the words are still excluded.
+  const saveForLater = pr("Add save for later to cart", ["src/cart/save-for-later.ts", M("src/checkout/cart.ts")], { branch: "feat/save-for-later" });
+  const features = scope({ included: ["shopping cart"], excluded: ["save for later", "wishlists", "b2b prices excluding vat"] });
+  expectState(features, saveForLater, "CHANGE_REQUIRED");
+  expectState(features, pr("Show B2B prices excluding VAT", ["src/pricing/b2b-ex-vat.ts", M("src/checkout/cart.ts")]), "CHANGE_REQUIRED");
+  const parsed = scopeFromSow(
+    "# SOW\n\n## 1.1 Store\nIncludes product catalogue and shopping cart.\n**Out of scope:** save for later, wishlists and product reviews.\n",
+  );
+  expectState(parsed, saveForLater, "CHANGE_REQUIRED");
+});
+
+test("5. the first example after 'such as', 'including' or 'for example' is excluded next to its head", () => {
+  const sow = (line: string) =>
+    scopeFromSow(`# SOW\n## 1.1 Store\nIncludes product catalogue, shopping cart, email and password login and Stripe checkout.\n${line}\n`);
+  const salesforce = pr("Sync orders to Salesforce", ["src/integrations/salesforce/client.ts", M("src/checkout/cart.ts")], { branch: "feat/salesforce" });
+  expectState(sow("Third-party integrations such as Salesforce and HubSpot are out of scope."), salesforce, "CHANGE_REQUIRED");
+  expectState(scope({ included: STORE_INCLUDED, excluded: ["third-party integrations such as salesforce and hubspot"] }), salesforce, "CHANGE_REQUIRED");
+  expectState(sow("Out of scope: CRM integrations including Salesforce and HubSpot."), salesforce, "CHANGE_REQUIRED");
+  const google = pr("Google login", ["src/auth/google-oauth.ts", M("src/auth/login.ts")]);
+  expectState(sow("Out of scope: social login (for example Google or Facebook)."), google, "CHANGE_REQUIRED");
+  expectState(scope({ included: STORE_INCLUDED, excluded: ["third-party integrations (for instance salesforce, hubspot)"] }), salesforce, "CHANGE_REQUIRED");
+  // Named without anything it is an example of: a question, as a bracketed example is.
+  expectReview(
+    scope({ included: STORE_INCLUDED, excluded: ["payment providers such as paypal and klarna"] }),
+    pr("Add PayPal to checkout", ["src/checkout/paypal.ts", M("src/checkout/cart.ts")]),
+  );
+  expectReview(sow("Excludes: additional payment providers such as PayPal and Klarna."), pr("Add PayPal", ["src/checkout/paypal.ts"], { branch: "feat/paypal" }));
+  expectNotExcluded(
+    scope({ included: ["shopping cart"], excluded: ["social login such as google"] }),
+    pr("Add Google Analytics events to cart", ["src/analytics/google-analytics.ts", M("src/checkout/cart.ts")]),
+  );
+  // The whole item still counts as it did.
+  expectState(scope({ included: ["shopping cart"], excluded: ["integrations such as salesforce and hubspot"] }), salesforce, "CHANGE_REQUIRED");
+  expectState(
+    scope({ included: ["shopping cart"], excluded: ["payment providers like paypal or klarna"] }),
+    pr("Add Klarna payment provider", ["src/payments/klarna-provider.ts"]),
+    "CHANGE_REQUIRED",
+  );
+});
+
+test("6. numbered legal sub-clauses keep their text", () => {
+  const gift = pr("Add gift cards", ["src/giftcards/redeem.ts", M("src/cart.ts")]);
+  const sentences = scopeFromSow(
+    "## 1.1 Storefront\nIncludes product catalogue, shopping cart and Stripe checkout.\n\n## 2. Exclusions\n2.1 Gift cards are out of scope.\n2.2 Loyalty points are excluded.\n",
+  );
+  expectState(sentences, gift, "CHANGE_REQUIRED");
+  expectState(sentences, pr("Loyalty points on orders", ["src/loyalty/points.ts", M("src/cart.ts")]), "CHANGE_REQUIRED");
+  const redeem = pr("Add gift card redemption", ["src/giftcards/redeem.ts", M("src/cart/cart.ts")], { branch: "feature/gift-cards" });
+  const wordExport = scopeFromSow(
+    "Statement of Work - Acme Storefront\n\n3. Deliverables\n3.1 Storefront\nThe Agency will deliver a product catalogue, shopping cart and Stripe checkout.\n\n4. Exclusions\n4.1 Gift card functionality.\n4.2 Loyalty points programme.\n",
+  );
+  expectState(wordExport, redeem, "CHANGE_REQUIRED");
+  expectState(wordExport, pr("Shopping cart quantity fix", [M("src/cart/cart.ts")]), "IN_SCOPE");
+  const storefront = "## 1.1 Storefront\nIncludes product catalogue, shopping cart and Stripe checkout.\n\n";
+  expectState(scopeFromSow(`${storefront}## 1.2 Out of scope\n1.2.1 Gift cards.\n1.2.2 Loyalty points.\n`), redeem, "CHANGE_REQUIRED");
+  expectState(
+    scopeFromSow(`${storefront}## 5. Assumptions and Exclusions\n5.1 The Client will supply all product photography.\n5.2 Gift cards and loyalty points are not included.\n`),
+    redeem,
+    "CHANGE_REQUIRED",
+  );
+  const services = "## 1.1 Storefront\nThe Services include a product catalogue, shopping cart and Stripe checkout.\n\n";
+  expectState(scopeFromSow(`${services}## 1.2 Other\nThe Services do not include gift cards or loyalty points.`), redeem, "CHANGE_REQUIRED");
+  expectState(scopeFromSow(`${services}1.2 The Services do not include gift cards or loyalty points.`), redeem, "CHANGE_REQUIRED");
+  expectState(
+    scopeFromSow(`${storefront}## 2. Exclusions\n2.1 The following are excluded: gift cards, loyalty points.\n`),
+    pr("Loyalty points on orders", ["src/loyalty/points.ts", M("src/cart.ts")]),
+    "CHANGE_REQUIRED",
+  );
+  expectState(
+    scopeFromSow("## 1.1 Storefront\nIncludes product catalogue, shopping cart and Stripe checkout.\nSection 1.2 Gift cards and loyalty points are out of scope.\n"),
+    gift,
+    "CHANGE_REQUIRED",
+  );
+  // The heading after the list is not one of its items.
+  const fees = scopeFromSow(
+    "Statement of Work\n\n3. Deliverables\n3.1 Storefront\nThe Agency will deliver a product catalogue, shopping cart and Stripe checkout.\n\n4. Exclusions\n4.1 Gift card functionality.\n4.2 Loyalty points programme.\n5. Fees and Payment\nFees are payable monthly.\n",
+  );
+  expectState(fees, pr("Stripe payment retries", [M("src/payments/stripe.ts"), M("src/checkout/cart.ts")]), "IN_SCOPE");
+});
+
+test("7. what an included item leaves out is excluded", () => {
+  const sow = (line: string) => scopeFromSow(`# Storefront SOW\n\n## 1.1 Storefront\nThe Agency shall deliver a product catalogue and shopping cart.\n${line}\n`);
+  const card = sow("Includes payment by card via Stripe, excluding PayPal.");
+  expectState(card, pr("Add PayPal payments", ["src/payments/paypal.ts"], { branch: "feature/paypal" }), "CHANGE_REQUIRED");
+  expectState(card, pr("Add PayPal to checkout", ["src/checkout/paypal.ts", M("src/checkout/cart.ts")]), "CHANGE_REQUIRED");
+  expectState(sow("Includes social login with Google and Facebook, excluding Apple."), pr("Sign in with Apple", ["src/auth/apple-signin.ts", M("src/auth/login.ts")]), "CHANGE_REQUIRED");
+  const email = sow("Includes email notifications, but not SMS notifications.");
+  expectState(email, pr("SMS order updates via Twilio", ["src/notifications/sms/twilio.ts", M("src/notifications/order-status.ts")]), "CHANGE_REQUIRED");
+  expectState(email, pr("Order shipped email notification", ["src/notifications/email/shipped.ts"]), "IN_SCOPE");
+  expectState(sow("Includes integration with all payment providers other than PayPal."), pr("Add PayPal to checkout", ["src/checkout/paypal.ts", M("src/checkout/cart.ts")]), "CHANGE_REQUIRED");
+  expectState(sow("Includes English-language content only, excluding translations."), pr("Add French translations", ["src/i18n/fr.json", M("src/catalog/ProductPage.tsx")]), "CHANGE_REQUIRED");
+  expectReview(sow("Includes a responsive web storefront, excluding native mobile apps."), pr("React Native app shell", ["mobile/App.tsx", "mobile/src/screens/Catalogue.tsx"]));
+  expectState(
+    scopeFromSow("# SOW\n\n### In Scope\n- Product catalogue\n- Payment by card via Stripe, excluding PayPal\n"),
+    pr("Add PayPal payments", ["src/payments/paypal.ts"], { branch: "feature/paypal" }),
+    "CHANGE_REQUIRED",
+  );
+  // An exception to an exclusion is allowed work, not a change order.
+  expectNotExcluded(
+    scopeFromSow("# SOW\n\n### In Scope\n- Product catalogue\n- Stripe checkout\n\n### Out of Scope\n- Third-party integrations, excluding Stripe\n"),
+    pr("Stripe checkout", ["src/payments/stripe.ts", M("src/checkout/cart.ts")]),
+  );
+  expectNotExcluded(sow("Out of scope: ongoing hosting, excluding initial setup."), pr("Initial hosting setup on AWS", ["infra/aws/setup.tf", "infra/aws/hosting.tf"]));
+});
+
+const BULLET_SOW = (bullet: string): ScopeBaseline =>
+  scopeFromSow(
+    `# SOW\n## 2.1 Storefront\n**Explicit Inclusions**:\n- Product catalogue and search\n- Shopping cart\n- Stripe checkout\n\n**Explicit Exclusions**:\n- ${bullet}\n`,
+  );
+
+test("8. after an exception's comma or semicolon in a bullet or typed item, later items are never in scope", () => {
+  const listed = BULLET_SOW("Payment providers other than Stripe, gift cards and loyalty points");
+  expectReview(listed, GIFT_CARDS_PR());
+  expectReview(listed, pr("Add loyalty points at checkout", ["src/loyalty/points.ts", M("src/checkout/cart.ts")]));
+  expectState(listed, pr("Stripe payment provider: 3D Secure", [M("src/payments/providers/stripe.ts"), M("src/checkout/cart.ts")]), "IN_SCOPE");
+  expectState(BULLET_SOW("Payment providers other than Stripe; gift cards"), GIFT_CARDS_PR(), "CHANGE_REQUIRED");
+  expectReview(
+    BULLET_SOW("All third-party integrations except Stripe, including CRM and ERP systems"),
+    pr("Sync customers to the CRM", ["src/integrations/crm/hubspot-sync.ts", M("src/checkout/cart.ts")]),
+  );
+  expectReview(scope({ included: ["product catalogue and search", "shopping cart", "stripe checkout"], excluded: ["payment providers other than stripe, gift cards"] }), GIFT_CARDS_PR());
+  expectState(BULLET_SOW("Payment providers [other than Stripe] and gift cards"), GIFT_CARDS_PR(), "CHANGE_REQUIRED");
+  expectReview(
+    BULLET_SOW("Payment gateways other than Stripe, such as PayPal or Klarna"),
+    pr("Add PayPal to checkout", ["src/checkout/paypal.ts", M("src/checkout/cart.ts")], { branch: "feat/paypal" }),
+  );
+  // An exception after the semicolon stays an exception, and a part that may be one names no capability.
+  expectNotExcluded(BULLET_SOW("Payment providers except PayPal; analytics other than Plausible"), pr("Add Plausible analytics", ["src/analytics/plausible.ts"]));
+  expectNotExcluded(
+    scope({ included: ["single sign-on with okta"], excluded: ["identity providers other than google, okta"] }),
+    pr("Okta SSO for staff login", ["src/auth/okta-sso.ts", "src/auth/saml-callback.ts"]),
+  );
+});
+
+test("9. an exception that is the plain variant keeps its qualifier", () => {
+  const search = scopeFromSow(
+    "# SOW\n## 2.1 Storefront\n**Explicit Inclusions**:\n- Product catalogue\n- Basic search\n- Shopping cart\n\n**Explicit Exclusions**:\n- Search features other than basic search\n",
+  );
+  expectReview(search, pr("Faceted search filters", ["src/search/facets.ts", M("src/search/SearchPage.tsx")]));
+  const reports = scopeFromSow("# SOW\n## 4.1 Reporting\nIncludes standard reports and an orders dashboard.\nExcludes reports other than standard reports.\n");
+  const builder = pr("Report builder: pick columns and date ranges", ["src/reports/ReportBuilder.tsx"]);
+  expectReview(reports, builder);
+  expectState(reports, pr("Standard reports: fix date filter", [M("src/reports/standard/date-filter.ts")]), "IN_SCOPE");
+  expectReview(
+    scope({ included: ["shopping cart", "order emails"], excluded: ["email templates other than the standard templates"] }),
+    pr("Abandoned cart email template", ["src/emails/templates/abandoned-cart.tsx"]),
+  );
+  // A file that names the plain exception doesn't hide another one building the excluded work.
+  expectState(
+    scope({ included: ["shopping cart"], excluded: ["payment gateways other than the standard stripe gateway"] }),
+    pr("Add PayPal checkout", ["src/payment-gateways/stripe-adapter.ts", "src/payment-gateways/paypal.ts"]),
+    "CHANGE_REQUIRED",
+  );
+  // An included item's qualified exception keeps unqualified work out of scope.
+  expectReview(scope({ included: ["reports other than custom reports"] }), builder);
+});
+
+test("10. a shared file next to the excepted work is a question, not a change order", () => {
+  const stripe = pr("Stripe: support 3D Secure", [M("src/payments/providers/stripe.ts"), M("src/payments/providers/index.ts")]);
+  const parsed = scopeFromSow("# SOW\n## 1.1 Payments\nExcludes payment providers other than Stripe.\n\n## 1.2 Storefront\nIncludes shopping cart, Stripe checkout and order confirmation emails.\n");
+  expectNotExcluded(parsed, stripe);
+  expectState(parsed, pr("Add Klarna payment provider", ["src/payments/providers/klarna.ts", M("src/payments/providers/index.ts")]), "CHANGE_REQUIRED");
+  expectNotExcluded(scope({ included: ["stripe checkout"], excluded: ["payment providers other than stripe"] }), stripe);
+  const notifications = scope({ included: ["order confirmation emails"], excluded: ["notifications other than email"] });
+  expectNotExcluded(notifications, pr("Order shipped email", ["src/notifications/email/order-shipped.ts", M("src/notifications/dispatcher.ts")]));
+  expectState(notifications, pr("SMS order shipped", ["src/notifications/sms/order-shipped.ts", M("src/notifications/dispatcher.ts")]), "CHANGE_REQUIRED");
+  const analytics = scope({ included: ["stripe checkout"], excluded: ["analytics other than google analytics"] });
+  expectNotExcluded(analytics, pr("Google Analytics purchase event", [M("src/analytics/google-analytics.ts"), M("src/analytics/tracker.ts")]));
+  // The exception named in an unrelated file doesn't excuse other analytics.
+  expectState(analytics, pr("Mixpanel purchase event", ["src/analytics/mixpanel.ts", M("src/auth/google.ts")]), "CHANGE_REQUIRED");
+  const result = evaluate(parsed, stripe);
+  assert.ok(result.detectedDelta.some((d) => d.includes("apart from stripe")), result.detectedDelta.join(" | "));
+});
+
+test("11. a narrower inclusion the pull request never names doesn't clear the qualifier question", () => {
+  const prose = scopeFromSow("# SOW\n## 1.1 Store\nIncludes order management and sales reports.\nOut of scope: custom reports.\n");
+  expectReview(prose, pr("Report builder for admins", ["src/admin/reports/ReportBuilder.tsx", M("src/admin/orders.ts")]));
+  expectReview(scope({ included: ["sales reports"], excluded: ["custom reports"] }), pr("Ad-hoc report builder: pick columns", ["src/reports/builder/ColumnPicker.tsx", "src/reports/builder/query.ts"]));
+  expectReview(scopeFromSow("# SOW\n## 1.1 Store\nIncludes product search.\nOut of scope: advanced search.\n"), pr("Faceted search with brand filters", ["src/search/facets.ts", M("src/search/SearchPage.tsx")]));
+  const narrower = scope({
+    included: ["order management", "sales reports", "product search", "admin dashboard"],
+    excluded: ["custom reports", "advanced search", "custom dashboards"],
+  });
+  expectReview(narrower, pr("Dashboard builder: drag-and-drop widgets", ["src/dashboard/builder/WidgetGrid.tsx"]));
+  expectState(narrower, pr("Fix date range on monthly sales report", ["src/reports/sales.ts"]), "IN_SCOPE");
+  expectState(narrower, pr("Fix product search pagination", [M("src/search/SearchPage.tsx")]), "IN_SCOPE");
+  expectState(narrower, pr("Custom report builder", ["src/reports/custom-builder.ts"]), "CHANGE_REQUIRED");
+});
+
+test("12. common exclusion headings and predicates are read", () => {
+  const giftPR = pr("Add gift cards", ["src/giftcards/redeem.ts", M("src/checkout/cart.ts")], { branch: "feature/gift-cards" });
+  const agency = scopeFromSow(
+    "# Website Rebuild — Statement of Work\n## 1. Project Overview\nRebuild of the marketing site and online store on Next.js.\n## 2. Deliverables\n- Product catalogue and search\n- Shopping cart\n- Stripe checkout\n- Order confirmation emails\n## 3. Scope Exclusions\nThe following items are excluded from this SOW and may be quoted separately:\n- Gift cards\n- Loyalty points\n- Native mobile apps\n",
+  );
+  expectState(agency, giftPR, "CHANGE_REQUIRED");
+  expectState(agency, pr("Native mobile app shell", ["mobile/App.tsx"]), "CHANGE_REQUIRED");
+  const inScope = (rest: string) =>
+    scopeFromSow(`# SOW\n## 1. In Scope\n- Product catalogue and search\n- Shopping cart\n- Stripe checkout\n\n${rest}\n`);
+  for (const rest of [
+    "## 2.1 Exclusions\nThe following items are excluded from this SOW:\n- Gift cards",
+    "Out of scope for Phase 1 (may be quoted separately): gift cards, loyalty points.",
+    "## 2.1 Scope Exclusions\n- Gift cards",
+    "## Out-of-Scope Items\n- Gift cards",
+    "**Out of Scope (Phase 2):**\n- Gift cards",
+    "Out of scope -\n- Gift cards",
+    "## What's not included\n- Gift cards",
+    "Gift cards are outside the scope of this SOW.",
+    "Gift cards will not be included.",
+    "Gift cards shall be excluded.",
+    "Gift cards fall outside the scope of this engagement.",
+    "Not included in this SOW:\n- Gift cards",
+    "## Excluded Services\n- Gift cards",
+  ]) {
+    expectState(inScope(rest), giftPR, "CHANGE_REQUIRED");
+  }
+  expectState(
+    scopeFromSow("# SOW\n## 1.1 Storefront\nThe Agency shall deliver the product catalogue, shopping cart and Stripe checkout.\n## 3. Out-of-Scope Items\n- Gift cards\n"),
+    giftPR,
+    "CHANGE_REQUIRED",
+  );
+  // Sentences about how the product behaves, and assumptions, are not exclusions.
+  expectNotExcluded(
+    inScope("Out-of-stock products will not be included in search results."),
+    pr("Show out-of-stock products with a badge", [M("src/catalog/ProductCard.tsx"), M("src/search/results.ts")]),
+  );
+  expectNotExcluded(inScope("Draft orders shall be excluded from the sales report."), pr("Draft orders in admin", ["src/admin/orders/drafts.ts"]));
+  expectNotExcluded(
+    inScope("## Assumptions and Exclusions\n- The Client will supply Stripe API credentials"),
+    pr("Stripe checkout: read API credentials from env", [M("src/checkout/stripe.ts")]),
+  );
+});
+
+test("13. 'other', 'additional' and 'alternative' payment providers don't make the included provider's work a change order", () => {
+  const stripe = pr("Stripe payment provider: 3D Secure", [M("src/payments/providers/stripe.ts"), M("src/checkout/cart.ts")]);
+  expectReview(
+    scopeFromSow("# SOW\n## 2.1 Storefront\nIncludes product catalogue, shopping cart and Stripe checkout.\n\nOut of scope: integration with other payment providers.\n"),
+    stripe,
+  );
+  const additional = scope({ included: STORE_INCLUDED, excluded: ["additional payment providers (paypal, klarna, apple pay)"] });
+  expectReview(additional, stripe);
+  expectReview(scope({ included: STORE_INCLUDED, excluded: ["alternative payment gateways"] }), pr("Stripe gateway retries", [M("src/payments/gateways/stripe.ts")]));
+  // A named example, or work that says the word itself, is still excluded.
+  expectState(additional, pr("Add Klarna payment provider", ["src/payments/providers/klarna.ts", M("src/checkout/cart.ts")]), "CHANGE_REQUIRED");
+  expectState(
+    scope({ included: STORE_INCLUDED, excluded: ["additional payment providers"] }),
+    pr("Add Klarna as an additional payment provider", ["src/payments/providers/klarna.ts"]),
+    "CHANGE_REQUIRED",
+  );
+  expectState(scope({ included: ["up to 10 landing pages"], excluded: ["additional pages"] }), pr("Additional landing page for spring sale", ["src/pages/landing/spring-sale.tsx"]), "CHANGE_REQUIRED");
+  // An included provider never clears another one: a question, never in scope.
+  expectReview(scope({ included: ["payment gateway integration (stripe)"], excluded: ["alternative payment gateways"] }), pr("Add Adyen payment gateway", ["src/payments/gateways/adyen.ts"]));
+  expectReview(scope({ included: ["third-party integration with stripe"], excluded: ["all other third-party integrations"] }), pr("Sync newsletter signups to Mailchimp", ["src/integrations/third-party/mailchimp.ts"]));
+  // Built without the word: the same question.
+  expectReview(scope({ included: STORE_INCLUDED, excluded: ["additional languages"] }), pr("Language switcher", ["src/i18n/LanguageSwitcher.tsx"]));
+});
+
+test("14. a capability doesn't override an item's exception", () => {
+  const auth = scopeFromSow("## 3.2 Authentication\n\nIncludes email and password login, password reset and Google sign-in.\n\nExcludes single sign-on except Google.\n");
+  const googleSso = pr("Google SSO", ["src/auth/sso/google.ts", M("src/auth/LoginPage.tsx")]);
+  expectNotExcluded(auth, googleSso);
+  expectNotExcluded(
+    scopeFromSow("## 3.2 Authentication\n\nIncludes email and password login, password reset and Google sign-in.\n\n**Explicit Exclusions**:\n- Single sign-on except Google\n"),
+    googleSso,
+  );
+  expectNotExcluded(
+    scopeFromSow("## 3.1 Authentication\n\nIncludes email and password login, password reset and sign-in with Google Workspace.\n\nSingle sign-on (SSO) with identity providers other than Google Workspace is out of scope.\n"),
+    pr("Google Workspace SSO", ["src/auth/sso/google-workspace.ts"], { branch: "feat/google-workspace-sso" }),
+  );
+  expectNotExcluded(
+    scopeFromSow("## 4.1 Reporting\n\nIncludes an orders dashboard with filters.\n\nExports other than CSV are out of scope.\n"),
+    pr("Export orders to CSV", ["src/orders/exportCsv.ts", M("src/orders/OrdersPage.tsx")]),
+  );
+  expectNotExcluded(
+    scopeFromSow("# SOW\n## 1.1 Auth\nIncludes email and password login.\n\n**Explicit Exclusions**:\n- Third-party integrations other than the client's identity provider (Okta)\n"),
+    pr("Okta login", ["src/auth/okta.ts"]),
+  );
+  // Work outside the exception is still excluded by the capability.
+  expectState(auth, pr("Okta SAML login", ["src/auth/sso/okta-saml.ts"]), "CHANGE_REQUIRED");
+  expectState(auth, pr("Azure AD single sign-on", ["src/auth/sso/azure-ad.ts"]), "CHANGE_REQUIRED");
+  expectState(scope({ included: ["orders dashboard"], excluded: ["data exports except csv"] }), pr("Export orders to PDF", ["src/orders/exportPdf.ts"]), "CHANGE_REQUIRED");
+  expectState(scope({ included: ["shopping cart"], excluded: ["single sign-on (sso)"] }), pr("Okta SAML login", ["src/auth/sso/okta-saml.ts"]), "CHANGE_REQUIRED");
+});
+
+test("15. a '.' inside a list ('e.g.', 'etc.', 'WCAG 2.1', 'v2.0') doesn't end it", () => {
+  const sow = (line: string) =>
+    scopeFromSow(`# Acme Storefront SOW\n\n## 1.1 Storefront and Checkout\nThe Supplier shall deliver a product catalogue and search, a shopping cart and Stripe checkout.\n${line}\n`);
+  const gift = pr("Add gift cards", ["src/giftcards/redeem.ts", M("src/checkout/cart.ts")]);
+  for (const line of [
+    "Excludes native mobile apps (i.e. iOS and Android), gift cards and loyalty points.",
+    "Out of scope: additional payment providers (e.g. PayPal), gift cards and loyalty points.",
+    "Out of scope: additional payment providers (e.g., PayPal), gift cards and loyalty points.",
+    "Explicitly excludes CRM integrations (Salesforce, HubSpot, etc.), gift cards and loyalty points.",
+    "Excludes WCAG 2.1 AA compliance, gift cards and loyalty points.",
+    "Out of scope: v2.0 redesign, gift cards and loyalty points.",
+    "The project does not include payment providers (e.g. PayPal) or gift cards.",
+  ]) {
+    expectState(sow(line), gift, "CHANGE_REQUIRED");
+  }
+  expectState(
+    sow("Excludes third-party integrations (e.g. Salesforce, HubSpot)."),
+    pr("Sync orders to Salesforce", ["src/integrations/salesforce/client.ts", M("src/checkout/cart.ts")]),
+    "CHANGE_REQUIRED",
+  );
+  // "Node.js" stays one word: "node" alone is not excluded.
+  expectNotExcluded(sow("Excludes a Node.js backend rewrite."), pr("Show node count in category tree", [M("src/catalog/CategoryTree.tsx")]));
+  expectState(
+    scopeFromSow("# SOW\n## 1.1 Store\nThe Supplier shall deliver a product catalogue (e.g. search and filters), a shopping cart and Stripe checkout.\n"),
+    pr("Shopping cart quantity fix", [M("src/checkout/cart.ts")]),
+    "IN_SCOPE",
+  );
+});
+
+test("16. the first example after 'such as', 'including' or 'e.g.' is excluded too", () => {
+  const sow = (line: string) => scopeFromSow(`# SOW\n## 1.1 Store\nIncludes product catalogue, shopping cart and Stripe checkout.\n${line}\n`);
+  const salesforce = pr("Sync orders to Salesforce", ["src/integrations/salesforce/client.ts", M("src/checkout/cart.ts")], { branch: "feat/salesforce-sync" });
+  const hubspot = pr("Sync new customers to HubSpot", ["src/integrations/hubspot.ts", M("src/checkout/cart.ts")]);
+  for (const line of [
+    "Excludes CRM integrations including Salesforce and HubSpot.",
+    "Excludes CRM integrations, e.g. Salesforce and HubSpot.",
+    "Excludes CRM integrations, including, but not limited to, Salesforce and HubSpot.",
+    "Integrations with CRM systems such as Salesforce or HubSpot are out of scope.",
+    "Excludes CRM integrations, for example Salesforce or HubSpot.",
+    "Excludes CRM integrations (e.g. Salesforce, HubSpot).",
+  ]) {
+    expectState(sow(line), salesforce, "CHANGE_REQUIRED");
+    expectState(sow(line), hubspot, "CHANGE_REQUIRED");
+  }
+  expectState(scope({ included: STORE_INCLUDED, excluded: ["crm integrations including salesforce and hubspot"] }), salesforce, "CHANGE_REQUIRED");
+  // PayPal named without "payment" or "gateway": a question, as "(PayPal, Klarna)" is.
+  const paypal = pr("Add PayPal to checkout", ["src/checkout/paypal.ts", M("src/checkout/cart.ts")], { branch: "feat/paypal" });
+  expectReview(sow("Excludes additional payment gateways such as PayPal, Klarna or Adyen."), paypal);
+  expectReview(sow("**Explicit Exclusions**:\n- Additional payment gateways such as PayPal or Klarna"), paypal);
+  // An included item's examples don't clear an excluded qualified variant.
+  expectReview(
+    scope({ included: ["product catalogue including keyword search", "shopping cart"], excluded: ["advanced search"] }),
+    pr("Faceted search with price and brand filters", ["src/search/facets.ts"]),
+  );
+});
+
+test("17. a bracket on the first exception doesn't turn the rest of the exception list into exclusions", () => {
+  const sendgrid = pr("Send order confirmation emails via SendGrid", ["src/email/sendgrid.ts", M("src/checkout/cart.ts")], { branch: "feat/sendgrid-order-emails" });
+  const deliverables = scopeFromSow(
+    "# SOW\n## 3. Deliverables\nThe Agency will deliver the storefront, shopping cart, Stripe checkout and order confirmation emails sent through SendGrid.\n\n## 4. Exclusions\nThe following are excluded: third-party integrations other than Stripe (payments) and SendGrid (email); native mobile apps; loyalty points.\n",
+  );
+  expectNotExcluded(deliverables, sendgrid);
+  expectNotExcluded(deliverables, pr("Password reset email through SendGrid", ["src/email/sendgrid/password-reset.ts"]));
+  expectState(deliverables, pr("Native mobile app shell", ["mobile/native/App.tsx"]), "CHANGE_REQUIRED");
+  expectState(deliverables, pr("Stripe checkout retries", ["src/checkout/stripe-retry.ts"]), "IN_SCOPE");
+  const sow = (line: string) => scopeFromSow(`# SOW\n## 1.1 Store\nIncludes product catalogue, shopping cart and Stripe checkout.\n${line}\n`);
+  expectNotExcluded(sow("Excludes third-party integrations except Stripe (payments) and SendGrid (email)."), sendgrid);
+  expectNotExcluded(sow("Third-party integrations other than Stripe (payments) and SendGrid (transactional email) are out of scope."), sendgrid);
+  expectNotExcluded(
+    scope({ included: ["shopping cart", "stripe checkout"], excluded: ["third-party integrations other than stripe (payments) and sendgrid (transactional email)"] }),
+    sendgrid,
+  );
+  const nested = sow("Third-party integrations (other than Stripe (payments) and SendGrid (email)) and gift cards are out of scope.");
+  expectNotExcluded(nested, sendgrid);
+  expectState(nested, pr("Add gift cards", ["src/giftcards/redeem.ts", M("src/checkout/cart.ts")]), "CHANGE_REQUIRED");
+});
+
+test("18. a bracket that never closes doesn't fold the rest of the list into the exception", () => {
+  const sow = (line: string) =>
+    scopeFromSow(`# Statement of Work\n\n## 1. Storefront and Checkout\n\nIn scope: product catalogue and search, shopping cart, Stripe checkout.\n\n${line}\n`);
+  const unclosed = sow("Out of scope: payment providers (other than Stripe, gift cards and loyalty points.");
+  const gift = pr("Add gift cards", ["src/giftcards/redeem.ts", M("src/checkout/cart.ts")]);
+  expectState(unclosed, gift, "CHANGE_REQUIRED");
+  expectState(unclosed, pr("Loyalty points programme", ["src/loyalty/points.ts", M("src/checkout/cart.ts")]), "CHANGE_REQUIRED");
+  expectState(unclosed, pr("Stripe checkout retries", ["src/checkout/stripe-retry.ts"]), "IN_SCOPE");
+  expectState(sow("Explicitly excludes payment providers (other than Stripe, native mobile apps and gift cards."), gift, "CHANGE_REQUIRED");
+  expectReview(scope({ included: ["shopping cart"], excluded: ["payment providers (other than stripe, gift cards and loyalty points"] }), gift);
+});
+
+test("19. a typographic hyphen reads like '-'", () => {
+  const sample = (hyphen: string) =>
+    scopeFromSow(
+      `# SOW\n\n## 3.1 Storefront and Checkout\nA single currency (GBP) store.\n\n**Explicit Inclusions**:\n- Product catalogue and search\n- Shopping cart\n- Stripe checkout\n\n**Explicit Exclusions**:\n- Loyalty points programme\n- Multi${hyphen}currency pricing\n- Gift cards\n`,
+    );
+  for (const hyphen of ["\u2010", "\u2011", "\u2013"]) {
+    expectReview(sample(hyphen), pr("Currency pricing rounding fix for GBP", [M("src/pricing/currency-pricing.ts")]));
+    expectState(sample(hyphen), pr("Add multi-currency pricing", ["src/pricing/multi-currency.ts"]), "CHANGE_REQUIRED");
+  }
+  const drafted = scopeFromSow(
+    "# SOW\n## 1.1 Store\n**In scope**\n- Product catalogue and search\n- Shopping cart\n- Stripe checkout\n- Email and password login\n\n**Out of scope**\n- Loyalty points programme\n- Multi\u2011currency pricing\n- Two\u2011factor authentication\n- In\u2011app purchases\n- Gift cards\n",
+  );
+  expectNotExcluded(drafted, pr("Factor out auth helpers", [M("src/auth/session.ts")]));
+  expectNotExcluded(drafted, pr("Purchase confirmation email", ["src/checkout/emails/PurchaseConfirmation.tsx"]));
+  expectState(drafted, pr("Add 2FA via TOTP two-factor", ["src/auth/two-factor.ts"]), "CHANGE_REQUIRED");
+  // Saved items, and items stored before this change, read the same way.
+  assert.deepStrictEqual(checklistFromBaseline(scope({ excluded: ["Multi\u2011currency pricing"] })).clauses[0].excluded, ["multi-currency pricing"]);
+  const stored = { ...STORE, clauses: STORE.clauses.map((c) => ({ ...c, exclusions: c.exclusions.map((e) => e.replace("-", "\u2011")) })) };
+  expectReview(stored, pr("Currency pricing rounding fix for GBP", [M("src/pricing/currency-pricing.ts")]));
+});
+
+test("long exception lists in one item and numbered exclusion sections evaluate in well under a second", () => {
+  const files: FileSpec[] = Array.from({ length: 300 }, (_, i) => `src/payments/providers/stripe${i}/gift/cards/item${i}.ts`);
+  const items = [
+    "a other than b, ".repeat(2500),
+    Array.from({ length: 2400 }, (_, i) => `a${i} other than b${i}, `).join(""),
+    "x (other than y) and ".repeat(1900),
+    "c such as d ".repeat(3400),
+    "(other than a, ".repeat(2700),
+  ].map((item) => item.slice(0, 40_000));
+  for (const item of items) {
+    const baseline = scope({ included: ["shopping cart"], excluded: [item] });
+    const elapsed = time(() => evaluate(baseline, pr("Gift cards other than such as", files)));
+    assert.ok(elapsed < 1000, `${item.slice(0, 30)}: took ${Math.round(elapsed)} ms`);
+  }
+  const numbered = ("## 1.1 A\nIncludes a cart.\n4. Exclusions\n" + Array.from({ length: 3000 }, (_, i) => `4.${i + 1} Gift card item ${i}.`).join("\n")).slice(0, 40_000);
+  const elapsed = time(() => evaluate(scopeFromSow(numbered), pr("Gift cards", files)));
+  assert.ok(elapsed < 1000, `numbered exclusions: took ${Math.round(elapsed)} ms`);
 });
 
 /* ------------------------------------------------------------------ */
