@@ -49,6 +49,8 @@ const PATHOLOGICAL: Record<string, string> = {
   "a header followed by 39,000 spaces and a comma": "Excluding: a," + " ".repeat(39_000) + "b",
   "7,900 short bullets": "Exclusions:\n" + "- ab\n".repeat(7900),
   "2,400 scope headings": "## 1.1 A\n" + "## Out of Scope\n".repeat(2400),
+  "2,400 exceptions in one list": "## Scope\nExcluded: " + "a other than b, ".repeat(2400),
+  "2,000 bracketed exceptions in one list": "## Scope\nExcluded: " + "x (other than y), ".repeat(2000),
 };
 
 function run() {
@@ -177,6 +179,70 @@ function run() {
       scope("## Scope\nExcluded: payment providers except PayPal; SMS alerts and push notifications.").excluded,
       ["payment providers except paypal", "sms alerts", "push notifications"],
     );
+  });
+
+  scenario("An exception ends at the next comma, so the items listed after it stay exclusions", () => {
+    assert.deepStrictEqual(
+      scope("## Scope\nExplicitly excludes payment providers other than Stripe, native mobile apps and gift cards.").excluded,
+      ["payment providers other than stripe", "native mobile apps", "gift cards"],
+    );
+    assert.deepStrictEqual(
+      extractScopeBoundaries("Explicitly excludes payment providers other than Stripe, native mobile apps, loyalty points and gift cards.").exclusions,
+      ["payment providers other than stripe", "native mobile apps", "loyalty points", "gift cards"],
+    );
+    assert.deepStrictEqual(
+      extractScopeBoundaries("**Explicit Exclusions**: integrations other than Stripe, native mobile apps and single sign-on.").exclusions,
+      ["integrations other than stripe", "native mobile apps", "single sign-on"],
+    );
+    assert.deepStrictEqual(
+      extractScopeBoundaries("Payment providers other than Stripe, gift cards and native mobile apps are out of scope.").exclusions,
+      ["payment providers other than stripe", "gift cards", "native mobile apps"],
+    );
+    assert.deepStrictEqual(
+      extractScopeBoundaries("Excluded: all third-party integrations except Stripe, gift cards, loyalty points.").exclusions,
+      ["all third-party integrations except stripe", "gift cards", "loyalty points"],
+    );
+  });
+
+  scenario("An 'and' list after an exception is still the exception", () => {
+    assert.deepStrictEqual(
+      extractScopeBoundaries("Explicitly excludes integrations other than Stripe and SendGrid.").exclusions,
+      ["integrations other than stripe and sendgrid"],
+    );
+    assert.deepStrictEqual(
+      extractScopeBoundaries("Excluded: payment providers other than Stripe and PayPal, gift cards, analytics except Plausible and Fathom.").exclusions,
+      ["payment providers other than stripe and paypal", "gift cards", "analytics except plausible and fathom"],
+    );
+  });
+
+  scenario("A bracketed exception ends with its bracket and reads as one item", () => {
+    assert.deepStrictEqual(scope("## Scope\nExcluded: third-party integrations (other than Stripe), gift cards.").excluded, [
+      "third-party integrations (other than stripe)",
+      "gift cards",
+    ]);
+    assert.deepStrictEqual(
+      extractScopeBoundaries("Third-party integrations (other than Stripe), gift cards and loyalty points are out of scope.").exclusions,
+      ["third-party integrations (other than stripe)", "gift cards", "loyalty points"],
+    );
+    assert.deepStrictEqual(extractScopeBoundaries("Excluded: integrations (other than Stripe, SendGrid), gift cards.").exclusions, [
+      "integrations (other than stripe, sendgrid)",
+      "gift cards",
+    ]);
+  });
+
+  scenario("'Including but not limited to' is not an exception", () => {
+    const parsed = extractScopeBoundaries("Excludes: CRM integrations including but not limited to Salesforce and HubSpot.").exclusions;
+    assert.ok(parsed.includes("hubspot"), JSON.stringify(parsed));
+    const restricted = extractScopeBoundaries("Excludes: CRM integrations including but not restricted to Salesforce and HubSpot.").exclusions;
+    assert.ok(restricted.includes("hubspot"), JSON.stringify(restricted));
+    const predicate = extractScopeBoundaries(
+      "All other third-party integrations, including but not limited to Salesforce and HubSpot, are out of scope.",
+    ).exclusions;
+    assert.ok(predicate.includes("hubspot"), JSON.stringify(predicate));
+    // A real "but not" still keeps its exception with the item.
+    assert.deepStrictEqual(extractScopeBoundaries("Excluded: payment providers but not Stripe.").exclusions, [
+      "payment providers but not stripe",
+    ]);
   });
 
   scenario("Splitting a long list stays fast", () => {

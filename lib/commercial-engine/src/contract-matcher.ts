@@ -42,6 +42,18 @@ export interface ContractPhraseMatch {
   coverage: number;
   /** Found in changed files or titles, not only in descriptions. */
   strong: boolean;
+  /**
+   * A weak exclusion match on a bracketed example without what it is an
+   * example of: "paypal" for "additional payment providers (paypal, klarna)".
+   * Holds that head, "additional payment providers".
+   */
+  missingHead?: string;
+  /**
+   * A weak exclusion match on an item's words without its qualifier:
+   * currency pricing built against excluded "multi-currency pricing". Holds
+   * the qualifier ("multi") and the item without it ("currency pricing").
+   */
+  missingQualifier?: { qualifier: string; plain: string };
   evidence: PhraseEvidence[];
 }
 
@@ -311,6 +323,8 @@ interface PhrasePart {
   text: string;
   /** For a bracketed example, any word of what it is an example of. */
   head?: Term;
+  /** The words `head` is made from, as the SOW wrote them. */
+  headText?: string;
   /** What the item says it leaves out ("other than Stripe"), one term list each. */
   except: Term[][];
   /** The same text, head and exceptions match the same way, so a match is worked out once. */
@@ -319,9 +333,14 @@ interface PhrasePart {
 
 /**
  * "Payment providers other than Stripe": what follows the marker is not part
- * of the item. Exported so the SOW parser can keep such an item whole.
+ * of the item. Exported so the SOW parser can keep such an item whole. The
+ * boilerplate "including but not limited to" names examples of the item, not
+ * exceptions to it.
  */
-export const EXCEPTION_MARKER = /\b(?:other\s+than|except(?:\s+for)?|besides|apart\s+from|aside\s+from|but\s+not)\b/i;
+export const EXCEPTION_MARKER =
+  /\b(?:other\s+than|except(?:\s+for)?|besides|apart\s+from|aside\s+from|but\s+not(?!\s+(?:necessarily\s+)?(?:limited|restricted)\b))\b/i;
+/** "(including) but not limited to": padding before a list of examples. */
+const NOT_LIMITED_TO = /\bbut\s+not\s+(?:necessarily\s+)?(?:limited|restricted)\s+to\b/gi;
 const LIST_SEPARATOR = /[,;/&]|\s+(?:and|or)\s+/i;
 
 function listItems(text: string): string[] {
@@ -337,12 +356,21 @@ function listItems(text: string): string[] {
  * "facebook", each of which also needs "social" or "login" next to it.
  */
 function partsOf(phrase: string): PhrasePart[] {
-  const [kept, ...exceptions] = phrase.replace(/\u0000/g, " ").split(EXCEPTION_MARKER);
+  // "CRM integrations, including but not limited to Salesforce": the padding
+  // is dropped, so "salesforce" isn't held to words no pull request uses.
+  const [kept, ...exceptions] = phrase.replace(/\u0000/g, " ").replace(NOT_LIMITED_TO, " ").split(EXCEPTION_MARKER);
   const exceptionItems = exceptions.flatMap(listItems);
   const except = exceptionItems.map((item) => termsOf(item, "inclusion")).filter((terms) => terms.length > 0);
+  // Every example in a bracket shares its head's words, worked out once.
+  const heads = new Map<string, Term | undefined>();
+  const headTerm = (head: string) => {
+    if (!heads.has(head)) heads.set(head, anyWordOf(head));
+    return heads.get(head);
+  };
   const part = (text: string, head?: string): PhrasePart => ({
     text,
-    head: head ? anyWordOf(head) : undefined,
+    head: head ? headTerm(head) : undefined,
+    headText: head || undefined,
     except,
     key: [text, head ?? "", ...exceptionItems].join("\u0001"),
   });
@@ -400,7 +428,9 @@ interface Evidence {
   /** The groups holding each token, so a part is only compared with groups that hold its words. */
   groupsOf: Map<string, Set<number>>;
   /** The groups each term was found in, worked out once per term. */
-  termGroups: Map<string, number[]>;
+  termGroups: Map<string, ReadonlySet<number>>;
+  /** Per item, the groups that name one of its exceptions; the parts of an item share its list. */
+  exceptGroups: WeakMap<Term[][], ReadonlySet<number>>;
   /** Per group, how many of the current part's terms it holds; all zero between parts. */
   counts: Int32Array;
 }
@@ -479,6 +509,7 @@ function gatherEvidence(pullRequest: PullRequest, issue: LinearIssue | undefined
     groups,
     groupsOf,
     termGroups: new Map(),
+    exceptGroups: new WeakMap(),
     counts: new Int32Array(groups.length),
   };
 }
@@ -525,7 +556,7 @@ function termIn(term: Term, scope: Scope): string[] | undefined {
 const NO_GROUPS: ReadonlySet<number> = new Set();
 
 /** The groups that hold a term, worked out from the token index rather than group by group. */
-function groupsHolding(term: Term, evidence: Evidence): number[] {
+function groupsHolding(term: Term, evidence: Evidence): ReadonlySet<number> {
   const key = `${term.phrase ? "phrase:" : ""}${term.forms.map((form) => form.join(" ")).join("|")}`;
   const known = evidence.termGroups.get(key);
   if (known) return known;
@@ -541,9 +572,21 @@ function groupsHolding(term: Term, evidence: Evidence): number[] {
       if (group.prose.some((doc) => phraseIn(term, doc))) holding.add(index);
     });
   }
-  const found = [...holding];
-  evidence.termGroups.set(key, found);
-  return found;
+  evidence.termGroups.set(key, holding);
+  return holding;
+}
+
+/** The groups that name every term of one of an item's exceptions, worked out once per item. */
+function exceptionGroups(except: Term[][], evidence: Evidence): ReadonlySet<number> {
+  const known = evidence.exceptGroups.get(except);
+  if (known) return known;
+  const naming = new Set<number>();
+  for (const exception of except) {
+    const [fewest, ...rest] = exception.map((term) => groupsHolding(term, evidence)).sort((a, b) => a.size - b.size);
+    for (const group of fewest ?? NO_GROUPS) if (rest.every((groups) => groups.has(group))) naming.add(group);
+  }
+  evidence.exceptGroups.set(except, naming);
+  return naming;
 }
 
 /**
@@ -555,7 +598,7 @@ function bestGroup(
   terms: Term[],
   compactPart: string | undefined,
   required: number,
-  fits: (group: Scope) => boolean,
+  fits: (group: number) => boolean,
   evidence: Evidence,
 ): Scope | undefined {
   const { counts } = evidence;
@@ -572,7 +615,7 @@ function bestGroup(
 
   let best: number | undefined;
   for (const group of touched) {
-    if (counts[group] < required || !fits(evidence.groups[group])) continue;
+    if (counts[group] < required || !fits(group)) continue;
     const lead = best === undefined ? 0 : counts[best];
     if (counts[group] > lead || (counts[group] === lead && best !== undefined && group < best)) best = group;
   }
@@ -591,11 +634,48 @@ interface PartMatch {
   found: Found[];
   coverage: number;
   strong: boolean;
+  missingHead?: string;
+  missingQualifier?: ContractPhraseMatch["missingQualifier"];
+}
+
+/** "Multi-currency pricing" -> "currency pricing". */
+function withoutQualifiers(text: string): string {
+  return text.replace(/([A-Za-z0-9]+)[\s-]*/g, (whole, word: string) => (QUALIFIERS.has(word.toLowerCase()) ? "" : whole)).trim();
+}
+
+/** Identifies a term list by its forms, to tell whether dropping qualifiers changed it. */
+function termsKey(terms: Term[]): string {
+  return terms.map((term) => `${term.phrase ? "phrase:" : ""}${term.forms.map((form) => form.join(" ")).join("|")}`).join("\u0001");
 }
 
 function matchPart(kind: ContractPhraseMatch["kind"], part: PhrasePart, evidence: Evidence): PartMatch | undefined {
   const terms = termsOf(part.text, kind);
   if (terms.length === 0) return undefined;
+  const strict = matchTerms(kind, part, terms, evidence);
+  if (strict || kind === "inclusion") return strict;
+
+  // "Multi-currency pricing" when the pull request builds currency pricing
+  // but never says "multi": it may be the single currency the SOW allows or
+  // the multi-currency it excludes. Nothing settles which, so it is a question
+  // for a person, never a change order, and only when the work was built
+  // (in changed files or titles), not just described.
+  const plain = termsOf(part.text, "inclusion");
+  if (plain.length === 0 || termsKey(plain) === termsKey(terms)) return undefined;
+  const relaxed = matchTerms(kind, part, plain, evidence);
+  if (!relaxed) return undefined;
+  const built = plain.filter((term) => termIn(term, evidence.strong)).length >= requiredTerms(kind, plain.length);
+  if (!built) return undefined;
+  // Read the way termsOf reads them, so one of these words is always there.
+  const qualifiers = new Set(part.text.split(/[^A-Za-z0-9_-]+/).flatMap(splitWords).filter((word) => QUALIFIERS.has(word)));
+  return {
+    ...relaxed,
+    strong: false,
+    missingQualifier: { qualifier: [...qualifiers].join(" ") || "qualified", plain: withoutQualifiers(part.text) || part.text },
+  };
+}
+
+/** A part's match on the given terms: what `matchPart` does once it knows which of the part's words count. */
+function matchTerms(kind: ContractPhraseMatch["kind"], part: PhrasePart, terms: Term[], evidence: Evidence): PartMatch | undefined {
   const required = requiredTerms(kind, terms.length);
 
   // "gift cards" also matches a single `giftcards` directory. The separate
@@ -625,8 +705,17 @@ function matchPart(kind: ContractPhraseMatch["kind"], part: PhrasePart, evidence
   });
 
   const foundAll = find(evidence.all);
+  if (foundAll.length < required) return undefined;
   const headAll = headIn(evidence.all);
-  if (foundAll.length < required || !headAll) return undefined;
+  if (!headAll) {
+    // "Add PayPal to checkout" against excluded "additional payment providers
+    // (PayPal, Klarna)": the example is named, what it is an example of isn't.
+    // Too little for a change order ("google" in "Google Analytics" isn't
+    // "social login (Google)"), too much to call in scope: a question for a
+    // person. Included examples still need their head.
+    if (kind === "inclusion" || namesException(evidence.all)) return undefined;
+    return { ...result(foundAll, [], false), missingHead: part.headText };
+  }
   const foundStrong = find(evidence.strong);
 
   if (kind === "inclusion") {
@@ -639,7 +728,10 @@ function matchPart(kind: ContractPhraseMatch["kind"], part: PhrasePart, evidence
   // over unrelated files ("gift-wrap.tsx" and "card-payment-form.tsx") are
   // only a question for a person.
   if (foundStrong.length >= required) {
-    const fits = (group: Scope) => headIn(group) !== undefined && !namesException(group);
+    // Worked out from the token index, so each group is an O(1) test.
+    const headGroups = part.head ? groupsHolding(part.head, evidence) : undefined;
+    const exceptGroups = exceptionGroups(part.except, evidence);
+    const fits = (group: number) => (!headGroups || headGroups.has(group)) && !exceptGroups.has(group);
     const group = bestGroup(terms, compactPart, required, fits, evidence);
     if (group) return result(find(group), headIn(group) ?? [], true);
   }
@@ -671,38 +763,50 @@ function evidenceOf(match: PartMatch, evidence: Evidence): PhraseEvidence[] {
 export function matchContractPhrases(input: ContractMatchInput): ContractPhraseMatch[] {
   // Built once: every part of every SOW item is checked against the same sets.
   const evidence = gatherEvidence(input.pullRequest, input.issue, input.maintenanceOnly ?? false);
-  const matches: ContractPhraseMatch[] = [];
   // Parts repeated across items and clauses are matched once.
   const known = new Map<string, PartMatch | undefined>();
-
-  for (const clause of input.baseline.clauses) {
-    for (const [kind, phrases] of [
-      ["exclusion", clause.exclusions],
-      ["inclusion", clause.inclusions],
-    ] as const) {
-      for (const phrase of phrases) {
-        let best: PartMatch | undefined;
-        for (const part of partsOf(phrase)) {
-          const key = `${kind}\u0001${part.key}`;
-          const match = known.has(key) ? known.get(key) : matchPart(kind, part, evidence);
-          known.set(key, match);
-          if (match) best = better(best, match);
-        }
-        if (!best) continue;
-        matches.push({
-          clause,
-          kind,
-          phrase,
-          matchedPart: best.part,
-          matchedTerms: [...new Set(best.found.flatMap(({ form }) => form))],
-          coverage: best.coverage,
-          strong: best.strong,
-          // Listed once per item, for the part it is reported by.
-          evidence: evidenceOf(best, evidence),
-        });
-      }
+  const termsMatched = (match: PartMatch) => [...new Set(match.found.flatMap(({ form }) => form))];
+  const bestPart = (kind: ContractPhraseMatch["kind"], phrase: string, keep?: (match: PartMatch) => boolean) => {
+    let best: PartMatch | undefined;
+    for (const part of partsOf(phrase)) {
+      const key = `${kind}\u0001${part.key}`;
+      const match = known.has(key) ? known.get(key) : matchPart(kind, part, evidence);
+      known.set(key, match);
+      if (match && (!keep || keep(match))) best = better(best, match);
     }
-  }
+    return best;
+  };
+
+  // Inclusions first. When the SOW includes the plain variant of what it
+  // excludes with a qualifier ("basic keyword search" and "advanced search"),
+  // work matching that inclusion that never names the qualifier is the
+  // included work, so that part of the exclusion doesn't count.
+  const { clauses } = input.baseline;
+  const inclusions = clauses.map((clause) => clause.inclusions.map((phrase) => bestPart("inclusion", phrase)));
+  const included = new Set(inclusions.flat().flatMap((match) => (match?.strong ? termsMatched(match) : [])));
+  const notIncluded = (match: PartMatch) => !(match.missingQualifier && termsMatched(match).every((term) => included.has(term)));
+
+  const matches: ContractPhraseMatch[] = [];
+  const add = (clause: ContractClause, kind: ContractPhraseMatch["kind"], phrase: string, best: PartMatch | undefined) => {
+    if (!best) return;
+    matches.push({
+      clause,
+      kind,
+      phrase,
+      matchedPart: best.part,
+      matchedTerms: termsMatched(best),
+      coverage: best.coverage,
+      strong: best.strong,
+      ...(best.missingHead ? { missingHead: best.missingHead } : {}),
+      ...(best.missingQualifier ? { missingQualifier: best.missingQualifier } : {}),
+      // Listed once per item, for the part it is reported by.
+      evidence: evidenceOf(best, evidence),
+    });
+  };
+  clauses.forEach((clause, c) => {
+    for (const phrase of clause.exclusions) add(clause, "exclusion", phrase, bestPart("exclusion", phrase, notIncluded));
+    clause.inclusions.forEach((phrase, i) => add(clause, "inclusion", phrase, inclusions[c][i]));
+  });
   return matches;
 }
 

@@ -441,8 +441,14 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
   const changeOrderCoveredCapabilities: DetectedCapability[] = [];
   const explicitlyExcludedCapabilities: Array<{ capability: DetectedCapability; clause: ContractClause }> = [];
   // Excluded work nothing new shows: only described, only in tests or docs,
-  // or its words only in separate places ("spread").
-  const weaklyExcludedCapabilities: Array<{ capability: DetectedCapability; clause: ContractClause; spread?: boolean }> = [];
+  // its words only in separate places ("spread"), or matched without what
+  // makes it the excluded work (`match.missingHead`, `match.missingQualifier`).
+  const weaklyExcludedCapabilities: Array<{
+    capability: DetectedCapability;
+    clause: ContractClause;
+    spread?: boolean;
+    match?: ContractPhraseMatch;
+  }> = [];
   const clearlyInScopeCapabilities: DetectedCapability[] = [];
   const ambiguousCapabilities: DetectedCapability[] = [];
   const uncontractedCapabilities: DetectedCapability[] = [];
@@ -553,7 +559,7 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
     } else {
       // Found in changed files or titles, but never together in one of them.
       const spread = match.evidence.some((e) => e.strength !== "text");
-      weaklyExcludedCapabilities.push({ capability, clause: match.clause, spread });
+      weaklyExcludedCapabilities.push({ capability, clause: match.clause, spread, match });
     }
   }
   const allCapabilities = [...detectedCapabilities, ...phraseCapabilities];
@@ -609,19 +615,31 @@ export function evaluateCommercialScope(input: Phase4EvaluationInput): Commercia
     recommendedAction = "MANUAL_PM_REVIEW";
 
     const reasons: string[] = [];
-    for (const { capability, clause, spread } of weaklyExcludedCapabilities) {
+    for (const { capability, clause, spread, match } of weaklyExcludedCapabilities) {
       const where =
         capability.extractionMethod === "CONTRACT_PHRASE_MATCH" ? capability.evidenceText : capability.evidenceLocation;
-      const deltaMsg = spread
-        ? `The words of ${capability.name}, which contract ${clause.clauseRef} excludes, appear only in separate places (${where}); no single changed file or title names it`
-        : `Only mentioned in ${where}: ${capability.name}, which contract ${clause.clauseRef} excludes; no new code shows it`;
+      let deltaMsg: string;
+      let reason: string;
+      if (match?.missingQualifier) {
+        // "Currency switcher" against excluded "multi-currency pricing".
+        const { qualifier, plain } = match.missingQualifier;
+        deltaMsg = `Builds ${plain} (${where}); contract ${clause.clauseRef} excludes ${capability.name}, and nothing says whether this is the "${qualifier}" kind`;
+        reason = `${capability.name} is excluded by ${clause.clauseRef}, and this builds ${plain} without saying "${qualifier}"`;
+      } else if (match?.missingHead) {
+        // "Add PayPal" against excluded "additional payment providers (PayPal, Klarna)".
+        const head = match.missingHead;
+        deltaMsg = `Names ${capability.name} (${where}), which contract ${clause.clauseRef} excludes as an example of ${head}; nothing names ${head} itself`;
+        reason = `${capability.name} is excluded by ${clause.clauseRef} as an example of ${head}, but nothing names ${head}`;
+      } else if (spread) {
+        deltaMsg = `The words of ${capability.name}, which contract ${clause.clauseRef} excludes, appear only in separate places (${where}); no single changed file or title names it`;
+        reason = `${capability.name} is excluded by ${clause.clauseRef} but no single changed file or title names it`;
+      } else {
+        deltaMsg = `Only mentioned in ${where}: ${capability.name}, which contract ${clause.clauseRef} excludes; no new code shows it`;
+        reason = `${capability.name} is excluded by ${clause.clauseRef} but no new code shows it`;
+      }
       detectedDelta.push(deltaMsg);
       scopeDeltaStatements.push({ statement: deltaMsg, evidenceIdRefs: [capability.id, clause.id], nature: "AMBIGUITY" });
-      reasons.push(
-        spread
-          ? `${capability.name} is excluded by ${clause.clauseRef} but no single changed file or title names it`
-          : `${capability.name} is excluded by ${clause.clauseRef} but no new code shows it`,
-      );
+      reasons.push(reason);
     }
     for (const cap of uncontractedCapabilities) {
       const deltaMsg = `Not mentioned in the SOW: ${cap.name}`;
