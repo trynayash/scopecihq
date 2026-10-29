@@ -6,6 +6,7 @@ import { backgroundCount, drain, runInBackground } from "./lib/background";
 import { currentWebhookService } from "./routes/github";
 import { purgeExpiredDeliveries } from "./github/webhook-service";
 import { purgeExpiredSessions } from "./lib/session";
+import { purgeOldContactMessages } from "./routes/contact";
 
 const rawPort = process.env["PORT"];
 
@@ -118,8 +119,8 @@ if (sweepEvery > 0) {
 }
 
 // Webhook deliveries are kept 30 days, for idempotency and for reading why
-// one was ignored, and sessions 30 days at most; then they are deleted,
-// every hour.
+// one was ignored, sessions 30 days at most, and contact form messages 365
+// days; then they are deleted, every hour.
 const purge = () =>
   runInBackground(
     Promise.all([
@@ -133,6 +134,11 @@ const purge = () =>
           if (deleted > 0) logger.info({ deleted }, "Deleted expired sessions");
         })
         .catch((err) => logger.warn({ err }, "Deleting expired sessions failed")),
+      purgeOldContactMessages()
+        .then((deleted) => {
+          if (deleted > 0) logger.info({ deleted }, "Deleted contact messages older than 365 days");
+        })
+        .catch((err) => logger.warn({ err }, "Deleting old contact messages failed")),
     ]),
   );
 timers.push(setTimeout(purge, 60_000).unref());

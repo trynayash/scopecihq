@@ -1,4 +1,5 @@
-import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ContactMessage, ContactTopic } from '@workspace/api-client-react';
 import { BASE, HOME_PATH, Logo, ThemeToggle, usePageMeta } from '../site';
 import { useConfirm } from '../components/confirm-dialog';
 import { Loading } from '../components/loading';
@@ -46,6 +47,63 @@ function formatDate(iso: string) {
     d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) +
     ' ' +
     d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+  );
+}
+
+/** The API lists at most this many messages, newest first. */
+const MESSAGE_LIST_LIMIT = 500;
+
+const TOPIC_LABELS: Record<ContactTopic, string> = {
+  general: 'General',
+  pilot: 'Pilot',
+  privacy: 'Privacy',
+  security: 'Security',
+  grievance: 'Grievance',
+  legal: 'Legal',
+};
+
+/** Opens the admin's mail app on a reply to the sender. */
+function replyHref(email: string) {
+  const address = email.split('@').map(encodeURIComponent).join('@');
+  return `mailto:${address}?subject=${encodeURIComponent('Re: your message to ScopeCI')}`;
+}
+
+/** Messages from the contact form, newest first; each can be answered by email or deleted. */
+function MessageList({ messages, onDelete }: { messages: ContactMessage[]; onDelete: (message: ContactMessage) => void }) {
+  return (
+    <ul className="admin-messages">
+      {messages.map((m) => (
+        <li key={m.id} className="admin-message">
+          <div className="admin-message-head">
+            <span className="chip">{TOPIC_LABELS[m.topic] ?? m.topic}</span>
+            <time className="admin-message-date num" dateTime={m.createdAt}>{formatDate(m.createdAt)}</time>
+          </div>
+          <div className="admin-message-from">
+            <div className="admin-message-sender">
+              <strong>{m.name}</strong>
+              <span>
+                <span className="mono">{m.email}</span>
+                {m.company && <span className="admin-message-company"> · {m.company}</span>}
+              </span>
+            </div>
+            <div className="row-actions">
+              <a className="button button-quiet button-sm" href={replyHref(m.email)} aria-label={`Reply to ${m.name}`}>
+                Reply
+              </a>
+              <button
+                type="button"
+                className="button button-quiet button-sm button-danger"
+                onClick={() => onDelete(m)}
+                aria-label={`Delete the message from ${m.name}`}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+          <p className="admin-message-body">{m.message}</p>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -277,28 +335,35 @@ export default function AdminWaitlist() {
   const [key, setKey] = useState('');
   const [signups, setSignups] = useState<AdminSignup[]>([]);
   const [stats, setStats] = useState<AdminStats | null>(null);
+  const [messages, setMessages] = useState<ContactMessage[]>([]);
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
+  const [signupError, setSignupError] = useState('');
+  const [messageError, setMessageError] = useState('');
+  const messagesHeading = useRef<HTMLHeadingElement>(null);
   const [busy, setBusy] = useState(false);
   const [confirm, confirmDialog] = useConfirm();
 
-  /** Loads both lists; drops back to the sign-in form when the session is gone. */
+  /** Loads the messages and both waitlist lists; drops back to the sign-in form when the session is gone. */
   const load = useCallback(async () => {
-    const [signupsRes, statsRes] = await Promise.all([
+    const responses = await Promise.all([
       adminFetch('/waitlist'),
       adminFetch('/waitlist/stats'),
+      adminFetch('/contact'),
     ]);
-    if (signupsRes.status === 401 || statsRes.status === 401) {
+    if (responses.some((res) => res.status === 401)) {
       setView('signed-out');
       return;
     }
-    if (!signupsRes.ok || !statsRes.ok) {
-      const failed = signupsRes.ok ? statsRes : signupsRes;
+    const failed = responses.find((res) => !res.ok);
+    if (failed) {
       const body = await failed.json().catch(() => ({}));
       throw new LoadError(typeof body.error === 'string' ? body.error : 'The server had a problem. Try again in a minute.');
     }
+    const [signupsRes, statsRes, messagesRes] = responses;
     setSignups(await signupsRes.json());
     setStats(await statsRes.json());
+    setMessages(((await messagesRes.json()) as { messages: ContactMessage[] }).messages);
     setView('ready');
   }, []);
 
@@ -352,13 +417,18 @@ export default function AdminWaitlist() {
     await adminFetch('/session', { method: 'DELETE' }).catch(() => {});
     setSignups([]);
     setStats(null);
+    setMessages([]);
     setError('');
+    setSignupError('');
+    setMessageError('');
     setView('signed-out');
   };
 
   const refresh = async () => {
     setBusy(true);
     setError('');
+    setSignupError('');
+    setMessageError('');
     try {
       await load();
     } catch {
@@ -388,7 +458,7 @@ export default function AdminWaitlist() {
       danger: true,
     });
     if (!confirmed) return;
-    setError('');
+    setSignupError('');
     try {
       const res = await adminFetch(`/waitlist/${signup.id}`, { method: 'DELETE' });
       if (res.status === 401) {
@@ -398,7 +468,32 @@ export default function AdminWaitlist() {
       if (res.status !== 204 && res.status !== 404) throw new Error('delete failed');
       await load();
     } catch {
-      setError(`Couldn't remove ${signup.email}. Try again.`);
+      setSignupError(`Couldn't remove ${signup.email}. Try again.`);
+    }
+  };
+
+  const removeMessage = async (message: ContactMessage) => {
+    const confirmed = await confirm({
+      title: `Delete the message from ${message.name}?`,
+      description: `The message from ${message.email} is deleted for good. Reply first if it needs an answer.`,
+      confirmLabel: 'Delete message',
+      danger: true,
+    });
+    if (!confirmed) return;
+    setMessageError('');
+    try {
+      const res = await adminFetch(`/contact/${message.id}`, { method: 'DELETE' });
+      if (res.status === 401) {
+        setView('signed-out');
+        return;
+      }
+      // 404: already deleted, from another tab; the reload shows that.
+      if (res.status !== 204 && res.status !== 404) throw new Error('delete failed');
+      await load();
+      // The button that asked has gone with its message; keep keyboard focus in the list.
+      messagesHeading.current?.focus();
+    } catch {
+      setMessageError(`Couldn't delete the message from ${message.name}. Try again.`);
     }
   };
 
@@ -431,7 +526,7 @@ export default function AdminWaitlist() {
         }
       >
         <div className="panel admin-gate">
-          <h1>Couldn't load signups</h1>
+          <h1>Couldn't load messages and signups</h1>
           {error && <p className="form-error" role="alert">{error}</p>}
           <button type="button" className="button button-primary" onClick={retry} disabled={busy}>
             <Icon icon={ReloadIcon} size={14} />
@@ -475,6 +570,11 @@ export default function AdminWaitlist() {
     );
   }
 
+  const messageCount =
+    messages.length >= MESSAGE_LIST_LIMIT
+      ? `The newest ${MESSAGE_LIST_LIMIT}`
+      : `${messages.length} ${messages.length === 1 ? 'message' : 'messages'}`;
+
   return (
     <AdminShell
       actions={
@@ -487,99 +587,120 @@ export default function AdminWaitlist() {
       <div className="page-head">
         <div>
           <h1 className="page-title">Admin</h1>
-          <p className="page-lede">The GitHub App, and early access signups.</p>
+          <p className="page-lede">The GitHub App, messages from the contact form, and early access signups.</p>
         </div>
         <div className="row-actions">
           <button type="button" className="button button-quiet" onClick={refresh} disabled={busy}>
             <Icon icon={ReloadIcon} size={14} />
             Refresh
           </button>
-          <a className="button button-quiet" href={`${ADMIN_API}/waitlist/csv`} download>
+        </div>
+      </div>
+
+      {error && <p className="form-error admin-error" role="alert">{error}</p>}
+
+      <GitHubAppPanel onSignedOut={signedOut} />
+
+      <section className="admin-section" aria-labelledby="messages-heading">
+        <div className="admin-section-head">
+          <h2 id="messages-heading" ref={messagesHeading} tabIndex={-1}>Messages</h2>
+          {messages.length > 0 && <span className="admin-count num">{messageCount}</span>}
+        </div>
+        {messageError && <p className="form-error admin-error" role="alert">{messageError}</p>}
+        {messages.length === 0 ? (
+          <p className="admin-empty">No messages yet. What people send from the contact form at /contact shows up here.</p>
+        ) : (
+          <MessageList messages={messages} onDelete={removeMessage} />
+        )}
+      </section>
+
+      <section className="admin-section" aria-labelledby="signups-heading">
+        <div className="admin-section-head">
+          <h2 id="signups-heading">Early access signups</h2>
+          <a className="button button-quiet button-sm" href={`${ADMIN_API}/waitlist/csv`} download>
             <Icon icon={DownloadIcon} size={14} />
             Export CSV
           </a>
         </div>
-      </div>
 
-      <GitHubAppPanel onSignedOut={signedOut} />
-
-      {stats && (
-        <div className="admin-stats">
-          <div className="stat">
-            <span className="stat-value num">{stats.total}</span>
-            <span className="stat-label">Total signups</span>
-          </div>
-          <div className="stat">
-            <span className="stat-value num">{stats.qualified}</span>
-            <span className="stat-label">Gave an agency name</span>
-          </div>
-          <div className="stat">
-            <span className="stat-value num">{stats.recent}</span>
-            <span className="stat-label">Last 7 days</span>
-          </div>
-        </div>
-      )}
-
-      {error && <p className="form-error" role="alert">{error}</p>}
-
-      {signups.length === 0 ? (
-        <p className="admin-empty">No signups yet.</p>
-      ) : (
-        <>
-          <div className="admin-toolbar">
-            <div className="field">
-              <label className="sr-only" htmlFor="admin-search">Filter signups</label>
-              <input
-                id="admin-search"
-                type="search"
-                placeholder="Filter by email, agency, source or referrer"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
+        {stats && (
+          <div className="admin-stats">
+            <div className="stat">
+              <span className="stat-value num">{stats.total}</span>
+              <span className="stat-label">Total signups</span>
             </div>
-            <span className="admin-count num">
-              {visible.length === signups.length ? `${signups.length} signups` : `${visible.length} of ${signups.length}`}
-            </span>
+            <div className="stat">
+              <span className="stat-value num">{stats.qualified}</span>
+              <span className="stat-label">Gave an agency name</span>
+            </div>
+            <div className="stat">
+              <span className="stat-value num">{stats.recent}</span>
+              <span className="stat-label">Last 7 days</span>
+            </div>
           </div>
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Email</th>
-                  <th>Agency</th>
-                  <th>Date</th>
-                  <th>Source</th>
-                  <th>Campaign</th>
-                  <th>Referrer</th>
-                  <th><span className="sr-only">Actions</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((s) => (
-                  <tr key={s.id}>
-                    <td className="mono">{s.email}</td>
-                    <td>{s.agency || '—'}</td>
-                    <td className="nowrap num">{formatDate(s.createdAt)}</td>
-                    <td>{s.utmSource || '—'}</td>
-                    <td>{s.utmCampaign || '—'}</td>
-                    <td className="table-ref" title={s.referrer ?? undefined}>{s.referrer || '—'}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="button button-quiet button-sm button-danger"
-                        onClick={() => remove(s)}
-                        aria-label={`Remove ${s.email}`}
-                      >
-                        Remove
-                      </button>
-                    </td>
+        )}
+
+        {signupError && <p className="form-error admin-error" role="alert">{signupError}</p>}
+
+        {signups.length === 0 ? (
+          <p className="admin-empty">No signups yet.</p>
+        ) : (
+          <>
+            <div className="admin-toolbar">
+              <div className="field">
+                <label className="sr-only" htmlFor="admin-search">Filter signups</label>
+                <input
+                  id="admin-search"
+                  type="search"
+                  placeholder="Filter by email, agency, source or referrer"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+              </div>
+              <span className="admin-count num">
+                {visible.length === signups.length ? `${signups.length} signups` : `${visible.length} of ${signups.length}`}
+              </span>
+            </div>
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Email</th>
+                    <th>Agency</th>
+                    <th>Date</th>
+                    <th>Source</th>
+                    <th>Campaign</th>
+                    <th>Referrer</th>
+                    <th><span className="sr-only">Actions</span></th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
+                </thead>
+                <tbody>
+                  {visible.map((s) => (
+                    <tr key={s.id}>
+                      <td className="mono">{s.email}</td>
+                      <td>{s.agency || '—'}</td>
+                      <td className="nowrap num">{formatDate(s.createdAt)}</td>
+                      <td>{s.utmSource || '—'}</td>
+                      <td>{s.utmCampaign || '—'}</td>
+                      <td className="table-ref" title={s.referrer ?? undefined}>{s.referrer || '—'}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="button button-quiet button-sm button-danger"
+                          onClick={() => remove(s)}
+                          aria-label={`Remove ${s.email}`}
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </section>
       {confirmDialog}
     </AdminShell>
   );

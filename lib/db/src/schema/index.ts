@@ -1,5 +1,5 @@
 import { createInsertSchema } from "drizzle-zod";
-import { pgTable, serial, timestamp, varchar } from "drizzle-orm/pg-core";
+import { index, pgTable, serial, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
 import { z } from "zod/v4";
 
 /* ==================================================================
@@ -45,6 +45,31 @@ export const insertSiteEventSchema = createInsertSchema(siteEventsTable).omit({
 
 export type InsertSiteEvent = z.infer<typeof insertSiteEventSchema>;
 export type SiteEvent = typeof siteEventsTable.$inferSelect;
+
+/**
+ * Messages sent through the site's contact form, read on the admin page and
+ * answered by email. ScopeCI publishes no address, so this is how people
+ * reach it. Only what the form asks for is kept: no IP address, user agent
+ * or cookie. Rows older than 365 days are deleted by the API's hourly purge.
+ */
+export const contactMessagesTable = pgTable(
+  "contact_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: varchar("name", { length: 120 }).notNull(),
+    email: varchar("email", { length: 254 }).notNull(),
+    company: varchar("company", { length: 200 }),
+    // general, pilot, privacy, security, grievance or legal; the API checks it.
+    topic: varchar("topic", { length: 20 }).notNull(),
+    message: varchar("message", { length: 5000 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  // Newest first on the admin page, today's count for the daily cap, and
+  // the retention purge all read by date.
+  (table) => [index("contact_messages_created_at_idx").on(table.createdAt)],
+).enableRLS();
+
+export type ContactMessageRow = typeof contactMessagesTable.$inferSelect;
 
 /* ==================================================================
    ScopeCI Commercial Provenance Graph

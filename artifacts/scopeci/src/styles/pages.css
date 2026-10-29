@@ -510,6 +510,47 @@ main.admin { padding-block: clamp(var(--space-6), 4vw, var(--space-7)) var(--spa
 .nowrap { white-space: nowrap; }
 .table-ref { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* The admin page's sections (messages, signups): an 18px title with a count
+   or one action beside it. */
+.admin-section { margin-top: var(--space-6); }
+.admin-section-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); }
+.admin-section-head h2 { font-size: var(--t-title); font-weight: 600; letter-spacing: -0.02em; }
+/* Focused by the page after a delete, not by the user: no ring. */
+.admin-section-head h2:focus { outline: 0; }
+.admin-error { margin-top: var(--space-4); }
+
+/* Contact form messages: hairline-separated, each with its topic and date,
+   the sender with Reply and Delete, then the text as it was typed. */
+.admin-messages {
+  margin-top: var(--space-4);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-l);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-1);
+}
+.admin-message { display: grid; gap: var(--space-3); padding: var(--space-4) var(--space-5); border-top: 1px solid var(--line); }
+.admin-message:first-child { border-top: 0; }
+.admin-message-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); }
+.admin-message-date { color: var(--fg-muted); font-size: var(--t-caption); }
+.admin-message-from { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); }
+.admin-message-sender { display: grid; gap: 2px; min-width: 0; }
+.admin-message-sender strong { font-size: var(--t-subtitle); font-weight: 600; letter-spacing: -0.012em; overflow-wrap: anywhere; }
+.admin-message-sender > span { color: var(--fg-muted); font-size: var(--t-ui); overflow-wrap: anywhere; }
+.admin-message-sender .mono { font-size: var(--t-code-s); }
+/* Line breaks as typed; a long word or link wraps instead of widening the page. */
+.admin-message-body {
+  max-width: 68ch;
+  color: var(--fg-2);
+  font-size: var(--t-ui);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 719px) {
+  .admin-message { padding: var(--space-4); }
+}
+
 /* ==================================================================
    Error screen (the error boundary's fallback)
    ================================================================== */

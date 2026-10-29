@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
-import { db, waitlistSignupsTable } from "@workspace/db";
+import { contactMessagesTable, db, waitlistSignupsTable } from "@workspace/db";
 import { desc, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
@@ -284,6 +284,72 @@ router.delete("/admin/waitlist/:id", async (req, res, next): Promise<void> => {
     res.status(204).end();
   } catch (error) {
     req.log.error({ err: error }, "Failed to delete waitlist signup");
+    next(error);
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* Contact messages                                                    */
+/* ------------------------------------------------------------------ */
+
+/** The most messages the admin page lists at once. */
+const CONTACT_LIST_LIMIT = 500;
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * GET /admin/contact — messages from the contact form, newest first.
+ */
+router.get("/admin/contact", async (req, res, next): Promise<void> => {
+  try {
+    const rows = await db
+      .select()
+      .from(contactMessagesTable)
+      .orderBy(desc(contactMessagesTable.createdAt), desc(contactMessagesTable.id))
+      .limit(CONTACT_LIST_LIMIT);
+
+    res.json({
+      messages: rows.map((m) => ({
+        id: m.id,
+        name: m.name,
+        email: m.email,
+        company: m.company,
+        topic: m.topic,
+        message: m.message,
+        createdAt: m.createdAt,
+      })),
+    });
+  } catch (error) {
+    req.log.error({ err: error }, "Failed to fetch contact messages");
+    next(error);
+  }
+});
+
+/**
+ * DELETE /admin/contact/:id — deletes one message, once it has been answered
+ * or when its sender asks.
+ */
+router.delete("/admin/contact/:id", async (req, res, next): Promise<void> => {
+  const id = String(req.params.id);
+  if (!UUID.test(id)) {
+    res.status(400).json({ error: "Invalid message id." });
+    return;
+  }
+
+  try {
+    const removed = await db
+      .delete(contactMessagesTable)
+      .where(eq(contactMessagesTable.id, id))
+      .returning({ id: contactMessagesTable.id });
+
+    if (removed.length === 0) {
+      res.status(404).json({ error: "No message with that id." });
+      return;
+    }
+    req.log.info({ messageId: id }, "Contact message deleted by admin");
+    res.status(204).end();
+  } catch (error) {
+    req.log.error({ err: error }, "Failed to delete contact message");
     next(error);
   }
 });

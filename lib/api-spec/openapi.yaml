@@ -12,6 +12,12 @@ tags:
     description: Health operations
   - name: waitlist
     description: Early access signup operations
+  - name: contact
+    description: >-
+      The contact form. ScopeCI publishes no email address: messages are stored and read on the admin page, and
+      answered by email.
+  - name: admin
+    description: The admin page. Every route needs the admin session cookie (or ADMIN_SECRET as a bearer token).
   - name: demo
     description: The public "try it with your SOW" demo. Nothing is stored.
   - name: session
@@ -69,6 +75,48 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "400":
           description: Invalid waitlist signup
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /contact:
+    post:
+      operationId: createContactMessage
+      tags: [contact]
+      summary: Send ScopeCI a message
+      description: >-
+        Stores the message for ScopeCI to read on the admin page and answer by email. Text is trimmed and control
+        characters are removed before the limits are checked. Only what the form asks for is kept: no IP address,
+        user agent or cookie. Messages are deleted after 365 days.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContactMessageInput"
+      responses:
+        "201":
+          description: Message received. Also the answer when the hidden `website` field is filled, though nothing is stored then.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactMessageReceived"
+        "400":
+          description: A field is missing or not valid; `error` is one sentence naming it
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: >-
+            Five messages from this IP address in the last 10 minutes, or ScopeCI has taken as many messages as it
+            can today (300, counted per UTC day); `message` is the sentence to show
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RateLimited"
+        "503":
+          description: The database can't be reached right now
           content:
             application/json:
               schema:
@@ -805,6 +853,57 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /admin/contact:
+    get:
+      operationId: listContactMessages
+      tags: [admin]
+      summary: Messages sent through the contact form, newest first (at most 500)
+      responses:
+        "200":
+          description: Messages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactMessageList"
+        "401":
+          description: Not signed in to the admin page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /admin/contact/{id}:
+    delete:
+      operationId: deleteContactMessage
+      tags: [admin]
+      summary: Delete one message
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 36
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          description: The id isn't a message id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not signed in to the admin page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No message with that id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   parameters:
     InviteToken:
@@ -885,6 +984,101 @@ components:
           type: string
       required:
         - error
+    RateLimited:
+      type: object
+      description: The body of a 429, as every rate limit on the API answers.
+      properties:
+        error:
+          type: string
+          description: Always "Too Many Requests".
+        message:
+          type: string
+          description: One sentence saying what happened and when to try again; the one to show.
+        retryAfterSeconds:
+          type: integer
+      required:
+        - error
+        - message
+        - retryAfterSeconds
+    ContactTopic:
+      type: string
+      enum: [general, pilot, privacy, security, grievance, legal]
+      description: What the message is about, chosen on the contact form.
+    ContactMessageInput:
+      type: object
+      description: >-
+        What the contact form sends. Text is trimmed, and control characters removed (line breaks in `message` are
+        kept), before the limits below are checked.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          description: Stored lowercased.
+        company:
+          type: ["string", "null"]
+          maxLength: 200
+          description: Optional; empty is stored as no company.
+        topic:
+          $ref: "#/components/schemas/ContactTopic"
+        message:
+          type: string
+          minLength: 10
+          maxLength: 5000
+        website:
+          type: ["string", "null"]
+          description: Anti-spam field rendered hidden in the form. People leave it empty; a value means a bot filled it.
+      required:
+        - name
+        - email
+        - topic
+        - message
+    ContactMessageReceived:
+      type: object
+      properties:
+        ok:
+          type: boolean
+      required:
+        - ok
+    ContactMessage:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+        company:
+          type: ["string", "null"]
+        topic:
+          $ref: "#/components/schemas/ContactTopic"
+        message:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - email
+        - company
+        - topic
+        - message
+        - createdAt
+    ContactMessageList:
+      type: object
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContactMessage"
+      required:
+        - messages
     DemoSowInput:
       type: object
       properties:

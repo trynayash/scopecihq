@@ -1869,6 +1869,32 @@ async function run() {
       }
     });
 
+    await scenario("The schema sync makes the contact form's table, locked by row level security and indexed by date", async () => {
+      const { contactMessagesTable } = await import("@workspace/db/schema");
+      const { pool } = await import("@workspace/db");
+      const table = await pool.query<{ relrowsecurity: boolean }>(
+        "SELECT relrowsecurity FROM pg_class WHERE relname = 'contact_messages' AND relkind = 'r'",
+      );
+      assert.strictEqual(table.rows[0]?.relrowsecurity, true, "row level security is on");
+      const index = await pool.query<{ indexdef: string }>(
+        "SELECT indexdef FROM pg_indexes WHERE tablename = 'contact_messages' AND indexname = 'contact_messages_created_at_idx'",
+      );
+      assert.match(index.rows[0]?.indexdef ?? "", /\(created_at\)/);
+
+      const email = `schema-check-${Date.now()}@studio.test`;
+      try {
+        const sent = await call(server, "/api/contact", {
+          body: { name: "Schema Check", email, topic: "general", message: "Stored on a database the server set up." },
+          headers: { "x-forwarded-for": "203.0.113.99" },
+        });
+        assert.strictEqual(sent.status, 201, JSON.stringify(sent.body));
+        const [row] = await db.select().from(contactMessagesTable).where(eq(contactMessagesTable.email, email));
+        assert.match(row?.id ?? "", /^[0-9a-f-]{36}$/, "the id is a uuid the database made");
+      } finally {
+        await db.delete(contactMessagesTable).where(eq(contactMessagesTable.email, email));
+      }
+    });
+
     await scenario("A saved GitHub App that no longer decrypts is reported, and isn't replaced by accident", async () => {
       process.env.ADMIN_SECRET = "product-admin-secret";
       const admin = { "x-admin-key": "product-admin-secret", "x-forwarded-for": "203.0.113.99" };
