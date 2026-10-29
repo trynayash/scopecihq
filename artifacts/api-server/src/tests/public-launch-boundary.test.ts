@@ -8,9 +8,11 @@
  */
 
 import assert from "node:assert";
-import { and, desc, eq } from "drizzle-orm";
-import { db, pool, waitlistSignupsTable } from "@workspace/db";
+import { and, desc, eq, gte, like, sql } from "drizzle-orm";
+import { db, pool, siteEventsTable, waitlistSignupsTable } from "@workspace/db";
 import app from "../app.js";
+import { logger } from "../lib/logger.js";
+import { dailyEventBudget } from "../routes/events.js";
 import http from "node:http";
 
 interface TestStats {
@@ -601,6 +603,95 @@ async function runPublicLaunchBoundaryTests() {
       check(knownRes.status === 202, `Known event accepted (got ${knownRes.status})`);
       const unknownRes = await makeRequest(server, "/api/events", { method: "POST", body: { event: "x".repeat(70) } });
       check(unknownRes.status === 400, `Unknown event refused (got ${unknownRes.status})`);
+    });
+
+    // -------------------------------------------------------------
+    // Criterion 18: Analytics rows stay small, and the table stays bounded
+    // -------------------------------------------------------------
+    await testScenario("Criterion 18: /api/events keeps short values, and a daily budget bounds the table", async () => {
+      // The event is stored after the 202 goes out, so wait for its row.
+      const storedEvent = async (source: string) => {
+        for (let i = 0; i < 60; i++) {
+          const [row] = await db.select().from(siteEventsTable).where(eq(siteEventsTable.source, source));
+          if (row) return row;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        throw new Error(`No site event with source ${source} was stored`);
+      };
+      const marker = `launch-ev-${Date.now()}`;
+      const headers = { "x-forwarded-for": "198.51.100.80" };
+
+      const padded = await makeRequest(server, "/api/events", {
+        method: "POST",
+        headers,
+        body: {
+          event: "page_view",
+          source: marker,
+          medium: "m".repeat(5000),
+          campaign: "c".repeat(5000),
+          referrer: `https://news.example/post/1?email=jane@agency.test&pad=${"x".repeat(3000)}#top`,
+          landingPage: "/pricing",
+        },
+      });
+      check(padded.status === 202, `Padded event accepted (got ${padded.status})`);
+      const row = await storedEvent(marker);
+      check(row.medium?.length === 100 && row.campaign?.length === 100, "Campaign tags are cut to 100 characters");
+      check(row.referrer === "https://news.example/post/1", `Referrer keeps the page, not its query (got ${row.referrer})`);
+      check(row.landingPage === "/pricing", "Landing page path is kept");
+
+      const odd = await makeRequest(server, "/api/events", {
+        method: "POST",
+        headers,
+        body: { event: "page_view", source: `${marker}-odd`, referrer: "javascript:alert(1)", landingPage: `//evil.example/${"x".repeat(3000)}` },
+      });
+      check(odd.status === 202, `Event with odd fields accepted (got ${odd.status})`);
+      const oddRow = await storedEvent(`${marker}-odd`);
+      check(oddRow.referrer === null, "A referrer that isn't an http(s) address is dropped");
+      check(oddRow.landingPage === null, "A landing page that isn't a path on this site is dropped");
+
+      // A new day deletes events past the retention window, then counts what
+      // the day already holds, and stops at the limit.
+      const [old] = await db
+        .insert(siteEventsTable)
+        .values({ event: "page_view", source: `${marker}-old`, createdAt: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000) })
+        .returning({ id: siteEventsTable.id });
+      const startOfDay = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`);
+      const [{ today }] = await db
+        .select({ today: sql<number>`count(*)::int` })
+        .from(siteEventsTable)
+        .where(gte(siteEventsTable.createdAt, startOfDay));
+      const room = dailyEventBudget(today + 2, 90);
+      const answers = [await room(logger), await room(logger), await room(logger)];
+      check(answers.join() === "true,true,false", `Budget allows today's remaining room, then refuses (got ${answers.join()})`);
+      const [stillOld] = await db.select().from(siteEventsTable).where(eq(siteEventsTable.id, old.id));
+      check(stillOld === undefined, "Events older than 90 days are deleted");
+      const [kept] = await db.select().from(siteEventsTable).where(eq(siteEventsTable.source, marker));
+      check(kept !== undefined, "Today's events are kept");
+
+      await db.delete(siteEventsTable).where(like(siteEventsTable.source, `${marker}%`));
+    });
+
+    // -------------------------------------------------------------
+    // Criterion 19: Waitlist attribution is trimmed, never refused
+    // -------------------------------------------------------------
+    await testScenario("Criterion 19: Waitlist keeps short campaign tags and the linking page without its query", async () => {
+      const email = `attribution-${Date.now()}@studio.agency`;
+      const res = await makeRequest(server, "/api/waitlist", {
+        method: "POST",
+        headers: { "x-forwarded-for": "198.51.100.81" },
+        body: {
+          email,
+          utmCampaign: "c".repeat(800),
+          utmTerm: "   ",
+          referrer: `https://blog.example/post?ref=jane@agency.test&pad=${"x".repeat(3000)}`,
+        },
+      });
+      check(res.status === 201, `Signup with long attribution is accepted (got ${res.status})`);
+      const [row] = await db.select().from(waitlistSignupsTable).where(eq(waitlistSignupsTable.email, email));
+      check(row?.utmCampaign?.length === 100, "utmCampaign is cut to 100 characters");
+      check(row?.utmTerm === null, "A blank tag is stored as nothing");
+      check(row?.referrer === "https://blog.example/post", `Referrer keeps the page, not its query (got ${row?.referrer})`);
+      await db.delete(waitlistSignupsTable).where(eq(waitlistSignupsTable.email, email));
     });
 
   } finally {

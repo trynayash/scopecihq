@@ -593,12 +593,27 @@ function Waitlist() {
   const [trap, setTrap] = useState('');
   const [state, setState] = useState<WaitlistState>('idle');
   const [emailError, setEmailError] = useState('');
+  // Counts rejected submits, so the same message twice is still announced.
+  const [emailErrorAttempt, setEmailErrorAttempt] = useState(0);
   const [formError, setFormError] = useState('');
   const [savedEmail, setSavedEmail] = useState('');
 
   const createSignup = useCreateWaitlistSignup();
   const submitting = state === 'submitting';
   const hasStartedRef = useRef(false);
+  const emailInputRef = useRef<HTMLInputElement>(null);
+
+  const rejectEmail = useCallback((message: string) => {
+    setEmailError(message);
+    setEmailErrorAttempt((attempt) => attempt + 1);
+  }, []);
+
+  // Back to the field, so its label, invalid state and error are read out.
+  // It runs after the re-render: while saving, the field is disabled and
+  // can't take focus.
+  useEffect(() => {
+    if (emailError) emailInputRef.current?.focus();
+  }, [emailError, emailErrorAttempt]);
 
   const submit = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
@@ -610,11 +625,11 @@ function Waitlist() {
 
       setFormError('');
       if (!trimmedEmail) {
-        setEmailError('Enter your work email.');
+        rejectEmail('Enter your work email.');
         return;
       }
       if (trimmedEmail.length > 320 || !EMAIL_PATTERN.test(trimmedEmail)) {
-        setEmailError("That doesn't look like an email address.");
+        rejectEmail("That doesn't look like an email address.");
         return;
       }
       setEmailError('');
@@ -647,7 +662,7 @@ function Waitlist() {
               return;
             }
             if (status === 400) {
-              setEmailError(error?.data?.error ?? "That doesn't look like an email address.");
+              rejectEmail(error?.data?.error ?? "That doesn't look like an email address.");
               track('waitlist_error');
               return;
             }
@@ -657,7 +672,7 @@ function Waitlist() {
         },
       );
     },
-    [agency, createSignup, email, submitting, trap],
+    [agency, createSignup, email, rejectEmail, submitting, trap],
   );
 
   const settled = state === 'success' || state === 'duplicate';
@@ -702,6 +717,7 @@ function Waitlist() {
                   <label htmlFor="work-email">Work email</label>
                   <input
                     id="work-email"
+                    ref={emailInputRef}
                     name="email"
                     type="email"
                     inputMode="email"
@@ -725,7 +741,8 @@ function Waitlist() {
                     data-testid="input-work-email"
                   />
                   {emailError && (
-                    <p className="field-error" id="work-email-error">
+                    // A fresh alert on every rejected submit, so it's announced each time.
+                    <p className="field-error" id="work-email-error" role="alert" key={emailErrorAttempt}>
                       {emailError}
                     </p>
                   )}
