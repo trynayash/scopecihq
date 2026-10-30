@@ -8,5 +8,11 @@
 import type { PullRequestResult } from './pullRequestResult';
 
 export interface PullRequestResultList {
+  /** The 100 most recently active pull requests with a result, then any older one whose change order is still open. */
   pullRequests: PullRequestResult[];
+  /**
+     * How many of the project's pull requests have a result, shown or not.
+     * @minimum 0
+     */
+  total: number;
 }

@@ -17,6 +17,26 @@ interface RequestRecord {
 }
 
 /**
+ * The client a request counts against. `req.ip` honours the app's "trust
+ * proxy" setting (reading the first X-Forwarded-For entry directly would
+ * trust a value the client wrote). An IPv6 client usually holds a whole /64,
+ * so it counts as one client by that prefix; otherwise each new address
+ * would get a fresh allowance.
+ */
+export function clientKey(req: Request): string {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  if (!ip.includes(":") || ip.startsWith("::ffff:")) return ip;
+  const [head, tail = ""] = ip.split("::");
+  const left = head ? head.split(":") : [];
+  const right = tail ? tail.split(":") : [];
+  const groups = ip.includes("::") ? [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill("0"), ...right] : left;
+  return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, "").toLowerCase()).join(":")}::/64`;
+}
+
+/** How often expired entries are swept: often enough that a long window can't let the map grow all day. */
+const sweepEvery = (windowMs: number) => Math.min(Math.max(windowMs, 30_000), 5 * 60_000);
+
+/**
  * Lightweight in-memory sliding window rate limiter.
  * Protects public endpoints (waitlist, OAuth initiate, public webhook endpoints)
  * against DoS and credential stuffing.
@@ -27,9 +47,7 @@ export function rateLimiter(options: RateLimitOptions) {
     max,
     message = "Too many requests, please try again later.",
     onLimit,
-    // `req.ip` honours the app's "trust proxy" setting. Reading the first
-    // X-Forwarded-For entry directly would trust a value the client wrote.
-    keyGenerator = (req) => req.ip || req.socket.remoteAddress || "unknown",
+    keyGenerator = clientKey,
   } = options;
 
   const hits = new Map<string, RequestRecord>();
@@ -43,7 +61,7 @@ export function rateLimiter(options: RateLimitOptions) {
         hits.delete(key);
       }
     }
-  }, Math.max(windowMs, 30_000));
+  }, sweepEvery(windowMs));
 
   // Allow process to exit cleanly without keeping event loop alive
   if (cleanupInterval.unref) {
@@ -96,7 +114,7 @@ export function rateLimiter(options: RateLimitOptions) {
 export function failureLimiter(options: { windowMs: number; max: number }) {
   const { windowMs, max } = options;
   const failures = new Map<string, number[]>();
-  const keyOf = (req: Request) => req.ip || req.socket.remoteAddress || "unknown";
+  const keyOf = clientKey;
 
   const live = (key: string, now: number) => (failures.get(key) ?? []).filter((ts) => now - ts < windowMs);
 
@@ -107,7 +125,7 @@ export function failureLimiter(options: { windowMs: number; max: number }) {
       if (kept.length === 0) failures.delete(key);
       else failures.set(key, kept);
     }
-  }, Math.max(windowMs, 30_000));
+  }, sweepEvery(windowMs));
   if (cleanupInterval.unref) cleanupInterval.unref();
 
   return {

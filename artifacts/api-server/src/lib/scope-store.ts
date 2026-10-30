@@ -91,6 +91,14 @@ export async function loadActiveBaseline(contractId: string) {
   });
 }
 
+/** One baseline by id, active or not: what a save just wrote, even if another save followed. */
+export async function loadBaseline(id: string) {
+  return db.query.scopeBaselinesTable.findFirst({
+    where: eq(scopeBaselinesTable.id, id),
+    with: { clauses: true, deliverables: true, contract: true },
+  });
+}
+
 type BaselineRecord = NonNullable<Awaited<ReturnType<typeof loadActiveBaseline>>>;
 
 export function toDomainBaseline(record: BaselineRecord): ScopeBaseline {
@@ -129,7 +137,14 @@ export async function saveChecklist(
   const domain = baselineFromChecklist(checklist);
 
   return db.transaction(async (tx: Tx) => {
-    let contractId = project.contractId;
+    // The project's contract as it is now, under a row lock: two first saves
+    // at once would otherwise each create a contract and orphan one.
+    const [current] = await tx
+      .select({ contractId: projectsTable.contractId })
+      .from(projectsTable)
+      .where(eq(projectsTable.id, project.id))
+      .for("update");
+    let contractId = current?.contractId ?? project.contractId;
     if (contractId) {
       await tx
         .update(contractsTable)

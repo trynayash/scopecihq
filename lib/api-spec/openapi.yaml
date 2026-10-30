@@ -1708,10 +1708,16 @@ components:
       properties:
         pullRequests:
           type: array
+          description: The 100 most recently active pull requests with a result, then any older one whose change order is still open.
           items:
             $ref: "#/components/schemas/PullRequestResult"
+        total:
+          type: integer
+          minimum: 0
+          description: How many of the project's pull requests have a result, shown or not.
       required:
         - pullRequests
+        - total
     GitHubRepository:
       type: object
       properties:

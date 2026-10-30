@@ -38,3 +38,25 @@ export function databaseUnavailable(err: unknown, { tls = true } = {}): boolean 
   }
   return false;
 }
+
+/**
+ * Whether a Postgres error with this SQLSTATE (e.g. "23505", a unique
+ * violation) sits anywhere in the cause chain. drizzle-orm wraps the
+ * driver's error in a DrizzleQueryError, so `.code` is usually on `.cause`.
+ */
+export function hasPgErrorCode(error: unknown, code: string, depth = 0): boolean {
+  if (depth > 5 || typeof error !== "object" || error === null) return false;
+  if ("code" in error && error.code === code) return true;
+  return "cause" in error ? hasPgErrorCode(error.cause, code, depth + 1) : false;
+}
+
+/**
+ * The error to log for a failed query, without its parameters. A
+ * DrizzleQueryError's message carries the query's values (an email address,
+ * a message), which must not end up in the logs; its cause has the
+ * driver's code and message without them.
+ */
+export function withoutQueryParams(error: unknown, fallback = "A database query failed."): unknown {
+  if (typeof error !== "object" || error === null || !("params" in error)) return error;
+  return "cause" in error && error.cause ? error.cause : new Error(fallback);
+}

@@ -3,6 +3,7 @@ import { gte, inArray, lt, sql } from "drizzle-orm";
 import { db, contactMessagesTable } from "@workspace/db";
 import { CreateContactMessageBody } from "@workspace/api-zod";
 import { rateLimiter } from "../middlewares/rate-limit.js";
+import { withoutQueryParams } from "../lib/database-errors.js";
 
 const router: IRouter = Router();
 
@@ -150,17 +151,6 @@ async function storeWithinDailyLimit(values: ContactMessageValues): Promise<bool
   });
 }
 
-/**
- * drizzle-orm wraps a failed query in an error whose message lists the
- * query's parameters: here, the sender's name, address and message. Only the
- * driver's own error goes on to the log and the error handler, which reads
- * its code to tell an unreachable database (503) from anything else.
- */
-function withoutParams(error: unknown): unknown {
-  if (typeof error !== "object" || error === null || !("params" in error)) return error;
-  return "cause" in error && error.cause ? error.cause : new Error("A contact message query failed.");
-}
-
 router.post("/contact", readContactMessage, contactRateLimiter, async (req, res, next): Promise<void> => {
   try {
     const stored = await storeWithinDailyLimit(res.locals.contactMessage as ContactMessageValues);
@@ -178,7 +168,7 @@ router.post("/contact", readContactMessage, contactRateLimiter, async (req, res,
     req.log.info("Contact message stored");
     res.status(201).json({ ok: true });
   } catch (error: unknown) {
-    const cause = withoutParams(error);
+    const cause = withoutQueryParams(error, "A contact message query failed.");
     req.log.error({ err: cause }, "Failed to store contact message");
     next(cause);
   }
