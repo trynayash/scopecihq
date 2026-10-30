@@ -152,12 +152,19 @@ export function ScopeEditor({
   idPrefix?: string;
 }) {
   const [showEmpty, setShowEmpty] = useState(false);
+  // A section that has had items stays open after its last one is removed,
+  // so it doesn't vanish (and take keyboard focus with it) mid-edit.
+  const filled = useRef(new Set<string>());
+  const sectionKey = (clause: DemoScopeClause) => `${clause.clauseRef}\u0000${clause.title}`;
+  for (const clause of clauses) {
+    if (clause.included.length + clause.excluded.length > 0) filled.current.add(sectionKey(clause));
+  }
   const total = itemCount(clauses);
   const indexed = clauses.map((clause, index) => ({ clause, index }));
   const visible =
     total === 0
       ? indexed.slice(0, 1)
-      : indexed.filter(({ clause }) => showEmpty || clause.included.length + clause.excluded.length > 0);
+      : indexed.filter(({ clause }) => showEmpty || filled.current.has(sectionKey(clause)));
   const hidden = clauses.length - visible.length;
 
   const update = (index: number, patch: Partial<DemoScopeClause>) =>
