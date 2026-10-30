@@ -190,6 +190,9 @@ p { text-wrap: pretty; }
 /* Pressing is quick and letting go is a touch slower, like a key. */
 .button:active:not([disabled]) { transform: translateY(1px) scale(0.99); transition-duration: var(--press); }
 .button[disabled] { cursor: not-allowed; opacity: 0.6; }
+/* Busy but still focusable, so keyboard focus isn't dropped while it works. */
+.button[aria-disabled='true'],
+.text-link[aria-disabled='true'] { cursor: not-allowed; opacity: 0.6; }
 
 .button-primary {
   background: var(--button-bg);

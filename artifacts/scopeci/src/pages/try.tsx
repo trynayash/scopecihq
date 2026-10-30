@@ -181,7 +181,19 @@ export default function TryPage() {
     );
   };
 
+  // A check or a GitHub load still on its way was for what was on screen
+  // when it started. Changing the scope or the pull request drops it, so a
+  // slow answer can't land under a different pull request or replace a
+  // sample picked since.
+  const prLoad = useRef(0);
+  const changePr = (next: DraftPullRequest) => {
+    prLoad.current += 1;
+    evaluate.reset();
+    setPr(next);
+  };
+
   const editScope = (next: DemoScopeClause[]) => {
+    evaluate.reset();
     setClauses(next);
     setResult(null);
   };
@@ -191,8 +203,12 @@ export default function TryPage() {
     event.preventDefault();
     if (!prUrl.trim()) return;
     setPrUrlState({ loading: true, error: '', loaded: '' });
+    const load = ++prLoad.current;
     try {
       const loaded = await getDemoGithubPr({ url: prUrl.trim() });
+      // Replaced by a sample or an edit while it loaded: keep those.
+      if (load !== prLoad.current) return setPrUrlState({ loading: false, error: '', loaded: '' });
+      evaluate.reset();
       setPr({
         number: loaded.number ?? null,
         title: loaded.title,
@@ -213,6 +229,7 @@ export default function TryPage() {
       });
       track('try_github_pr_loaded');
     } catch (error) {
+      if (load !== prLoad.current) return setPrUrlState({ loading: false, error: '', loaded: '' });
       setPrUrlState({ loading: false, error: errorMessage(error, "We couldn't load that pull request."), loaded: '' });
     }
   };
@@ -385,7 +402,7 @@ export default function TryPage() {
                         key={sample.label}
                         className={`try-sample ${pr.title === sample.pr.title ? 'is-active' : ''}`}
                         onClick={() => {
-                          setPr(sample.pr);
+                          changePr(sample.pr);
                           setResult(null);
                         }}
                       >
@@ -426,7 +443,7 @@ export default function TryPage() {
                         value={pr.title}
                         maxLength={300}
                         placeholder="Add loyalty points at checkout"
-                        onChange={(e) => setPr({ ...pr, title: e.target.value })}
+                        onChange={(e) => changePr({ ...pr, title: e.target.value })}
                       />
                     </div>
                     <div className="field">
@@ -439,7 +456,7 @@ export default function TryPage() {
                         rows={5}
                         value={pr.files}
                         placeholder={'src/loyalty/points.ts\nsrc/checkout/cart.ts'}
-                        onChange={(e) => setPr({ ...pr, files: e.target.value })}
+                        onChange={(e) => changePr({ ...pr, files: e.target.value })}
                       />
                     </div>
                     <div className="field-row">
@@ -451,7 +468,7 @@ export default function TryPage() {
                           id="pr-branch"
                           value={pr.branch}
                           maxLength={200}
-                          onChange={(e) => setPr({ ...pr, branch: e.target.value })}
+                          onChange={(e) => changePr({ ...pr, branch: e.target.value })}
                         />
                       </div>
                       <div className="field">
@@ -495,7 +512,7 @@ export default function TryPage() {
                         rows={3}
                         maxLength={5000}
                         value={pr.body}
-                        onChange={(e) => setPr({ ...pr, body: e.target.value })}
+                        onChange={(e) => changePr({ ...pr, body: e.target.value })}
                       />
                     </div>
                     {prError && (

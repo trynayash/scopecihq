@@ -83,6 +83,15 @@
 /* Link-styled actions sit at interface size, a step apart. */
 button.text-link { margin-right: var(--space-3); font-size: var(--t-ui); }
 .text-link[disabled] { opacity: 0.5; cursor: not-allowed; }
+/* On touch screens, link-styled actions and the remove button get a hit
+   area of about 36px without changing how they sit in the text. */
+@media (pointer: coarse) {
+  button.text-link,
+  .scope-remove { position: relative; }
+  button.text-link::before,
+  .scope-remove::before { content: ''; position: absolute; inset: -8px -4px; }
+  .scope-remove::before { inset: -4px; }
+}
 
 /* Scope checklist */
 .scope-clauses { display: grid; gap: var(--space-4); margin-top: var(--space-3); }
@@ -675,6 +684,11 @@ button.text-link { margin-right: var(--space-3); font-size: var(--t-ui); }
   display: grid;
   gap: var(--space-2);
   width: min(440px, calc(100vw - var(--space-4) * 2));
+  /* A phone on its side has little height: the dialog scrolls rather than
+     cutting off its buttons. */
+  max-height: calc(100dvh - var(--space-4) * 2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--space-5);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-l);
@@ -858,6 +872,18 @@ button.text-link { margin-right: var(--space-3); font-size: var(--t-ui); }
 }
 
 @media (max-width: 719px) {
+  /* No room in the header row on a phone: an error there gets its own line
+     under the header instead of being cut off. */
+  .app-header-error {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    max-width: none;
+    padding: var(--space-2) var(--gutter);
+    border-bottom: 1px solid var(--error-line);
+    background: var(--error-wash);
+  }
   .app-nav-link { padding-inline: var(--space-2); }
   .app-header-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .app-header-divider { display: none; }
