@@ -1574,6 +1574,27 @@ async function run() {
       await call(server, "/api/session/workspace", { method: "PUT", body: { organizationId: danaWorkspace }, cookie: eve });
     });
 
+    await scenario("Owners see the workspace's activity, in plain sentences; members don't", async () => {
+      assert.strictEqual((await call(server, "/api/workspace/activity", { cookie: eve })).status, 403, "members don't see it");
+      const log = await call(server, "/api/workspace/activity", { cookie: dana });
+      assert.strictEqual(log.status, 200, JSON.stringify(log.body));
+      const lines = log.body.events.map((e: any) => `@${e.actor} ${e.summary}`);
+      for (const expected of [
+        /^@dana created the project "Harbor & Pine store"$/,
+        /^@dana saved scope v2 of "Harbor & Pine store"$/,
+        /^@dana connected harbor-agency\/storefront to "Harbor & Pine store"$/,
+        /^@dana marked CO-1 as sent \(#12 in "Harbor & Pine store"\)$/,
+        /^@dana recorded that the client approved CO-1 \(#12 in "Harbor & Pine store"\)$/,
+        /^@dana accepted #18 in "Harbor & Pine store" as in scope$/,
+        /^@dana made an invite link$/,
+        /^@eve joined the workspace$/,
+      ]) {
+        assert.ok(lines.some((line: string) => expected.test(line)), `${expected} in:\n${lines.join("\n")}`);
+      }
+      const times = log.body.events.map((e: any) => new Date(e.occurredAt).getTime());
+      assert.deepStrictEqual(times, [...times].sort((a, b) => b - a), "newest first");
+    });
+
     await scenario("A new sign-in opens the workspace chosen last, not the personal one", async () => {
       const again = await signIn(server, "eve-code");
       const session = await call(server, "/api/session", { cookie: again });

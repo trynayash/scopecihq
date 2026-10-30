@@ -50,6 +50,8 @@ import {
   type SessionUser,
   type TrackedChangeOrder,
   setWorkspaceHeader,
+  useGetWorkspaceActivity,
+  getGetWorkspaceActivityQueryKey,
 } from '@workspace/api-client-react';
 import {
   BASE,
@@ -2322,6 +2324,7 @@ function TeamPage() {
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: getGetWorkspaceQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getGetWorkspaceActivityQueryKey() });
     queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey() });
   };
   const fail = (fallback: string) => (err: unknown) => {
@@ -2603,8 +2606,60 @@ function TeamPage() {
           {error}
         </p>
       )}
+      {owner && <ActivityLog />}
       {confirmDialog}
     </>
+  );
+}
+
+const ACTIVITY_SHOWN = 15;
+
+/**
+ * Who did what in the workspace, newest first: team changes, projects and
+ * repositories, scope versions and change-order decisions. Owners only.
+ */
+function ActivityLog() {
+  const activity = useGetWorkspaceActivity({ query: { queryKey: getGetWorkspaceActivityQueryKey() } });
+  const [all, setAll] = useState(false);
+  const events = activity.data?.events ?? [];
+  const shown = all ? events : events.slice(0, ACTIVITY_SHOWN);
+  return (
+    <section className="panel" aria-labelledby="activity-title">
+      <SectionHead title="Activity" id="activity-title" />
+      <p className="help">The latest changes to this workspace and its projects. Only owners see this.</p>
+      {activity.isPending && <Loading>Loading the activity…</Loading>}
+      {activity.isError && !activity.data && (
+        <LoadError
+          error={activity.error}
+          fallback="We couldn't load the activity."
+          onRetry={() => activity.refetch()}
+          retrying={activity.isFetching}
+        />
+      )}
+      {activity.isError && activity.data && (
+        <StaleNotice error={activity.error} what="the activity" onRetry={() => activity.refetch()} retrying={activity.isFetching} />
+      )}
+      {activity.data && events.length === 0 && <p className="help">Nothing yet.</p>}
+      {shown.length > 0 && (
+        <ol className="activity-list" data-testid="activity-list">
+          {shown.map((event) => (
+            <li key={event.id}>
+              <span>
+                <strong>{event.actor ? `@${event.actor}` : 'ScopeCI'}</strong> {event.summary}
+              </span>
+              <time className="mono" dateTime={new Date(event.occurredAt).toISOString()}>
+                {relativeTime(event.occurredAt)}
+              </time>
+            </li>
+          ))}
+        </ol>
+      )}
+      {events.length > ACTIVITY_SHOWN && (
+        <button type="button" className="text-link" aria-expanded={all} onClick={() => setAll((value) => !value)}>
+          {all ? 'Show less' : `Show all ${events.length}`}
+        </button>
+      )}
+    </section>
   );
 }
 

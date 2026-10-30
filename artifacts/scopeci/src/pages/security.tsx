@@ -170,6 +170,10 @@ export default function Security() {
             Invite links are stored only as hashes, work once, and expire after seven days. An owner can cancel one at any
             time.
           </li>
+          <li>
+            Owners see an activity log on the Team page: who changed the team, connected or disconnected a repository,
+            saved a scope or decided a change order, and when.
+          </li>
         </ul>
       </Section>
 

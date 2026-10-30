@@ -57,6 +57,7 @@ import type {
   WaitlistSignup,
   WaitlistSignupInput,
   WithdrawPullRequestAcceptanceParams,
+  WorkspaceActivity,
   WorkspaceInfo,
   WorkspaceMember,
   WorkspaceUpdateInput
@@ -756,6 +757,83 @@ export const useSwitchWorkspace = <TError = ErrorType<ErrorResponse>,
       > => {
       return useMutation(getSwitchWorkspaceMutationOptions(options));
     }
+
+export const getGetWorkspaceActivityUrl = () => {
+
+
+
+
+  return `/api/workspace/activity`
+}
+
+/**
+ * @summary The workspace's latest activity, newest first (owners only)
+ */
+export const getWorkspaceActivity = async ( options?: Parameters<typeof customFetch>[1]): Promise<WorkspaceActivity> => {
+
+  return customFetch<WorkspaceActivity>(getGetWorkspaceActivityUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetWorkspaceActivityQueryKey = () => {
+    return [
+    `/api/workspace/activity`
+    ] as const;
+    }
+
+
+export const getGetWorkspaceActivityQueryOptions = <TData = Awaited<ReturnType<typeof getWorkspaceActivity>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWorkspaceActivity>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetWorkspaceActivityQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWorkspaceActivity>>> = ({ signal }) => getWorkspaceActivity({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getWorkspaceActivity>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetWorkspaceActivityQueryResult = NonNullable<Awaited<ReturnType<typeof getWorkspaceActivity>>>
+export type GetWorkspaceActivityQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary The workspace's latest activity, newest first (owners only)
+ */
+
+export function useGetWorkspaceActivity<TData = Awaited<ReturnType<typeof getWorkspaceActivity>>, TError = ErrorType<ErrorResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWorkspaceActivity>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetWorkspaceActivityQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getGetWorkspaceUrl = () => {
 

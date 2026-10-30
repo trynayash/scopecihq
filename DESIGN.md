@@ -62,7 +62,7 @@ Facts the interface must never contradict:
 | Marketing | `/pricing`: the plans after the pilot, with a monthly or yearly switch | `src/pages/pricing.tsx`; the plans and prices live in `src/pricing.ts` |
 | Marketing and tool | `/try`: the public demo, which runs the real check without an account | `src/pages/try.tsx` |
 | Marketing | Any unknown route (404) | `src/pages/not-found.tsx` |
-| Application | `/app` (sign-in, projects, new project, project, team, invite) | `src/pages/app.tsx` |
+| Application | `/app` (sign-in, projects, new project, project, team with the owners' activity log, invite) | `src/pages/app.tsx`; the activity log's sentences are written by the API (`lib/activity.ts`) |
 | Internal | `/admin`, `/admin/waitlist` | `src/pages/admin.tsx` |
 
 Shared code:
