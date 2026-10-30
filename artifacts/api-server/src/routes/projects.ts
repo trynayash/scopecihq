@@ -44,6 +44,7 @@ import { installUrl, listInstallationRepositories, listUserInstallations } from 
 import { GitHubApiError } from "../github/github-http.js";
 import { runInBackground } from "../lib/background.js";
 import { hasPgErrorCode } from "../lib/database-errors.js";
+import { recordActivity } from "../lib/activity.js";
 import { ACCEPTED, WITHDRAWN, acceptanceFor, acceptancesFor, itemKey } from "../lib/acceptance.js";
 import { changeOrderPlan, isDecided, itemsOf, letterHash, letterUntouched } from "../lib/change-orders.js";
 
@@ -350,6 +351,7 @@ router.post("/projects", async (req, res): Promise<void> => {
       createdByUserId: account.userId,
     })
     .returning();
+  await recordActivity({ organizationId: account.organizationId, actor: account.login, entityId: row.id, activity: { kind: "PROJECT_CREATED", project: row.name } });
   res.status(201).json(CreateProjectResponse.parse(toProject(row, undefined, undefined)));
 });
 
@@ -390,6 +392,7 @@ router.post("/projects/:projectId/restore", async (req, res): Promise<void> => {
     res.status(404).json({ error: "No such archived project." });
     return;
   }
+  await recordActivity({ organizationId: account.organizationId, actor: account.login, entityId: row.id, activity: { kind: "PROJECT_RESTORED", project: row.name } });
   res.json(RestoreProjectResponse.parse(await presentProject(row)));
 });
 
@@ -434,7 +437,11 @@ router.patch("/projects/:projectId", async (req, res): Promise<void> => {
     .where(eq(projectsTable.id, project.id))
     .returning();
   // A stricter or looser policy changes what the GitHub check says.
-  if (patch.policyMode !== undefined && patch.policyMode !== project.policyMode) recheckLater(req, project.id);
+  if (patch.policyMode !== undefined && patch.policyMode !== project.policyMode) {
+    recheckLater(req, project.id);
+    const account = accountOf(res);
+    await recordActivity({ organizationId: account.organizationId, actor: account.login, entityId: row.id, activity: { kind: "POLICY_CHANGED", project: row.name, policy: patch.policyMode } });
+  }
   res.json(UpdateProjectResponse.parse(await presentProject(row)));
 });
 
@@ -453,6 +460,8 @@ router.delete("/projects/:projectId", async (req, res): Promise<void> => {
     })
     .where(eq(projectsTable.id, project.id));
   releaseChecksLater(req, project);
+  const account = accountOf(res);
+  await recordActivity({ organizationId: account.organizationId, actor: account.login, entityId: project.id, activity: { kind: "PROJECT_ARCHIVED", project: project.name } });
   res.status(204).end();
 });
 
@@ -498,6 +507,7 @@ router.put("/projects/:projectId/scope", async (req, res): Promise<void> => {
   if (!baseline) throw new Error(`Saved scope ${saved.baselineId} could not be read back`);
   // Open pull requests are judged against the new version straight away.
   recheckLater(req, project.id);
+  await recordActivity({ organizationId: account.organizationId, actor: account.login, entityId: project.id, activity: { kind: "SCOPE_SAVED", project: project.name, version: saved.version } });
   res.json(
     SaveProjectScopeResponse.parse({
       version: saved.version,
@@ -708,6 +718,7 @@ router.put("/projects/:projectId/repository", gitHubLimiter, async (req, res): P
     return;
   }
   const { row } = outcome;
+  await recordActivity({ organizationId: account.organizationId, actor: account.login, entityId: row.id, activity: { kind: "REPOSITORY_CONNECTED", project: row.name, repository: row.repositoryFullName ?? repo.fullName } });
   // Pull requests already open on the repository get checked now, not on their next push.
   if (row.contractId) recheckLater(req, project.id);
   res.json(UpdateProjectResponse.parse(await presentProject(row)));
@@ -722,6 +733,10 @@ router.delete("/projects/:projectId/repository", async (req, res): Promise<void>
     .where(eq(projectsTable.id, project.id))
     .returning();
   releaseChecksLater(req, project);
+  if (project.repositoryFullName) {
+    const account = accountOf(res);
+    await recordActivity({ organizationId: account.organizationId, actor: account.login, entityId: project.id, activity: { kind: "REPOSITORY_DISCONNECTED", project: project.name, repository: project.repositoryFullName } });
+  }
   res.json(UpdateProjectResponse.parse(await presentProject(row)));
 });
 

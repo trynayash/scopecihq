@@ -14,6 +14,7 @@ import {
   ChangeMemberRoleResponse,
   CreateInviteResponse,
   GetInviteResponse,
+  GetWorkspaceActivityResponse,
   GetWorkspaceResponse,
   SwitchWorkspaceBody,
   SwitchWorkspaceResponse,
@@ -21,6 +22,7 @@ import {
   UpdateWorkspaceResponse,
 } from "@workspace/api-zod";
 import { rateLimiter } from "../middlewares/rate-limit.js";
+import { recordActivity, workspaceActivity } from "../lib/activity.js";
 import {
   accountOf,
   appOrigin,
@@ -111,6 +113,13 @@ router.get("/workspace", async (_req, res): Promise<void> => {
   res.json(GetWorkspaceResponse.parse(await workspaceInfo(accountOf(res))));
 });
 
+router.get("/workspace/activity", async (_req, res): Promise<void> => {
+  const account = accountOf(res);
+  if (!ownersOnly(account, res)) return;
+  res.setHeader("Cache-Control", "no-store");
+  res.json(GetWorkspaceActivityResponse.parse({ events: await workspaceActivity(account.organizationId) }));
+});
+
 router.patch("/workspace", async (req, res): Promise<void> => {
   const account = accountOf(res);
   if (!ownersOnly(account, res)) return;
@@ -124,6 +133,9 @@ router.patch("/workspace", async (req, res): Promise<void> => {
     .update(organizationsTable)
     .set({ name, updatedAt: new Date() })
     .where(eq(organizationsTable.id, account.organizationId));
+  if (name !== account.organizationName) {
+    await recordActivity({ organizationId: account.organizationId, actor: account.login, entityId: account.organizationId, activity: { kind: "WORKSPACE_RENAMED", name } });
+  }
   res.json(UpdateWorkspaceResponse.parse(await workspaceInfo({ ...account, organizationName: name })));
 });
 
@@ -150,6 +162,7 @@ router.post("/workspace/invites", inviteLimiter, async (req, res): Promise<void>
       expiresAt: new Date(Date.now() + INVITE_TTL_MS),
     })
     .returning({ id: organizationInvitesTable.id, expiresAt: organizationInvitesTable.expiresAt });
+  await recordActivity({ organizationId: account.organizationId, actor: account.login, entityId: invite.id, activity: { kind: "INVITE_CREATED" } });
 
   res.status(201).json(
     CreateInviteResponse.parse({ id: invite.id, url: `${appOrigin(req)}/app/invite/${token}`, expiresAt: invite.expiresAt }),
@@ -171,6 +184,7 @@ router.delete("/workspace/invites/:inviteId", async (req, res): Promise<void> =>
     res.status(404).json({ error: "No such open invite." });
     return;
   }
+  await recordActivity({ organizationId: account.organizationId, actor: account.login, entityId: inviteId, activity: { kind: "INVITE_REVOKED" } });
   res.status(204).end();
 });
 
@@ -232,7 +246,7 @@ router.patch("/workspace/members/:userId", async (req, res): Promise<void> => {
     }
     await tx.update(organizationMembersTable).set({ role }).where(eq(organizationMembersTable.id, target.id));
     if (target.role === "OWNER" && role === "MEMBER") await cancelInvitesBy(tx, account.organizationId, target.userId);
-    return { status: 200, userId: target.userId } as const;
+    return { status: 200, userId: target.userId, changed: target.role !== role } as const;
   });
   if (outcome.status !== 200) {
     res.status(outcome.status).json({ error: outcome.error });
@@ -243,6 +257,14 @@ router.patch("/workspace/members/:userId", async (req, res): Promise<void> => {
     // Removed by someone else straight after the change.
     res.status(404).json({ error: "That person isn't in this workspace." });
     return;
+  }
+  if (outcome.changed) {
+    await recordActivity({
+      organizationId: account.organizationId,
+      actor: account.login,
+      entityId: member.userId,
+      activity: { kind: "MEMBER_ROLE_CHANGED", member: member.login, role },
+    });
   }
   res.json(ChangeMemberRoleResponse.parse(member));
 });
@@ -276,6 +298,7 @@ router.delete("/workspace/members/:userId", async (req, res): Promise<void> => {
           : "A workspace needs at least one owner.",
       } as const;
     }
+    const login = (await tx.query.usersTable.findFirst({ where: eq(usersTable.id, target.userId), columns: { login: true } }))?.login;
     await tx.delete(organizationMembersTable).where(eq(organizationMembersTable.id, target.id));
     await cancelInvitesBy(tx, account.organizationId, target.userId);
     if (count <= 1) {
@@ -288,12 +311,18 @@ router.delete("/workspace/members/:userId", async (req, res): Promise<void> => {
         });
       }
     }
-    return { status: 204 } as const;
+    return { status: 204, login: login ?? "someone" } as const;
   });
   if (outcome.status !== 204) {
     res.status(outcome.status).json({ error: outcome.error });
     return;
   }
+  await recordActivity({
+    organizationId: account.organizationId,
+    actor: account.login,
+    entityId: userId,
+    activity: leaving ? { kind: "MEMBER_LEFT" } : { kind: "MEMBER_REMOVED", member: outcome.login },
+  });
   res.status(204).end();
 });
 
@@ -377,6 +406,7 @@ router.post("/invites/:token/accept", inviteLimiter, async (req, res): Promise<v
       res.status(404).json({ error: INVALID_INVITE });
       return;
     }
+    await recordActivity({ organizationId: invite.organizationId, actor: account.login, entityId: invite.id, activity: { kind: "MEMBER_JOINED" } });
   }
 
   await chooseWorkspace(req, invite.organizationId);

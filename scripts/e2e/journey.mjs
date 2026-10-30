@@ -285,9 +285,13 @@ export async function journey({ browser, app, github, fake, out, results, server
     await shot(phone, "05-teammate-joined");
   });
 
-  await step(page, "The owner sees the new member", async () => {
+  await step(page, "The owner sees the new member, and the activity log says who did what", async () => {
     await page.reload();
-    await page.getByText("@eve-dev").waitFor();
+    await page.getByText("@eve-dev").first().waitFor();
+    const activity = page.getByTestId("activity-list");
+    await activity.getByText("joined the workspace").waitFor();
+    await activity.getByText("made an invite link").waitFor();
+    await activity.getByText(/connected .+ to "/).first().waitFor();
   });
 
   await step(page, "The owner makes the teammate an owner", async () => {

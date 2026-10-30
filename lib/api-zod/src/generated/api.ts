@@ -299,6 +299,19 @@ export const SwitchWorkspaceResponse = zod.object({
 
 
 /**
+ * @summary The workspace's latest activity, newest first (owners only)
+ */
+export const GetWorkspaceActivityResponse = zod.object({
+  "events": zod.array(zod.object({
+  "id": zod.string(),
+  "occurredAt": zod.coerce.date(),
+  "actor": zod.string().nullable().describe('The GitHub login of whoever did it.'),
+  "summary": zod.string().describe('What they did, as the end of a sentence that starts with their name (\"archived \\\"Harbor\\\"\").')
+}))
+})
+
+
+/**
  * @summary The current workspace, its members and, for owners, its open invites
  */
 export const GetWorkspaceResponse = zod.object({

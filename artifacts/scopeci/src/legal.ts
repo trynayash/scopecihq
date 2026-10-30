@@ -5,7 +5,7 @@
  */
 
 /** The date of the legal pages' wording. Change it in the same commit as any change to their wording. */
-export const LEGAL_UPDATED = '29 October 2026';
+export const LEGAL_UPDATED = '30 October 2026';
 
 /**
  * Who runs ScopeCI. It is not a registered company, so the pages name the

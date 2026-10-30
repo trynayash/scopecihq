@@ -600,6 +600,22 @@ export interface PullRequestResult {
   checkedAt: string;
 }
 
+export interface ActivityEntry {
+  id: string;
+  occurredAt: string;
+  /**
+     * The GitHub login of whoever did it.
+     * @nullable
+     */
+  actor: string | null;
+  /** What they did, as the end of a sentence that starts with their name ("archived \"Harbor\""). */
+  summary: string;
+}
+
+export interface WorkspaceActivity {
+  events: ActivityEntry[];
+}
+
 export interface PullRequestResultList {
   /** The 100 most recently active pull requests with a result, then any older one whose change order is still open. */
   pullRequests: PullRequestResult[];

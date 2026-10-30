@@ -1,0 +1,48 @@
+name: Uptime
+
+# Checks the live site from outside, so an outage (a failed deploy, a crash
+# loop, a hosting suspension) is noticed without anyone visiting it. A failed
+# run is a failed workflow: GitHub emails the repository's owner and the
+# GitHub app sends a notification. Every three hours, so a free instance that
+# sleeps when idle isn't kept awake for most of the day; a cold start can take
+# up to a minute, so each check waits that long and tries three times.
+on:
+  schedule:
+    - cron: "17 */3 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: uptime
+  cancel-in-progress: true
+
+jobs:
+  live-site:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      SITE: https://scopeci.onrender.com
+    steps:
+      - name: The app answers its health check
+        run: |
+          for attempt in 1 2 3; do
+            code=$(curl -s -o health.json -w '%{http_code}' --max-time 70 "$SITE/api/healthz" || echo 000)
+            if [ "$code" = "200" ] && grep -q '"ok"' health.json; then
+              echo "Healthy on attempt $attempt."
+              exit 0
+            fi
+            echo "Attempt $attempt: HTTP $code $(head -c 200 health.json 2>/dev/null)"
+            sleep 20
+          done
+          echo "::error title=ScopeCI is down::$SITE/api/healthz answered HTTP $code three times. Check the scopeci service on Render: it may be suspended, failing to deploy or crashing."
+          exit 1
+
+      - name: The site's pages are served
+        run: |
+          code=$(curl -s -o page.html -w '%{http_code}' --max-time 70 "$SITE/pricing" || echo 000)
+          if [ "$code" != "200" ] || ! grep -q '<div id="root">' page.html; then
+            echo "::error title=ScopeCI pages aren't served::$SITE/pricing answered HTTP $code without the app's page."
+            exit 1
+          fi
+          echo "The site's pages are served."

@@ -156,7 +156,8 @@ export default function Privacy() {
         <p>
           With each check we store the result, its reason and any estimate. For change orders we store the work they
           cover, the hours, the letter’s subject and text, and whether it was sent, approved or declined. We keep a log of
-          who did what, such as who recorded an approval, and a short record of each notification GitHub sends us.
+          who did what, such as who recorded an approval, connected a repository or changed someone’s role, and a short
+          record of each notification GitHub sends us.
         </p>
 
         <Sub>Site analytics</Sub>
@@ -248,7 +249,8 @@ export default function Privacy() {
           rows={PROCESSORS.map((processor) => [processor.name, processor.role, processor.detail])}
         />
         <p>
-          Inside ScopeCI, the members of a workspace can see its projects, results and change orders. The check and
+          Inside ScopeCI, the members of a workspace can see its projects, results and change orders, and its owners can
+          see its activity log. The check and
           comment ScopeCI posts on a pull request can be read by anyone who can see that repository on GitHub. We may
           also disclose data if the law requires it, and will tell you when we are allowed to.
         </p>

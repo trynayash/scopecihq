@@ -250,6 +250,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /workspace/activity:
+    get:
+      operationId: getWorkspaceActivity
+      tags: [workspace]
+      summary: The workspace's latest activity, newest first (owners only)
+      responses:
+        "200":
+          description: Up to 100 entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceActivity"
+        "401":
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not an owner of this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /workspace:
     get:
       operationId: getWorkspace
@@ -1703,6 +1727,34 @@ components:
         - item
         - clauseRef
         - clauseTitle
+    WorkspaceActivity:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityEntry"
+      required:
+        - events
+    ActivityEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+        actor:
+          type: ["string", "null"]
+          description: The GitHub login of whoever did it.
+        summary:
+          type: string
+          description: What they did, as the end of a sentence that starts with their name ("archived \"Harbor\"").
+      required:
+        - id
+        - occurredAt
+        - actor
+        - summary
     PullRequestResultList:
       type: object
       properties:
