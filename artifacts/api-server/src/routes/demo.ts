@@ -339,13 +339,19 @@ router.get("/demo/github-pr", gitHubLimiter, async (req, res): Promise<void> => 
     return;
   }
 
-  const pr = (await prRes.json()) as {
-    number?: number;
-    title?: string;
-    body?: string | null;
-    head?: { ref?: string };
-    changed_files?: number;
-  };
+  // The bodies are read inside the same guard as the requests: a slow or
+  // garbled answer from GitHub is GitHub not answering, not our error.
+  let pr: { number?: number; title?: string; body?: string | null; head?: { ref?: string }; changed_files?: number };
+  let firstPage: unknown;
+  try {
+    const [prBody, filesBody] = await Promise.all([prRes.json(), filesRes.json()]);
+    pr = prBody as typeof pr;
+    firstPage = filesBody;
+  } catch (err) {
+    req.log.warn({ err }, "GitHub sent an unreadable answer");
+    res.status(502).json({ error: "GitHub didn't answer. Paste the file list instead." });
+    return;
+  }
 
   // Further pages are read while GitHub keeps sending full ones and has more
   // to send, up to what a check accepts. A page that fails fails the lookup:
@@ -353,7 +359,7 @@ router.get("/demo/github-pr", gitHubLimiter, async (req, res): Promise<void> => 
   // without saying so.
   const total = typeof pr.changed_files === "number" ? pr.changed_files : null;
   const files: Array<{ filename?: string; status?: string }> = [];
-  let page: unknown = await filesRes.json();
+  let page: unknown = firstPage;
   for (let next = 2; Array.isArray(page); next++) {
     files.push(...page);
     if (page.length < FILES_PER_PAGE || files.length >= Math.min(total ?? MAX_FILES, MAX_FILES)) break;

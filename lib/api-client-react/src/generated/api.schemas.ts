@@ -601,7 +601,13 @@ export interface PullRequestResult {
 }
 
 export interface PullRequestResultList {
+  /** The 100 most recently active pull requests with a result, then any older one whose change order is still open. */
   pullRequests: PullRequestResult[];
+  /**
+     * How many of the project's pull requests have a result, shown or not.
+     * @minimum 0
+     */
+  total: number;
 }
 
 export interface GitHubRepository {
@@ -618,7 +624,7 @@ export interface GitHubRepositoryList {
   /** @nullable */
   installUrl: string | null;
   repositories: GitHubRepository[];
-  /** GitHub accounts whose installation has more repositories than ScopeCI lists (5,000); their list is cut short. */
+  /** GitHub accounts whose repositories aren't all listed: the installation has more than ScopeCI lists (5,000), or the person can see more than 50 accounts and these were left out. */
   truncatedAccounts?: string[];
 }
 

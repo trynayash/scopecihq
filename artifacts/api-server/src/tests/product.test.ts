@@ -1,16 +1,18 @@
 import assert from "node:assert";
 import crypto from "node:crypto";
 import http from "node:http";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   changeOrdersTable,
   commercialEvaluationsTable,
+  githubCheckRunsTable,
   githubInstallationsTable,
   organizationInvitesTable,
   organizationMembersTable,
   prDiffAnalysesTable,
   projectsTable,
+  pullRequestsTable,
   scopeBaselinesTable,
   appSettingsTable,
   usersTable,
@@ -498,6 +500,43 @@ async function run() {
       const detail = await call(server, `/api/projects/${projectId}`, { cookie: dana });
       assert.strictEqual(detail.body.project.scopeVersion, "v2");
       assert.strictEqual(detail.body.scope.clauses[0].clauseRef, "§3.1");
+    });
+
+    await scenario("A scope too big to check is refused; an item that grows when lower-cased is clamped", async () => {
+      // A project of its own, so the shared one keeps the scope versions later scenarios expect.
+      const scratch = await call(server, "/api/projects", { method: "POST", body: { name: "Scratch" }, cookie: dana });
+      assert.strictEqual(scratch.status, 201, JSON.stringify(scratch.body));
+      const scratchId = scratch.body.id ?? scratch.body.project?.id;
+      // Each list holds up to 100 items, so 21 sections of 100 pass the schema but not the budget.
+      const clauses = Array.from({ length: 21 }, (_, c) => ({
+        clauseRef: `§${c + 1}`,
+        title: `Part ${c + 1}`,
+        included: Array.from({ length: 100 }, (_, i) => `item ${c}-${i}`),
+        excluded: [],
+      }));
+      const huge = await call(server, `/api/projects/${scratchId}/scope`, { method: "PUT", body: { title: "Big", clauses }, cookie: dana });
+      assert.strictEqual(huge.status, 400);
+      assert.match(huge.body.error, /up to 2,000 items/);
+
+      // "İ" lower-cases to two characters: 300 of them would store 600.
+      const dotted = "İ".repeat(300);
+      const grown = { ...SCOPE, clauses: [{ ...SCOPE.clauses[0], excluded: [...SCOPE.clauses[0].excluded, dotted] }] };
+      const saved = await call(server, `/api/projects/${scratchId}/scope`, { method: "PUT", body: grown, cookie: dana });
+      assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+      assert.ok(saved.body.clauses[0].excluded.every((item: string) => item.length <= 300));
+      assert.strictEqual((await call(server, `/api/projects/${scratchId}`, { cookie: dana })).status, 200, "the project still reads back");
+
+      assert.strictEqual((await call(server, `/api/projects/${scratchId}`, { method: "DELETE", cookie: dana })).status, 204);
+    });
+
+    await scenario("Project writes from a page showing another workspace are refused", async () => {
+      const other = { "x-scopeci-workspace": "00000000-0000-4000-8000-000000000000" };
+      const stale = await call(server, `/api/projects/${projectId}`, { method: "PATCH", body: { clientName: "Wrong" }, cookie: dana, headers: other });
+      assert.strictEqual(stale.status, 409);
+      assert.strictEqual(stale.body.error, "You switched workspace in another window. Reload this page to continue.");
+      const created = await call(server, "/api/projects", { method: "POST", body: { name: "Stray" }, cookie: dana, headers: other });
+      assert.strictEqual(created.status, 409, "a project isn't created in the workspace the page doesn't show");
+      assert.strictEqual((await call(server, `/api/projects/${projectId}`, { cookie: dana, headers: other })).status, 200, "reading is never refused");
     });
 
     await scenario("Another workspace can't see or change the project", async () => {
@@ -2022,9 +2061,29 @@ async function run() {
       fake.refreshWorks = true;
     });
 
-    await scenario("Archiving a project frees its repository and hides it", async () => {
+    await scenario("Archiving a project frees its repository and hides it, and releases its blocking checks", async () => {
+      const blocking = async () => {
+        const open = await db.query.pullRequestsTable.findMany({
+          where: and(eq(pullRequestsTable.projectId, projectId), eq(pullRequestsTable.state, "OPEN")),
+        });
+        if (open.length === 0) return [];
+        return db.query.githubCheckRunsTable.findMany({
+          where: and(
+            inArray(githubCheckRunsTable.pullRequestId, open.map((p) => p.id)),
+            inArray(githubCheckRunsTable.conclusion, ["failure", "action_required"]),
+          ),
+        });
+      };
+      const before = await blocking();
       const archived = await call(server, `/api/projects/${projectId}`, { method: "DELETE", cookie: dana });
       assert.strictEqual(archived.status, 204);
+      for (let i = 0; i < 40 && (await blocking()).length > 0; i++) await new Promise((r) => setTimeout(r, 100));
+      assert.strictEqual((await blocking()).length, 0, "no ScopeCI check is left blocking an open pull request");
+      for (const run of before) {
+        const posted = fake.checkRuns.find((r) => String(r.id) === run.githubCheckRunId);
+        assert.strictEqual(posted?.body.conclusion, "neutral");
+        assert.strictEqual(posted?.body.output?.title, "ScopeCI no longer checks this repository");
+      }
       assert.strictEqual((await call(server, `/api/projects/${projectId}`, { cookie: dana })).status, 404);
       const row = await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) });
       assert.strictEqual(row?.repositoryExternalId, null);

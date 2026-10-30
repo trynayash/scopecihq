@@ -1008,6 +1008,10 @@ export const ListProjectPullRequestsParams = zod.object({
   "projectId": zod.coerce.string().max(listProjectPullRequestsPathProjectIdMax)
 })
 
+export const listProjectPullRequestsResponseTotalMin = 0;
+
+
+
 export const ListProjectPullRequestsResponse = zod.object({
   "pullRequests": zod.array(zod.object({
   "evaluationId": zod.string(),
@@ -1071,7 +1075,8 @@ export const ListProjectPullRequestsResponse = zod.object({
 }),zod.null()]).describe('An earlier change order on this pull request that the client already decided, when a later push added excluded work it doesn\'t cover. That new work is the current draft; this one is for reference.'),
   "newItems": zod.array(zod.string()).describe('The excluded work a new change order would list: what no decided change order on this pull request lists. Empty when trackedChangeOrder is set (its items are the list).'),
   "checkedAt": zod.coerce.date()
-}))
+})).describe('The 100 most recently active pull requests with a result, then any older one whose change order is still open.'),
+  "total": zod.number().int().min(listProjectPullRequestsResponseTotalMin).describe('How many of the project\'s pull requests have a result, shown or not.')
 })
 
 
@@ -1088,7 +1093,7 @@ export const ListGitHubRepositoriesResponse = zod.object({
   "private": zod.boolean(),
   "linkedProjectId": zod.string().nullable()
 })),
-  "truncatedAccounts": zod.array(zod.string()).optional().describe('GitHub accounts whose installation has more repositories than ScopeCI lists (5,000); their list is cut short.')
+  "truncatedAccounts": zod.array(zod.string()).optional().describe('GitHub accounts whose repositories aren\'t all listed: the installation has more than ScopeCI lists (5,000), or the person can see more than 50 accounts and these were left out.')
 })
 
 

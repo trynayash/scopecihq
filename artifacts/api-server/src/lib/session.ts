@@ -210,6 +210,22 @@ export async function requireAccount(req: Request, res: Response, next: NextFunc
 }
 
 /**
+ * Writes act on the session's current workspace, which a switch in another
+ * window moves. The page says which workspace it shows (the
+ * X-ScopeCI-Workspace header), so a write from a page left showing the old
+ * one is refused rather than applied to the new one. Runs after requireAccount.
+ */
+export function sameWorkspace(req: Request, res: Response, next: NextFunction): void {
+  const shown = req.get("x-scopeci-workspace")?.trim().toLowerCase();
+  const writing = !["GET", "HEAD", "OPTIONS"].includes(req.method);
+  if (writing && shown && shown !== accountOf(res).organizationId.toLowerCase()) {
+    res.status(409).json({ error: "You switched workspace in another window. Reload this page to continue." });
+    return;
+  }
+  next();
+}
+
+/**
  * Writes must come from our own pages. SameSite=Lax already keeps the cookie
  * off cross-site POSTs; this also refuses a browser request whose Origin
  * names another site, in case a deployment ever loosens the cookie.

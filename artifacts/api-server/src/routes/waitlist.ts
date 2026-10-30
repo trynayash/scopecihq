@@ -3,6 +3,7 @@ import { db, waitlistSignupsTable } from "@workspace/db";
 import { CreateWaitlistSignupBody, CreateWaitlistSignupResponse } from "@workspace/api-zod";
 import { rateLimiter } from "../middlewares/rate-limit.js";
 import { clipTag, referringPage } from "./events.js";
+import { hasPgErrorCode, withoutQueryParams } from "../lib/database-errors.js";
 
 const router: IRouter = Router();
 
@@ -16,20 +17,7 @@ export const waitlistRateLimiter = rateLimiter({
   message: "Too many waitlist submissions from this IP. Please wait a moment and try again.",
 });
 
-/**
- * drizzle-orm wraps the driver's error in a `DrizzleQueryError`, so the `pg`
- * error carrying `.code` (e.g. "23505" for a unique-constraint violation) sits
- * at `error.cause`, not on the thrown error itself. Walk the cause chain
- * rather than assuming either shape, so this keeps working across drivers and
- * drizzle-orm versions.
- */
-function hasPgErrorCode(error: unknown, code: string, depth = 0): boolean {
-  if (depth > 5 || typeof error !== "object" || error === null) return false;
-  if ("code" in error && error.code === code) return true;
-  return "cause" in error ? hasPgErrorCode(error.cause, code, depth + 1) : false;
-}
-
-router.post("/waitlist", waitlistRateLimiter, async (req, res): Promise<void> => {
+router.post("/waitlist", waitlistRateLimiter, async (req, res, next): Promise<void> => {
   // Bot Honeypot Protection: drop automated bot submissions silently. The
   // form renders `website_url_hp` hidden; `hp` and `company_role` are older
   // names kept for clients that still send them. The body is not logged: it
@@ -76,8 +64,11 @@ router.post("/waitlist", waitlistRateLimiter, async (req, res): Promise<void> =>
       return;
     }
 
-    req.log.error({ err: error }, "Failed to create waitlist signup");
-    res.status(500).json({ error: "We couldn't save your request. Please try again." });
+    // Logged without the query's values (the signup's email and agency);
+    // the shared handler answers 503 when the database is down.
+    const cause = withoutQueryParams(error, "A waitlist query failed.");
+    req.log.error({ err: cause }, "Failed to create waitlist signup");
+    next(cause);
   }
 });
 

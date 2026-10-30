@@ -37,12 +37,13 @@ import {
 import { composeChangeOrder, type ChangeOrderItem, type EvidenceBundle } from "@workspace/commercial-engine";
 import { currentWebhookService } from "./github.js";
 import { rateLimiter } from "../middlewares/rate-limit.js";
-import { accountOf, requireAccount, sameOriginWrites, type Account } from "../lib/session.js";
-import { checklistFromRecord, loadActiveBaseline, saveChecklist } from "../lib/scope-store.js";
+import { accountOf, requireAccount, sameOriginWrites, sameWorkspace, type Account } from "../lib/session.js";
+import { checklistFromRecord, loadActiveBaseline, loadBaseline, saveChecklist } from "../lib/scope-store.js";
 import { GitHubReauthRequired, userGitHubToken } from "../lib/github-token.js";
 import { installUrl, listInstallationRepositories, listUserInstallations } from "../github/user-api.js";
 import { GitHubApiError } from "../github/github-http.js";
 import { runInBackground } from "../lib/background.js";
+import { hasPgErrorCode } from "../lib/database-errors.js";
 import { ACCEPTED, WITHDRAWN, acceptanceFor, acceptancesFor, itemKey } from "../lib/acceptance.js";
 import { changeOrderPlan, isDecided, itemsOf, letterHash, letterUntouched } from "../lib/change-orders.js";
 
@@ -53,7 +54,7 @@ import { changeOrderPlan, isDecided, itemsOf, letterHash, letterUntouched } from
  */
 const router: IRouter = Router();
 
-router.use(["/projects", "/github/repositories"], sameOriginWrites, requireAccount);
+router.use(["/projects", "/github/repositories"], sameOriginWrites, requireAccount, sameWorkspace);
 
 const gitHubLimiter = rateLimiter({ windowMs: 60_000, max: 30, message: "Too many GitHub lookups. Wait a minute." });
 
@@ -63,13 +64,66 @@ const gitHubLimiter = rateLimiter({ windowMs: 60_000, max: 30, message: "Too man
  * connected repository, a different policy or an approved change order.
  */
 function recheckLater(req: Request, projectId: string): void {
-  runInBackground(
+  // One run per project at a time. Asking again while one runs queues a
+  // single follow-up (it reads whatever changed since), so a burst of saves
+  // costs two passes over the open pull requests, not one per save, and
+  // doesn't spend the customer's GitHub API allowance on repeats.
+  const state = rechecks.get(projectId);
+  if (state) {
+    state.again = true;
+    return;
+  }
+  const entry: Recheck = { again: false, done: Promise.resolve() };
+  rechecks.set(projectId, entry);
+  const run = (): Promise<void> =>
     new Promise<void>((resolve) => setImmediate(resolve))
       .then(() => currentWebhookService())
       .then((service) => service?.recheckOpenPullRequests(projectId))
-      .catch((err) => req.log.warn({ err, projectId }, "Re-checking open pull requests failed")),
+      .catch((err) => req.log.warn({ err, projectId }, "Re-checking open pull requests failed"))
+      .then(() => {
+        const current = rechecks.get(projectId);
+        if (current?.again) {
+          current.again = false;
+          return run();
+        }
+        rechecks.delete(projectId);
+        return undefined;
+      });
+  entry.done = runInBackground(run());
+}
+
+/**
+ * After a project stops checking its repository, its failing checks on open
+ * pull requests are set to neutral in the background (see releaseChecks).
+ */
+function releaseChecksLater(req: Request, project: ProjectRow): void {
+  if (!project.githubInstallationId || !project.repositoryFullName) return;
+  const link = { projectId: project.id, installationId: project.githubInstallationId, repositoryFullName: project.repositoryFullName };
+  // A re-check still running would post its verdicts after the release; wait
+  // for it (a follow-up pass finds the link gone and stops at once).
+  const running = rechecks.get(project.id)?.done ?? Promise.resolve();
+  runInBackground(
+    running
+      .then(() => currentWebhookService())
+      .then((service) => service?.releaseChecks(link))
+      .catch((err) => req.log.warn({ err, projectId: project.id }, "Releasing ScopeCI checks failed")),
   );
 }
+
+/** A project's re-check in progress: whether another pass was asked for meanwhile, and when it all ends. */
+type Recheck = { again: boolean; done: Promise<void> };
+const rechecks = new Map<string, Recheck>();
+
+/** What a saved scope may hold: every check runs against it, so it can't hold up the server. */
+const SCOPE_BUDGET = { items: 2000, chars: 100_000 };
+/** The longest item the API accepts (ScopeClause in openapi.yaml). */
+const SCOPE_ITEM_MAX = 300;
+
+/** How many GitHub accounts' repositories the picker reads for one person. */
+const INSTALLATIONS_LISTED = 50;
+
+/** How many of a project's checked pull requests the results list shows, most recently active first. */
+const PULL_REQUEST_LIST_LIMIT = 100;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -398,6 +452,7 @@ router.delete("/projects/:projectId", async (req, res): Promise<void> => {
       updatedAt: new Date(),
     })
     .where(eq(projectsTable.id, project.id));
+  releaseChecksLater(req, project);
   res.status(204).end();
 });
 
@@ -416,17 +471,38 @@ router.put("/projects/:projectId/scope", async (req, res): Promise<void> => {
     res.status(400).json({ error: "Add at least one included or excluded item before saving." });
     return;
   }
+  // Every webhook, re-check and sweep runs the check against this scope, so
+  // it has a budget, a little larger than the demo's.
+  const itemChars = parsed.data.clauses.reduce((n, c) => n + [...c.included, ...c.excluded].join("").length, 0);
+  if (itemCount > SCOPE_BUDGET.items || itemChars > SCOPE_BUDGET.chars) {
+    res.status(400).json({
+      error: `A scope can list up to ${SCOPE_BUDGET.items.toLocaleString("en-US")} items and ${SCOPE_BUDGET.chars.toLocaleString("en-US")} characters in all; this one has ${itemCount.toLocaleString("en-US")} items and ${itemChars.toLocaleString("en-US")} characters. Merge or shorten some items.`,
+    });
+    return;
+  }
+
+  // Items are stored lower-cased. A few characters grow when lower-cased
+  // ("İ" becomes two), so they are lower-cased and clamped first: an item
+  // stored longer than the API allows would fail every later response.
+  const clamp = (items: string[]) => items.map((item) => item.toLowerCase().slice(0, SCOPE_ITEM_MAX));
+  const checklist = {
+    ...parsed.data,
+    clauses: parsed.data.clauses.map((c) => ({ ...c, included: clamp(c.included), excluded: clamp(c.excluded) })),
+  };
 
   const account = accountOf(res);
-  const saved = await saveChecklist(project, parsed.data, account.login);
-  const baseline = await loadActiveBaseline((await findProject(account, project.id))!.contractId!);
+  const saved = await saveChecklist(project, checklist, account.login);
+  // The answer is what this save wrote, read by its id: right even if a
+  // teammate saved again a moment later or the project was archived meanwhile.
+  const baseline = await loadBaseline(saved.baselineId);
+  if (!baseline) throw new Error(`Saved scope ${saved.baselineId} could not be read back`);
   // Open pull requests are judged against the new version straight away.
   recheckLater(req, project.id);
   res.json(
     SaveProjectScopeResponse.parse({
       version: saved.version,
       savedAt: saved.savedAt,
-      ...checklistFromRecord(baseline!),
+      ...checklistFromRecord(baseline),
     }),
   );
 });
@@ -458,7 +534,11 @@ router.get("/github/repositories", gitHubLimiter, async (_req, res): Promise<voi
   // Accounts with more repositories than GitHub's list gives ScopeCI; the picker says so.
   const truncatedAccounts: string[] = [];
   try {
-    const installations = (await listUserInstallations(token)).slice(0, 20);
+    // Each account costs a GitHub request, so the list stops at
+    // INSTALLATIONS_LISTED; any beyond are named as not fully listed.
+    const all = await listUserInstallations(token);
+    const installations = all.slice(0, INSTALLATIONS_LISTED);
+    for (const skipped of all.slice(INSTALLATIONS_LISTED)) truncatedAccounts.push(skipped.accountLogin);
     for (const installation of installations) {
       const list = await listInstallationRepositories(token, installation.id);
       if (list.truncated) truncatedAccounts.push(installation.accountLogin);
@@ -503,6 +583,13 @@ router.get("/github/repositories", gitHubLimiter, async (_req, res): Promise<voi
   );
 });
 
+/** Why a repository can't be connected: another project already uses it. */
+function takenMessage(takenBy: ProjectRow, fullName: string, account: Account): string {
+  return takenBy.organizationId === account.organizationId
+    ? `${fullName} already feeds the project "${takenBy.name}". Disconnect it there first.`
+    : `${fullName} is already connected to another ScopeCI workspace.`;
+}
+
 router.put("/projects/:projectId/repository", gitHubLimiter, async (req, res): Promise<void> => {
   const parsed = LinkProjectRepositoryBody.safeParse(req.body);
   if (!parsed.success) return badRequest(res, parsed.error);
@@ -537,75 +624,90 @@ router.put("/projects/:projectId/repository", gitHubLimiter, async (req, res): P
   }
 
   const installationId = String(installation.id);
-  const existing = await db.query.githubInstallationsTable.findFirst({
-    where: eq(githubInstallationsTable.installationId, installationId),
-  });
-  // A GitHub account feeds one workspace. It can move to this one only when
-  // no project in its current workspace uses it, so a person who connected
-  // it from the wrong workspace (say their personal one) can't lock their
-  // agency out of its own repositories.
-  if (existing && existing.organizationId !== account.organizationId) {
-    const inUse = await db.query.projectsTable.findFirst({
-      where: and(
-        eq(projectsTable.organizationId, existing.organizationId),
-        eq(projectsTable.githubInstallationId, installationId),
-        isNull(projectsTable.archivedAt),
-      ),
-    });
-    if (inUse) {
-      res.status(409).json({
-        error: `The GitHub account ${installation.accountLogin} feeds a project in another ScopeCI workspace. Disconnect it there first.`,
+  const repositoryId = String(repo.id);
+  const connected = { installation, repo };
+  // Checked and written under locks on the installation and the repository,
+  // so two people connecting at once can't both pass the checks and then
+  // collide on the unique indexes halfway through the writes.
+  let outcome: { conflict: string } | { row: ProjectRow };
+  try {
+    outcome = await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`github-installation:${installationId}`}))`);
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`github-repository:${repositoryId}`}))`);
+      const existing = await tx.query.githubInstallationsTable.findFirst({
+        where: eq(githubInstallationsTable.installationId, installationId),
       });
-      return;
-    }
-  }
+      // A GitHub account feeds one workspace. It can move to this one only when
+      // no project in its current workspace uses it, so a person who connected
+      // it from the wrong workspace (say their personal one) can't lock their
+      // agency out of its own repositories.
+      if (existing && existing.organizationId !== account.organizationId) {
+        const inUse = await tx.query.projectsTable.findFirst({
+          where: and(
+            eq(projectsTable.organizationId, existing.organizationId),
+            eq(projectsTable.githubInstallationId, installationId),
+            isNull(projectsTable.archivedAt),
+          ),
+        });
+        if (inUse) {
+          return {
+            conflict: `The GitHub account ${connected.installation.accountLogin} feeds a project in another ScopeCI workspace. Disconnect it there first.`,
+          };
+        }
+      }
 
-  const takenBy = await db.query.projectsTable.findFirst({
-    where: and(eq(projectsTable.repositoryExternalId, String(repo.id)), ne(projectsTable.id, project.id)),
-  });
-  if (takenBy) {
-    res.status(409).json({
-      error:
-        takenBy.organizationId === account.organizationId
-          ? `${repo.fullName} already feeds the project "${takenBy.name}". Disconnect it there first.`
-          : `${repo.fullName} is already connected to another ScopeCI workspace.`,
+      const takenBy = await tx.query.projectsTable.findFirst({
+        where: and(eq(projectsTable.repositoryExternalId, repositoryId), ne(projectsTable.id, project.id)),
+      });
+      if (takenBy) return { conflict: takenMessage(takenBy, connected.repo.fullName, account) };
+
+      if (existing) {
+        await tx
+          .update(githubInstallationsTable)
+          .set({
+            organizationId: account.organizationId,
+            suspendedAt: null,
+            permissionsJson: connected.installation.permissions,
+            updatedAt: new Date(),
+          })
+          .where(eq(githubInstallationsTable.id, existing.id));
+      } else {
+        await tx.insert(githubInstallationsTable).values({
+          installationId,
+          organizationId: account.organizationId,
+          githubAccountId: String(connected.installation.accountId),
+          githubAccountLogin: connected.installation.accountLogin,
+          githubAccountType: connected.installation.accountType,
+          permissionsJson: connected.installation.permissions,
+          repositorySelection: connected.installation.repositorySelection,
+          installedBy: account.login,
+        });
+      }
+
+      const [updated] = await tx
+        .update(projectsTable)
+        .set({
+          githubInstallationId: installationId,
+          repositoryExternalId: repositoryId,
+          repositoryFullName: connected.repo.fullName,
+          updatedAt: new Date(),
+        })
+        .where(eq(projectsTable.id, project.id))
+        .returning();
+      return { row: updated };
     });
+  } catch (err) {
+    // A GitHub webhook created the installation row between the read and the
+    // insert, or the repository index caught a race the locks didn't cover.
+    if (!hasPgErrorCode(err, "23505")) throw err;
+    req.log.warn({ projectId: project.id }, "Connecting a repository hit a unique index; answering 409");
+    outcome = { conflict: `${repo.fullName} was just connected somewhere else. Reload and try again.` };
+  }
+  if ("conflict" in outcome) {
+    res.status(409).json({ error: outcome.conflict });
     return;
   }
-
-  if (existing) {
-    await db
-      .update(githubInstallationsTable)
-      .set({
-        organizationId: account.organizationId,
-        suspendedAt: null,
-        permissionsJson: installation.permissions,
-        updatedAt: new Date(),
-      })
-      .where(eq(githubInstallationsTable.id, existing.id));
-  } else {
-    await db.insert(githubInstallationsTable).values({
-      installationId,
-      organizationId: account.organizationId,
-      githubAccountId: String(installation.accountId),
-      githubAccountLogin: installation.accountLogin,
-      githubAccountType: installation.accountType,
-      permissionsJson: installation.permissions,
-      repositorySelection: installation.repositorySelection,
-      installedBy: account.login,
-    });
-  }
-
-  const [row] = await db
-    .update(projectsTable)
-    .set({
-      githubInstallationId: installationId,
-      repositoryExternalId: String(repo.id),
-      repositoryFullName: repo.fullName,
-      updatedAt: new Date(),
-    })
-    .where(eq(projectsTable.id, project.id))
-    .returning();
+  const { row } = outcome;
   // Pull requests already open on the repository get checked now, not on their next push.
   if (row.contractId) recheckLater(req, project.id);
   res.json(UpdateProjectResponse.parse(await presentProject(row)));
@@ -619,6 +721,7 @@ router.delete("/projects/:projectId/repository", async (req, res): Promise<void>
     .set({ githubInstallationId: null, repositoryExternalId: null, repositoryFullName: null, updatedAt: new Date() })
     .where(eq(projectsTable.id, project.id))
     .returning();
+  releaseChecksLater(req, project);
   res.json(UpdateProjectResponse.parse(await presentProject(row)));
 });
 
@@ -802,15 +905,40 @@ router.put("/projects/:projectId/change-order", async (req, res): Promise<void> 
       ...(nextStatus === "REJECTED" ? { rejectedAt: now } : {}),
       updatedAt: now,
     })
-    // Only if nobody changed its status meanwhile (two people deciding at once).
-    .where(and(eq(changeOrdersTable.id, row.id), eq(changeOrdersTable.status, row.status)))
+    // Only if nobody changed it meanwhile: its status (two people deciding
+    // at once), its items (a push added work) or its letter (a teammate saved
+    // theirs). Writing over those would send or approve what nobody read.
+    .where(
+      and(
+        eq(changeOrdersTable.id, row.id),
+        eq(changeOrdersTable.status, row.status),
+        row.itemsJson == null
+          ? isNull(changeOrdersTable.itemsJson)
+          : sql`${changeOrdersTable.itemsJson} = ${JSON.stringify(row.itemsJson)}::jsonb`,
+        sql`${changeOrdersTable.messageSubject} is not distinct from ${row.messageSubject}`,
+        sql`${changeOrdersTable.messageBody} is not distinct from ${row.messageBody}`,
+      ),
+    )
     .returning();
-  if (!updated) {
-    res.status(409).json({ error: `${row.reference} was changed by someone else just now. Reload to see it.` });
+  // Someone else's write landed first. If it left the change order exactly as
+  // this one would (two people saving the same hours at once), that's done;
+  // anything else changed what this request read, so it's refused.
+  const [current] = updated ? [updated] : await db.select().from(changeOrdersTable).where(eq(changeOrdersTable.id, row.id));
+  const same =
+    current &&
+    current.status === nextStatus &&
+    current.hours === hours &&
+    current.messageSubject === subject &&
+    current.messageBody === body &&
+    JSON.stringify(current.itemsJson) === JSON.stringify(row.itemsJson);
+  if (!updated && !same) {
+    res.status(409).json({ error: `${row.reference} changed just now, by a push or a teammate. Reload to see it, then try again.` });
     return;
   }
+  const saved = updated ?? current!;
 
-  if (nextStatus !== row.status) {
+  // The event and the re-check belong to whichever write made the change.
+  if (updated && nextStatus !== row.status) {
     await db.insert(commercialEventsTable).values({
       organizationId: project.organizationId,
       entityType: "CHANGE_ORDER",
@@ -824,7 +952,7 @@ router.put("/projects/:projectId/change-order", async (req, res): Promise<void> 
     });
   }
 
-  if (nextStatus === "APPROVED" && row.status !== "APPROVED") {
+  if (updated && nextStatus === "APPROVED" && row.status !== "APPROVED") {
     // Check again now, so GitHub reflects the approval without waiting for
     // another push: this pull request first, then the project's other open
     // ones, since the approved work is covered on them too.
@@ -839,7 +967,7 @@ router.put("/projects/:projectId/change-order", async (req, res): Promise<void> 
     );
   }
 
-  res.json(UpdateChangeOrderResponse.parse(toTracked(updated)));
+  res.json(UpdateChangeOrderResponse.parse(toTracked(saved)));
 });
 
 /* ------------------------------------------------------------------ */
@@ -1010,11 +1138,43 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
   const project = await withProject(req, res);
   if (!project) return;
 
-  const prs = await db.query.pullRequestsTable.findMany({
-    where: eq(pullRequestsTable.projectId, project.id),
-    orderBy: [desc(pullRequestsTable.updatedAt)],
-    limit: 100,
-  });
+  // The most recently active pull requests that have a result, plus any
+  // older one whose change order is still open: this list is the only way
+  // to reach a change order, so one waiting on the client never drops off.
+  const checked = sql`exists (select 1 from ${commercialEvaluationsTable} where ${commercialEvaluationsTable.pullRequestId} = ${pullRequestsTable.id})`;
+  // Plain selects, not db.query: the relational API aliases the table, so
+  // the raw `exists` above couldn't name its columns there.
+  const recent = await db
+    .select()
+    .from(pullRequestsTable)
+    .where(and(eq(pullRequestsTable.projectId, project.id), checked))
+    .orderBy(desc(pullRequestsTable.updatedAt))
+    .limit(PULL_REQUEST_LIST_LIMIT);
+  const shown = new Set(recent.map((pr) => pr.id));
+  const waiting = (
+    await db
+      .selectDistinct({ id: changeOrdersTable.pullRequestId })
+      .from(changeOrdersTable)
+      .where(
+        and(
+          eq(changeOrdersTable.projectId, project.id),
+          inArray(changeOrdersTable.status, ["DRAFT", "SENT"]),
+          isNotNull(changeOrdersTable.pullRequestId),
+        ),
+      )
+  ).flatMap((o) => (o.id && !shown.has(o.id) ? [o.id] : []));
+  const older = waiting.length
+    ? await db
+        .select()
+        .from(pullRequestsTable)
+        .where(and(inArray(pullRequestsTable.id, waiting), eq(pullRequestsTable.projectId, project.id)))
+        .orderBy(desc(pullRequestsTable.updatedAt))
+    : [];
+  const prs = [...recent, ...older];
+  const [{ total }] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(pullRequestsTable)
+    .where(and(eq(pullRequestsTable.projectId, project.id), checked));
   // Only the latest result per pull request; earlier ones stay for the record.
   const evaluations = prs.length
     ? await db
@@ -1134,7 +1294,7 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
   });
 
   res.setHeader("Cache-Control", "no-store");
-  res.json(ListProjectPullRequestsResponse.parse({ pullRequests }));
+  res.json(ListProjectPullRequestsResponse.parse({ pullRequests, total }));
 });
 
 export default router;
