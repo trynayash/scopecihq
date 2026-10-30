@@ -1,6 +1,6 @@
 import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Route, Switch, useLocation, useParams } from 'wouter';
-import { useQueryClient } from '@tanstack/react-query';
+import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import * as Dialog from '@radix-ui/react-dialog';
 import { SiGithub } from 'react-icons/si';
 import {
@@ -67,6 +67,7 @@ import { Loading } from '../components/loading';
 import { LoadError, StaleNotice } from '../components/load-error';
 import { CopyButton } from '../components/copy-button';
 import { useIndicator } from '../motion';
+import { useUnsavedChanges } from '../unsaved';
 import { ChangeOrderBox, ScopeEditor, changeOrderText, errorMessage, itemCount, verdictOf } from '../scope-ui';
 import {
   ArrowLeftIcon,
@@ -124,6 +125,17 @@ function forget(path: string) {
   }
 }
 
+/**
+ * After moving to another workspace (switching, leaving or joining), drop
+ * everything cached from the old one, so pages show Loading rather than its
+ * projects for a moment. The session is only refreshed: it holds the sign-in.
+ */
+function startFreshWorkspace(queryClient: QueryClient) {
+  const sessionKey = JSON.stringify(getGetSessionQueryKey());
+  queryClient.resetQueries({ predicate: (query) => JSON.stringify(query.queryKey) !== sessionKey });
+  queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey() });
+}
+
 const money = (amount: number) => `$${amount.toLocaleString('en-US')}`;
 
 const signInHref = (next: string) => `${BASE}/api/auth/github?next=${encodeURIComponent(next)}`;
@@ -165,7 +177,7 @@ function WorkspaceSwitcher({ current, workspaces }: { current: SessionOrganizati
               onSuccess: () => {
                 setError('');
                 // Everything on screen belonged to the other workspace.
-                queryClient.invalidateQueries();
+                startFreshWorkspace(queryClient);
                 navigate('/');
               },
               onError: (err) => setError(errorMessage(err, "Couldn't switch workspace.")),
@@ -488,13 +500,16 @@ function ProjectsHome() {
       </header>
 
       {projects.isPending && <Loading>Loading projects…</Loading>}
-      {projects.isError && (
+      {projects.isError && !projects.data && (
         <LoadError
           error={projects.error}
           fallback="We couldn't load your projects."
           onRetry={() => projects.refetch()}
           retrying={projects.isFetching}
         />
+      )}
+      {projects.isError && projects.data && (
+        <StaleNotice error={projects.error} what="your projects" onRetry={() => projects.refetch()} retrying={projects.isFetching} />
       )}
       {projects.data && projects.data.projects.length === 0 && (
         <section className="panel app-onboarding">
@@ -540,15 +555,20 @@ function ArchivedProjects() {
   const restore = useRestoreProject();
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+  // A restored project leaves this list; focus goes back to its toggle.
+  const toggleRef = useRef<HTMLButtonElement>(null);
 
   return (
     <div className="archived">
-      <button type="button" className="text-link" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <button type="button" className="text-link" aria-expanded={open} onClick={() => setOpen((o) => !o)} ref={toggleRef}>
         {open ? 'Hide archived projects' : 'Archived projects'}
       </button>
       {open && archived.isPending && <Loading>Loading archived projects…</Loading>}
-      {open && archived.isError && (
+      {open && archived.isError && !archived.data && (
         <LoadError error={archived.error} fallback="We couldn't load the archived projects." onRetry={() => archived.refetch()} retrying={archived.isFetching} />
+      )}
+      {open && archived.isError && archived.data && (
+        <StaleNotice error={archived.error} what="the archived projects" onRetry={() => archived.refetch()} retrying={archived.isFetching} />
       )}
       {open && archived.data && archived.data.projects.length === 0 && <p className="help">Nothing archived.</p>}
       {open && archived.data && archived.data.projects.length > 0 && (
@@ -562,9 +582,10 @@ function ArchivedProjects() {
               <button
                 type="button"
                 className="button button-quiet button-sm"
-                disabled={restore.isPending}
+                aria-disabled={restore.isPending}
                 aria-label={`Restore ${project.name}`}
                 onClick={() =>
+                  !restore.isPending &&
                   restore.mutate(
                     { projectId: project.id },
                     {
@@ -573,6 +594,7 @@ function ArchivedProjects() {
                         setStatus(`${project.name} is back. Connect its repository again to check pull requests.`);
                         queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
                         queryClient.invalidateQueries({ queryKey: getListArchivedProjectsQueryKey() });
+                        toggleRef.current?.focus();
                       },
                       onError: (err) => setError(errorMessage(err, "We couldn't restore it.")),
                     },
@@ -805,13 +827,8 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
     [draft, scope],
   );
 
-  // Closing or reloading the tab with unsaved scope edits asks first.
-  useEffect(() => {
-    if (!dirty) return;
-    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
+  // Leaving the page (a link, the tab, a reload) with unsaved scope edits asks first.
+  useUnsavedChanges(dirty);
 
   const read = (event: FormEvent) => {
     event.preventDefault();
@@ -942,7 +959,17 @@ function ScopeSection({ project, scope }: { project: Project; scope: SavedScope 
                 </button>
               )}
               {dirty && scope && (
-                <button type="button" className="button button-quiet" onClick={() => setDraft(scope.clauses)}>
+                <button
+                  type="button"
+                  className="button button-quiet"
+                  onClick={() => {
+                    // Back to the saved version entirely: a title read from a new
+                    // SOW would otherwise rename the contract on the next save.
+                    setDraft(scope.clauses);
+                    setTitle(scope.title ?? '');
+                    setWarnings([]);
+                  }}
+                >
                   Discard changes
                 </button>
               )}
@@ -976,6 +1003,8 @@ function RepositorySection({ project }: { project: Project }) {
   });
   const link = useLinkProjectRepository();
   const unlink = useUnlinkProjectRepository();
+  // Set when connecting found GitHub access expired; the list may still be on screen.
+  const [expired, setExpired] = useState(false);
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(project.id) });
@@ -1003,7 +1032,17 @@ function RepositorySection({ project }: { project: Project }) {
             window.setTimeout(() => queryClient.invalidateQueries({ queryKey: getListProjectPullRequestsQueryKey(project.id) }), 4000);
           }
         },
-        onError: (err) => setError(errorMessage(err, "We couldn't connect that repository.")),
+        onError: (err) => {
+          const status = (err as { status?: number } | null)?.status;
+          // GitHub access ran out since the list loaded: offer to sign in again.
+          if (status === 401) {
+            setExpired(true);
+            return;
+          }
+          setError(errorMessage(err, "We couldn't connect that repository."));
+          // Taken by another project meanwhile: refresh the list so it says which.
+          if (status === 409) queryClient.invalidateQueries({ queryKey: getListGitHubRepositoriesQueryKey() });
+        },
       },
     );
   };
@@ -1017,15 +1056,25 @@ function RepositorySection({ project }: { project: Project }) {
     if (!ok) return;
     setError('');
     setStatus('');
-    unlink.mutate({ projectId: project.id }, { onSuccess: refresh, onError: (err) => setError(errorMessage(err, "We couldn't disconnect it.")) });
+    unlink.mutate(
+      { projectId: project.id },
+      {
+        onSuccess: () => {
+          refresh();
+          // The Disconnect button goes with the repository; focus stays in this section.
+          document.getElementById('repo-title')?.focus();
+        },
+        onError: (err) => setError(errorMessage(err, "We couldn't disconnect it.")),
+      },
+    );
   };
 
-  const reauth = (repos.error as { status?: number } | null)?.status === 401;
+  const reauth = expired || (repos.error as { status?: number } | null)?.status === 401;
   const install = () => remember(`/projects/${project.id}`);
 
   return (
     <section className="panel" aria-labelledby="repo-title">
-      <SectionHead step={2} title="Repository" done={Boolean(project.repository)} id="repo-title" />
+      <SectionHead step={2} title="Repository" done={Boolean(project.repository)} id="repo-title" focusable />
 
       {project.repository ? (
         <>
@@ -1265,14 +1314,37 @@ function ChangeOrderPanel({
   project,
   pr,
   onDirtyChange,
+  onBusyChange,
 }: {
   project: Project;
   pr: PullRequestResult;
   /** Told whether the letter has edits that aren't saved, so closing can ask first. */
   onDirtyChange: (dirty: boolean) => void;
+  /** Told while an update is on its way, so the panel stays open to show how it went. */
+  onBusyChange: (busy: boolean) => void;
 }) {
   const queryClient = useQueryClient();
-  const update = useUpdateChangeOrder();
+  // The lists refresh from here rather than from each mutate() call, so they
+  // still refresh if the panel is gone by the time the server answers.
+  const update = useUpdateChangeOrder({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getListProjectPullRequestsQueryKey(project.id) });
+        queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(project.id) });
+        queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
+      },
+      onError: (err) => {
+        // It changed since this page loaded (a push added work, a teammate
+        // sent or decided it): show it as it is now, to read before trying again.
+        if ((err as { status?: number } | null)?.status === 409) {
+          queryClient.invalidateQueries({ queryKey: getListProjectPullRequestsQueryKey(project.id) });
+        }
+      },
+    },
+  });
+  useEffect(() => {
+    onBusyChange(update.isPending);
+  }, [update.isPending]);
   const [confirm, confirmDialog] = useConfirm();
   const tracked = pr.trackedChangeOrder;
   const source = tracked ? { subject: tracked.subject, body: tracked.body } : pr.changeOrder;
@@ -1306,17 +1378,13 @@ function ChangeOrderPanel({
   // name everything the client approves.
   const unnamed = !sent && !decided ? items.filter((item) => !text.toLowerCase().includes(itemKey(item))) : [];
 
-  // Unsaved edits to the letter: closing the panel, or the tab, asks first.
+  // Unsaved edits to the letter: closing the panel, or leaving the page, asks first.
   const unsaved = edited && !sent && !decided;
+  useUnsavedChanges(unsaved);
   useEffect(() => {
     onDirtyChange(unsaved);
     if (!unsaved) return;
-    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
-    window.addEventListener('beforeunload', warn);
-    return () => {
-      window.removeEventListener('beforeunload', warn);
-      onDirtyChange(false);
-    };
+    return () => onDirtyChange(false);
   }, [unsaved]);
 
   const approveRef = useRef<HTMLButtonElement>(null);
@@ -1340,18 +1408,10 @@ function ChangeOrderPanel({
           setError('');
           setStatus(typeof done === 'string' ? done : done(saved));
           focusNext(then);
-          queryClient.invalidateQueries({ queryKey: getListProjectPullRequestsQueryKey(project.id) });
-          queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(project.id) });
-          queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
         },
         onError: (err) => {
           setStatus('');
           setError(errorMessage(err, "We couldn't update the change order."));
-          // It changed since this page loaded (a push added work, a teammate
-          // sent or decided it): show it as it is now, to read before trying again.
-          if ((err as { status?: number } | null)?.status === 409) {
-            queryClient.invalidateQueries({ queryKey: getListProjectPullRequestsQueryKey(project.id) });
-          }
         },
       },
     );
@@ -1408,7 +1468,7 @@ function ChangeOrderPanel({
             </a>
           </Dialog.Description>
         </div>
-        <Dialog.Close className="icon-button" aria-label="Close the change order">
+        <Dialog.Close className="icon-button" aria-label="Close the change order" disabled={update.isPending}>
           <Icon icon={CrossIcon} size={18} />
         </Dialog.Close>
       </header>
@@ -1559,10 +1619,13 @@ function ChangeOrderDrawer({
   const shown = pr ?? last.current;
 
   // Escape, a click beside the panel and its close button all come here:
-  // an edited letter that isn't saved is only dropped once the PM says so.
+  // an edited letter that isn't saved is only dropped once the PM says so,
+  // and while an update is on its way the panel stays to show its outcome.
   const dirty = useRef(false);
+  const busy = useRef(false);
   const [confirm, confirmDialog] = useConfirm();
   const requestClose = async () => {
+    if (busy.current) return;
     if (dirty.current) {
       const ok = await confirm({
         title: 'Discard your edits to the letter?',
@@ -1604,6 +1667,9 @@ function ChangeOrderDrawer({
               pr={shown}
               onDirtyChange={(value) => {
                 dirty.current = value;
+              }}
+              onBusyChange={(value) => {
+                busy.current = value;
               }}
             />
           )}
@@ -1901,6 +1967,16 @@ function PullRequestsSection({ project }: { project: Project }) {
   const withdraw = useWithdrawPullRequestAcceptance();
   const [confirm, confirmDialog] = useConfirm();
   const [recheckStatus, setRecheckStatus] = useState('');
+  // What went wrong with the last re-check or withdrawal, said as an error.
+  const [actionError, setActionError] = useState('');
+  const report = (message: string) => {
+    setActionError('');
+    setRecheckStatus(message);
+  };
+  const fail = (fallback: string) => (err: unknown) => {
+    setRecheckStatus('');
+    setActionError(errorMessage(err, fallback));
+  };
   // The pull request being accepted, by url, so the dialog follows its
   // latest result (a retry after "out of date" sends the new one).
   const [acceptingUrl, setAcceptingUrl] = useState<string | null>(null);
@@ -1911,6 +1987,7 @@ function PullRequestsSection({ project }: { project: Project }) {
     queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
   };
   const withdrawAcceptance = async (pr: PullRequestResult) => {
+    if (withdraw.isPending) return;
     const ok = await confirm({
       title: `Withdraw the acceptance of #${pr.number}?`,
       description: 'It is checked again and judged on its own; GitHub shows the result.',
@@ -1922,14 +1999,21 @@ function PullRequestsSection({ project }: { project: Project }) {
       { projectId: project.id, number: pr.number, params: { evaluationId: pr.evaluationId } },
       {
         onSuccess: (result) => {
-          setRecheckStatus(
+          report(
             result.checkUpdated
               ? `Acceptance of #${pr.number} withdrawn; it's judged on its own again.`
               : `Acceptance of #${pr.number} withdrawn, but its GitHub check couldn't be updated just now. Re-check open pull requests to update it.`,
           );
           refreshResults();
+          // The Withdraw link goes with the acceptance; focus stays on the list.
+          requestAnimationFrame(() => document.getElementById('prs-title')?.focus());
         },
-        onError: (err) => setRecheckStatus(errorMessage(err, "We couldn't withdraw it.")),
+        onError: (err) => {
+          fail("We couldn't withdraw it.")(err);
+          // Already withdrawn, or the result changed: show it as it is now.
+          const status = (err as { status?: number } | null)?.status;
+          if (status === 404 || status === 409) refreshResults();
+        },
       },
     );
   };
@@ -1950,13 +2034,13 @@ function PullRequestsSection({ project }: { project: Project }) {
       { projectId: project.id },
       {
         onSuccess: () => {
-          setRecheckStatus('Checking the open pull requests again. Results update here as they finish.');
+          report('Checking the open pull requests again. Results update here as they finish.');
           // Each check takes a moment; look again a little later, then once more.
           const refresh = () => queryClient.invalidateQueries({ queryKey: getListProjectPullRequestsQueryKey(project.id) });
           window.setTimeout(refresh, 4000);
           window.setTimeout(refresh, 12000);
         },
-        onError: (err) => setRecheckStatus(errorMessage(err, "We couldn't start the re-check.")),
+        onError: fail("We couldn't start the re-check."),
       },
     );
 
@@ -1973,8 +2057,13 @@ function PullRequestsSection({ project }: { project: Project }) {
       <p className="app-status" role="status">
         {recheckStatus}
       </p>
+      {actionError && (
+        <p className="form-error" role="alert">
+          {actionError}
+        </p>
+      )}
       {results.isPending && <Loading>Loading the checked pull requests…</Loading>}
-      {results.isError && (
+      {results.isError && !results.data && (
         <LoadError
           error={results.error}
           fallback="We couldn't load the results."
@@ -1982,10 +2071,14 @@ function PullRequestsSection({ project }: { project: Project }) {
           retrying={results.isFetching}
         />
       )}
+      {/* The list refreshes on its own; a refresh that failed keeps it on screen. */}
+      {results.isError && results.data && (
+        <StaleNotice error={results.error} what="the results" onRetry={() => results.refetch()} retrying={results.isFetching} />
+      )}
       {results.data && results.data.pullRequests.length === 0 && (
         <p className="help">
           {ready
-            ? `Nothing checked yet. Pull requests already open on ${project.repository!.fullName} are checked when you re-check; new ones as they're opened or updated.`
+            ? `Nothing checked yet. Pull requests already open on ${project.repository!.fullName} are checked when the repository is connected or a scope is saved, and new ones as they're opened or updated. If one is missing, use Re-check.`
             : 'Results appear here once the scope is saved and a repository is connected.'}
         </p>
       )}
@@ -2022,7 +2115,7 @@ function PullRequestsSection({ project }: { project: Project }) {
         onClose={(done) => {
           accepted.current = Boolean(done);
           setAcceptingUrl(null);
-          if (done) setRecheckStatus(done);
+          if (done) report(done);
         }}
         returnFocus={() => {
           // After an accept, the status line above the list says so.
@@ -2301,7 +2394,7 @@ function TeamPage() {
       )}
 
       <section className="panel" aria-labelledby="members-title">
-        <SectionHead title="Members" id="members-title" />
+        <SectionHead title="Members" id="members-title" focusable />
         <ul className="member-list">
           {team.members.map((member) => (
             <li key={member.userId} className="member-row" data-testid="member-row">
@@ -2324,9 +2417,10 @@ function TeamPage() {
                 <button
                   type="button"
                   className="text-link"
-                  disabled={changeRole.isPending}
+                  aria-disabled={changeRole.isPending}
                   aria-label={member.role === 'OWNER' ? `Make @${member.login} a member` : `Make @${member.login} an owner`}
                   onClick={async () => {
+                    if (changeRole.isPending) return;
                     const toOwner = member.role !== 'OWNER';
                     const confirmed = await confirm({
                       title: toOwner ? `Make @${member.login} an owner?` : `Make @${member.login} a member?`,
@@ -2369,7 +2463,7 @@ function TeamPage() {
                       {
                         onSuccess: () => {
                           // Everything on screen belonged to the workspace just left.
-                          queryClient.invalidateQueries();
+                          startFreshWorkspace(queryClient);
                           navigate('/');
                         },
                         onError: fail("We couldn't take you out of the workspace."),
@@ -2384,9 +2478,10 @@ function TeamPage() {
                 <button
                   type="button"
                   className="text-link app-archive"
-                  disabled={remove.isPending}
+                  aria-disabled={remove.isPending}
                   aria-label={`Remove @${member.login}`}
                   onClick={async () => {
+                    if (remove.isPending) return;
                     const confirmed = await confirm({
                       title: `Remove ${member.name ?? member.login} from ${team.name}?`,
                       description: `@${member.login} loses access to every project in this workspace, and any invite links they made stop working. You can invite them again later.`,
@@ -2394,7 +2489,17 @@ function TeamPage() {
                       danger: true,
                     });
                     if (!confirmed) return;
-                    remove.mutate({ userId: member.userId }, { onSuccess: refresh, onError: fail("We couldn't remove them.") });
+                    remove.mutate(
+                      { userId: member.userId },
+                      {
+                        onSuccess: () => {
+                          refresh();
+                          // Their row goes; focus stays on the list.
+                          document.getElementById('members-title')?.focus();
+                        },
+                        onError: fail("We couldn't remove them."),
+                      },
+                    );
                   }}
                 >
                   Remove
@@ -2407,7 +2512,7 @@ function TeamPage() {
 
       {owner && (
         <section className="panel" aria-labelledby="invite-title">
-          <SectionHead title="Invite someone" id="invite-title" />
+          <SectionHead title="Invite someone" id="invite-title" focusable />
           <p className="help">
             Make a link and send it to them. It works once, for seven days, and they sign in with their own GitHub
             account.
@@ -2444,9 +2549,10 @@ function TeamPage() {
                   <button
                     type="button"
                     className="text-link app-archive"
-                    disabled={revoke.isPending}
+                    aria-disabled={revoke.isPending}
                     aria-label={`Revoke the invite made ${relativeTime(open.createdAt)}`}
                     onClick={async () => {
+                      if (revoke.isPending) return;
                       const confirmed = await confirm({
                         title: 'Revoke this invite?',
                         description: 'Its link stops working straight away. You can make a new one at any time.',
@@ -2463,6 +2569,7 @@ function TeamPage() {
                               setLinkId('');
                             }
                             refresh();
+                            document.getElementById('invite-title')?.focus();
                           },
                           onError: fail("We couldn't revoke it."),
                         },
@@ -2502,7 +2609,7 @@ function InvitePage() {
       { token },
       {
         onSuccess: () => {
-          queryClient.invalidateQueries();
+          startFreshWorkspace(queryClient);
           navigate('/');
         },
         onError: (err) => setError(errorMessage(err, "We couldn't add you to the workspace.")),
@@ -2511,7 +2618,8 @@ function InvitePage() {
 
   if (invite.isPending) return <Loading>Checking the invite…</Loading>;
   const inviteStatus = (invite.error as { status?: number } | null)?.status;
-  if (invite.isError && (inviteStatus === undefined || inviteStatus >= 500)) {
+  // Only a missing or used invite is final; a busy network or server can be retried.
+  if (invite.isError && (inviteStatus === undefined || inviteStatus === 429 || inviteStatus >= 500)) {
     return (
       <section className="app-signin panel">
         <LoadError

@@ -16,6 +16,7 @@ import AppPage from '@/pages/app';
 import AdminWaitlist from '@/pages/admin';
 import NotFound from '@/pages/not-found';
 import { withViewTransition } from '@/motion';
+import { confirmLeave } from '@/unsaved';
 
 const statusOf = (error: unknown) => (error as { status?: number } | null)?.status;
 
@@ -76,12 +77,15 @@ function Router() {
 }
 
 // Every in-app link leads to a different page, so it starts at the top,
-// inside the same transition so the new page fades in already there.
-const aroundNav: NonNullable<ComponentProps<typeof WouterRouter>['aroundNav']> = (navigate, to, options) =>
+// inside the same transition so the new page fades in already there. Unsaved
+// edits on the page being left are only dropped once the person says so.
+const aroundNav: NonNullable<ComponentProps<typeof WouterRouter>['aroundNav']> = (navigate, to, options) => {
+  if (!confirmLeave()) return;
   withViewTransition(() => {
     navigate(to, options);
     if (!String(to).includes('#')) window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   });
+};
 
 function App() {
   return (
