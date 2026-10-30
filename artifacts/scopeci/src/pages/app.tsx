@@ -49,6 +49,7 @@ import {
   type SessionOrganization,
   type SessionUser,
   type TrackedChangeOrder,
+  setWorkspaceHeader,
 } from '@workspace/api-client-react';
 import {
   BASE,
@@ -374,6 +375,12 @@ function SignIn({ available }: { available: boolean }) {
 
 export default function AppPage() {
   const session = useGetSession({ query: { queryKey: getGetSessionQueryKey(), retry: 1, staleTime: 60_000 } });
+  // Every write says which workspace this page shows, so one made after a
+  // switch in another tab is refused rather than landing in the other workspace.
+  const shownWorkspace = session.data?.organization?.id ?? null;
+  useEffect(() => {
+    setWorkspaceHeader(shownWorkspace);
+  }, [shownWorkspace]);
 
   if (session.isPending) {
     return (
@@ -1176,8 +1183,8 @@ function RepositorySection({ project }: { project: Project }) {
           )}
           {(repos.data.truncatedAccounts ?? []).map((account) => (
             <p key={account} className="notice">
-              Showing the first 5,000 repositories in {account}. To connect another, limit the ScopeCI GitHub App to
-              selected repositories on GitHub.
+              Not every repository in {account} is listed. To connect one that's missing, limit the ScopeCI GitHub App
+              to selected repositories on GitHub.
             </p>
           ))}
           {error && (
@@ -2080,6 +2087,12 @@ function PullRequestsSection({ project }: { project: Project }) {
           {ready
             ? `Nothing checked yet. Pull requests already open on ${project.repository!.fullName} are checked when the repository is connected or a scope is saved, and new ones as they're opened or updated. If one is missing, use Re-check.`
             : 'Results appear here once the scope is saved and a repository is connected.'}
+        </p>
+      )}
+      {results.data && results.data.total > results.data.pullRequests.length && (
+        <p className="help">
+          Showing {results.data.pullRequests.length} of {results.data.total} checked pull requests: the most recently
+          active, and every one with a change order still open.
         </p>
       )}
       {results.data && results.data.pullRequests.length > 0 && (

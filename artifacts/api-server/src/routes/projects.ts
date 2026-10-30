@@ -37,7 +37,7 @@ import {
 import { composeChangeOrder, type ChangeOrderItem, type EvidenceBundle } from "@workspace/commercial-engine";
 import { currentWebhookService } from "./github.js";
 import { rateLimiter } from "../middlewares/rate-limit.js";
-import { accountOf, requireAccount, sameOriginWrites, type Account } from "../lib/session.js";
+import { accountOf, requireAccount, sameOriginWrites, sameWorkspace, type Account } from "../lib/session.js";
 import { checklistFromRecord, loadActiveBaseline, loadBaseline, saveChecklist } from "../lib/scope-store.js";
 import { GitHubReauthRequired, userGitHubToken } from "../lib/github-token.js";
 import { installUrl, listInstallationRepositories, listUserInstallations } from "../github/user-api.js";
@@ -54,7 +54,7 @@ import { changeOrderPlan, isDecided, itemsOf, letterHash, letterUntouched } from
  */
 const router: IRouter = Router();
 
-router.use(["/projects", "/github/repositories"], sameOriginWrites, requireAccount);
+router.use(["/projects", "/github/repositories"], sameOriginWrites, requireAccount, sameWorkspace);
 
 const gitHubLimiter = rateLimiter({ windowMs: 60_000, max: 30, message: "Too many GitHub lookups. Wait a minute." });
 
@@ -91,6 +91,20 @@ function recheckLater(req: Request, projectId: string): void {
   runInBackground(run());
 }
 
+/**
+ * After a project stops checking its repository, its failing checks on open
+ * pull requests are set to neutral in the background (see releaseChecks).
+ */
+function releaseChecksLater(req: Request, project: ProjectRow): void {
+  if (!project.githubInstallationId || !project.repositoryFullName) return;
+  const link = { projectId: project.id, installationId: project.githubInstallationId, repositoryFullName: project.repositoryFullName };
+  runInBackground(
+    currentWebhookService()
+      .then((service) => service?.releaseChecks(link))
+      .catch((err) => req.log.warn({ err, projectId: project.id }, "Releasing ScopeCI checks failed")),
+  );
+}
+
 /** Projects whose open pull requests are being checked again, and whether another pass was asked for meanwhile. */
 const rechecks = new Map<string, { again: boolean }>();
 
@@ -98,6 +112,9 @@ const rechecks = new Map<string, { again: boolean }>();
 const SCOPE_BUDGET = { items: 2000, chars: 100_000 };
 /** The longest item the API accepts (ScopeClause in openapi.yaml). */
 const SCOPE_ITEM_MAX = 300;
+
+/** How many GitHub accounts' repositories the picker reads for one person. */
+const INSTALLATIONS_LISTED = 50;
 
 /** How many of a project's checked pull requests the results list shows, most recently active first. */
 const PULL_REQUEST_LIST_LIMIT = 100;
@@ -429,6 +446,7 @@ router.delete("/projects/:projectId", async (req, res): Promise<void> => {
       updatedAt: new Date(),
     })
     .where(eq(projectsTable.id, project.id));
+  releaseChecksLater(req, project);
   res.status(204).end();
 });
 
@@ -510,7 +528,11 @@ router.get("/github/repositories", gitHubLimiter, async (_req, res): Promise<voi
   // Accounts with more repositories than GitHub's list gives ScopeCI; the picker says so.
   const truncatedAccounts: string[] = [];
   try {
-    const installations = (await listUserInstallations(token)).slice(0, 20);
+    // Each account costs a GitHub request, so the list stops at
+    // INSTALLATIONS_LISTED; any beyond are named as not fully listed.
+    const all = await listUserInstallations(token);
+    const installations = all.slice(0, INSTALLATIONS_LISTED);
+    for (const skipped of all.slice(INSTALLATIONS_LISTED)) truncatedAccounts.push(skipped.accountLogin);
     for (const installation of installations) {
       const list = await listInstallationRepositories(token, installation.id);
       if (list.truncated) truncatedAccounts.push(installation.accountLogin);
@@ -693,6 +715,7 @@ router.delete("/projects/:projectId/repository", async (req, res): Promise<void>
     .set({ githubInstallationId: null, repositoryExternalId: null, repositoryFullName: null, updatedAt: new Date() })
     .where(eq(projectsTable.id, project.id))
     .returning();
+  releaseChecksLater(req, project);
   res.json(UpdateProjectResponse.parse(await presentProject(row)));
 });
 

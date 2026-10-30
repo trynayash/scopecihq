@@ -29,6 +29,7 @@ import {
   listWorkspaces,
   requireAccount,
   sameOriginWrites,
+  sameWorkspace,
   type Account,
 } from "../lib/session.js";
 
@@ -40,18 +41,8 @@ const router: IRouter = Router();
 
 router.use(["/workspace", "/invites", "/session/workspace"], sameOriginWrites, requireAccount);
 
-// Team changes act on the session's current workspace, which a switch in
-// another window moves. The page says which workspace it shows, so a change
-// made on a page left showing the old one is refused, not applied to the new.
-router.use("/workspace", (req, res, next) => {
-  const shown = req.get("x-scopeci-workspace")?.trim().toLowerCase();
-  const writing = !["GET", "HEAD", "OPTIONS"].includes(req.method);
-  if (writing && shown && shown !== accountOf(res).organizationId.toLowerCase()) {
-    res.status(409).json({ error: "You switched workspace in another window. Reload this page to continue." });
-    return;
-  }
-  next();
-});
+// Team changes act on the session's current workspace (see sameWorkspace).
+router.use("/workspace", sameWorkspace);
 
 const inviteLimiter = rateLimiter({ windowMs: 60_000, max: 20, message: "Too many invite attempts. Wait a minute." });
 

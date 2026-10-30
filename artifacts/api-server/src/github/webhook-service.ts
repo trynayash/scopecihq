@@ -348,6 +348,48 @@ export class WebhookService {
     return { checked };
   }
 
+  /**
+   * The project stopped checking its repository (archived, or disconnected).
+   * A failing or waiting ScopeCI check on one of its open pull requests would
+   * then block the merge with nothing left to clear it, so each is set to
+   * neutral and says why. Runs after the link is gone, from what it was.
+   */
+  async releaseChecks(link: { projectId: string; installationId: string; repositoryFullName: string }): Promise<{ released: number }> {
+    const [owner, repo] = link.repositoryFullName.split("/");
+    const open = await db.query.pullRequestsTable.findMany({
+      where: and(eq(pullRequestsTable.projectId, link.projectId), eq(pullRequestsTable.state, "OPEN")),
+      columns: { id: true },
+    });
+    if (open.length === 0) return { released: 0 };
+    const blocking = await db.query.githubCheckRunsTable.findMany({
+      where: and(
+        inArray(
+          githubCheckRunsTable.pullRequestId,
+          open.map((pr) => pr.id),
+        ),
+        inArray(githubCheckRunsTable.conclusion, ["failure", "action_required"]),
+      ),
+    });
+    const released = {
+      status: "completed" as const,
+      conclusion: "neutral" as const,
+      title: "ScopeCI no longer checks this repository",
+      summary: "The ScopeCI project for this repository was archived or disconnected, so this check no longer applies.",
+    };
+    let count = 0;
+    for (const run of blocking) {
+      try {
+        await this.gitHubClient.updateCheckRun({ installationId: link.installationId, owner, repo, checkRunId: run.githubCheckRunId, ...released });
+        await db.update(githubCheckRunsTable).set({ ...released, updatedAt: new Date() }).where(eq(githubCheckRunsTable.id, run.id));
+        count++;
+      } catch (err) {
+        // The App may have lost access already; the rest are still worth trying.
+        logger.warn({ err, projectId: link.projectId, checkRunId: run.githubCheckRunId }, "Couldn't release a ScopeCI check");
+      }
+    }
+    return { released: count };
+  }
+
   /** Commits the sweep has already tried, and how often, so one that keeps failing isn't retried forever. */
   private sweepTries = new Map<string, number>();
   private sweeping = false;

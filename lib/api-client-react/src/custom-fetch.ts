@@ -44,6 +44,18 @@ export function setAuthTokenGetter(getter: AuthTokenGetter | null): void {
   _authTokenGetter = getter;
 }
 
+let _workspaceId: string | null = null;
+
+/**
+ * The workspace the page is showing. Every write then says so in an
+ * `X-ScopeCI-Workspace` header, and the server refuses one that would land
+ * in a different workspace (the person switched in another tab). Pass
+ * `null` when no workspace is shown.
+ */
+export function setWorkspaceHeader(workspaceId: string | null): void {
+  _workspaceId = workspaceId;
+}
+
 function isRequest(input: RequestInfo | URL): input is Request {
   return typeof Request !== "undefined" && input instanceof Request;
 }
@@ -347,6 +359,10 @@ export async function customFetch<T = unknown>(
 
   if (responseType === "json" && !headers.has("accept")) {
     headers.set("accept", DEFAULT_JSON_ACCEPT);
+  }
+
+  if (_workspaceId && method !== "GET" && method !== "HEAD" && !headers.has("x-scopeci-workspace")) {
+    headers.set("x-scopeci-workspace", _workspaceId);
   }
 
   // Attach bearer token when an auth getter is configured and no

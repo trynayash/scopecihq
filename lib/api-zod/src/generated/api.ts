@@ -1093,7 +1093,7 @@ export const ListGitHubRepositoriesResponse = zod.object({
   "private": zod.boolean(),
   "linkedProjectId": zod.string().nullable()
 })),
-  "truncatedAccounts": zod.array(zod.string()).optional().describe('GitHub accounts whose installation has more repositories than ScopeCI lists (5,000); their list is cut short.')
+  "truncatedAccounts": zod.array(zod.string()).optional().describe('GitHub accounts whose repositories aren\'t all listed: the installation has more than ScopeCI lists (5,000), or the person can see more than 50 accounts and these were left out.')
 })
 
 
