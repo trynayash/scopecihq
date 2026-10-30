@@ -503,26 +503,30 @@ async function run() {
     });
 
     await scenario("A scope too big to check is refused; an item that grows when lower-cased is clamped", async () => {
-      const many = Array.from({ length: 2001 }, (_, i) => `item ${i}`);
-      const huge = await call(server, `/api/projects/${projectId}/scope`, {
-        method: "PUT",
-        body: { title: "Big", clauses: [{ clauseRef: "§1", title: "All", included: many, excluded: [] }] },
-        cookie: dana,
-      });
+      // A project of its own, so the shared one keeps the scope versions later scenarios expect.
+      const scratch = await call(server, "/api/projects", { method: "POST", body: { name: "Scratch" }, cookie: dana });
+      assert.strictEqual(scratch.status, 201, JSON.stringify(scratch.body));
+      const scratchId = scratch.body.id ?? scratch.body.project?.id;
+      // Each list holds up to 100 items, so 21 sections of 100 pass the schema but not the budget.
+      const clauses = Array.from({ length: 21 }, (_, c) => ({
+        clauseRef: `§${c + 1}`,
+        title: `Part ${c + 1}`,
+        included: Array.from({ length: 100 }, (_, i) => `item ${c}-${i}`),
+        excluded: [],
+      }));
+      const huge = await call(server, `/api/projects/${scratchId}/scope`, { method: "PUT", body: { title: "Big", clauses }, cookie: dana });
       assert.strictEqual(huge.status, 400);
       assert.match(huge.body.error, /up to 2,000 items/);
 
       // "İ" lower-cases to two characters: 300 of them would store 600.
       const dotted = "İ".repeat(300);
       const grown = { ...SCOPE, clauses: [{ ...SCOPE.clauses[0], excluded: [...SCOPE.clauses[0].excluded, dotted] }] };
-      const saved = await call(server, `/api/projects/${projectId}/scope`, { method: "PUT", body: grown, cookie: dana });
+      const saved = await call(server, `/api/projects/${scratchId}/scope`, { method: "PUT", body: grown, cookie: dana });
       assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
       assert.ok(saved.body.clauses[0].excluded.every((item: string) => item.length <= 300));
-      assert.strictEqual((await call(server, `/api/projects/${projectId}`, { cookie: dana })).status, 200, "the project still reads back");
+      assert.strictEqual((await call(server, `/api/projects/${scratchId}`, { cookie: dana })).status, 200, "the project still reads back");
 
-      // Back to the scope the later scenarios expect.
-      const restored = await call(server, `/api/projects/${projectId}/scope`, { method: "PUT", body: SCOPE, cookie: dana });
-      assert.strictEqual(restored.status, 200);
+      assert.strictEqual((await call(server, `/api/projects/${scratchId}`, { method: "DELETE", cookie: dana })).status, 204);
     });
 
     await scenario("Project writes from a page showing another workspace are refused", async () => {

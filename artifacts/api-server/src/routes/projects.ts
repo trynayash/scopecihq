@@ -73,7 +73,8 @@ function recheckLater(req: Request, projectId: string): void {
     state.again = true;
     return;
   }
-  rechecks.set(projectId, { again: false });
+  const entry: Recheck = { again: false, done: Promise.resolve() };
+  rechecks.set(projectId, entry);
   const run = (): Promise<void> =>
     new Promise<void>((resolve) => setImmediate(resolve))
       .then(() => currentWebhookService())
@@ -88,7 +89,7 @@ function recheckLater(req: Request, projectId: string): void {
         rechecks.delete(projectId);
         return undefined;
       });
-  runInBackground(run());
+  entry.done = runInBackground(run());
 }
 
 /**
@@ -98,15 +99,20 @@ function recheckLater(req: Request, projectId: string): void {
 function releaseChecksLater(req: Request, project: ProjectRow): void {
   if (!project.githubInstallationId || !project.repositoryFullName) return;
   const link = { projectId: project.id, installationId: project.githubInstallationId, repositoryFullName: project.repositoryFullName };
+  // A re-check still running would post its verdicts after the release; wait
+  // for it (a follow-up pass finds the link gone and stops at once).
+  const running = rechecks.get(project.id)?.done ?? Promise.resolve();
   runInBackground(
-    currentWebhookService()
+    running
+      .then(() => currentWebhookService())
       .then((service) => service?.releaseChecks(link))
       .catch((err) => req.log.warn({ err, projectId: project.id }, "Releasing ScopeCI checks failed")),
   );
 }
 
-/** Projects whose open pull requests are being checked again, and whether another pass was asked for meanwhile. */
-const rechecks = new Map<string, { again: boolean }>();
+/** A project's re-check in progress: whether another pass was asked for meanwhile, and when it all ends. */
+type Recheck = { again: boolean; done: Promise<void> };
+const rechecks = new Map<string, Recheck>();
 
 /** What a saved scope may hold: every check runs against it, so it can't hold up the server. */
 const SCOPE_BUDGET = { items: 2000, chars: 100_000 };
@@ -914,12 +920,25 @@ router.put("/projects/:projectId/change-order", async (req, res): Promise<void> 
       ),
     )
     .returning();
-  if (!updated) {
+  // Someone else's write landed first. If it left the change order exactly as
+  // this one would (two people saving the same hours at once), that's done;
+  // anything else changed what this request read, so it's refused.
+  const [current] = updated ? [updated] : await db.select().from(changeOrdersTable).where(eq(changeOrdersTable.id, row.id));
+  const same =
+    current &&
+    current.status === nextStatus &&
+    current.hours === hours &&
+    current.messageSubject === subject &&
+    current.messageBody === body &&
+    JSON.stringify(current.itemsJson) === JSON.stringify(row.itemsJson);
+  if (!updated && !same) {
     res.status(409).json({ error: `${row.reference} changed just now, by a push or a teammate. Reload to see it, then try again.` });
     return;
   }
+  const saved = updated ?? current!;
 
-  if (nextStatus !== row.status) {
+  // The event and the re-check belong to whichever write made the change.
+  if (updated && nextStatus !== row.status) {
     await db.insert(commercialEventsTable).values({
       organizationId: project.organizationId,
       entityType: "CHANGE_ORDER",
@@ -933,7 +952,7 @@ router.put("/projects/:projectId/change-order", async (req, res): Promise<void> 
     });
   }
 
-  if (nextStatus === "APPROVED" && row.status !== "APPROVED") {
+  if (updated && nextStatus === "APPROVED" && row.status !== "APPROVED") {
     // Check again now, so GitHub reflects the approval without waiting for
     // another push: this pull request first, then the project's other open
     // ones, since the approved work is covered on them too.
@@ -948,7 +967,7 @@ router.put("/projects/:projectId/change-order", async (req, res): Promise<void> 
     );
   }
 
-  res.json(UpdateChangeOrderResponse.parse(toTracked(updated)));
+  res.json(UpdateChangeOrderResponse.parse(toTracked(saved)));
 });
 
 /* ------------------------------------------------------------------ */
@@ -1123,11 +1142,14 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
   // older one whose change order is still open: this list is the only way
   // to reach a change order, so one waiting on the client never drops off.
   const checked = sql`exists (select 1 from ${commercialEvaluationsTable} where ${commercialEvaluationsTable.pullRequestId} = ${pullRequestsTable.id})`;
-  const recent = await db.query.pullRequestsTable.findMany({
-    where: and(eq(pullRequestsTable.projectId, project.id), checked),
-    orderBy: [desc(pullRequestsTable.updatedAt)],
-    limit: PULL_REQUEST_LIST_LIMIT,
-  });
+  // Plain selects, not db.query: the relational API aliases the table, so
+  // the raw `exists` above couldn't name its columns there.
+  const recent = await db
+    .select()
+    .from(pullRequestsTable)
+    .where(and(eq(pullRequestsTable.projectId, project.id), checked))
+    .orderBy(desc(pullRequestsTable.updatedAt))
+    .limit(PULL_REQUEST_LIST_LIMIT);
   const shown = new Set(recent.map((pr) => pr.id));
   const waiting = (
     await db
@@ -1142,10 +1164,11 @@ router.get("/projects/:projectId/pull-requests", async (req, res): Promise<void>
       )
   ).flatMap((o) => (o.id && !shown.has(o.id) ? [o.id] : []));
   const older = waiting.length
-    ? await db.query.pullRequestsTable.findMany({
-        where: and(inArray(pullRequestsTable.id, waiting), eq(pullRequestsTable.projectId, project.id)),
-        orderBy: [desc(pullRequestsTable.updatedAt)],
-      })
+    ? await db
+        .select()
+        .from(pullRequestsTable)
+        .where(and(inArray(pullRequestsTable.id, waiting), eq(pullRequestsTable.projectId, project.id)))
+        .orderBy(desc(pullRequestsTable.updatedAt))
     : [];
   const prs = [...recent, ...older];
   const [{ total }] = await db
